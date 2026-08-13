@@ -31,8 +31,3 @@ docker compose down
 ```
 
 `docker compose down -v`는 DB 데이터를 삭제하므로 사용하지 않습니다.
-
-## 개발 경로
-
-OneDrive 동기화 경로는 파일 잠금과 권한 충돌을 일으킬 수 있습니다. 2일차 작업 전
-`C:\Users\hongh\src\AI_Challenge`처럼 동기화되지 않는 로컬 경로로 저장소를 옮기는 것을 권장합니다.
