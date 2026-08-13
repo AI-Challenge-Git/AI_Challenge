@@ -53,13 +53,29 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .main-nav button { padding: 7px 11px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 12px; font-weight: 700; }
 .main-nav button.current { color: white; background: var(--ink); }
 
-.hero { width: min(900px, calc(100% - 40px)); margin: 42px auto 48px; text-align: center; }
+.hero { width: min(1120px, calc(100% - 40px)); min-height: 330px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 330px; align-items: center; gap: 64px; }
 
 .hero h1 { margin: 0; color: #1b1b18; font-size: clamp(36px, 5vw, 58px); line-height: 1.17; letter-spacing: -0.055em; }
 
 .hero h1 em { color: #0b68d8; font-style: normal; }
 
-.hero > p { max-width: 695px; margin: 18px auto 0; color: #696861; font-size: 16px; line-height: 1.75; word-break: keep-all; }
+.hero-copy > p { max-width: 695px; margin: 18px 0 0; color: #696861; font-size: 14px; line-height: 1.75; word-break: keep-all; }
+
+.hero-cards { position: relative; height: 220px; }
+.hero-card { position: absolute; width: 230px; height: 128px; padding: 20px; border-radius: 18px; box-shadow: 0 18px 35px rgba(27,27,24,.14); transform: rotate(5deg); }
+.hero-card > span, .hero-card > strong { display: block; }
+.hero-card-back { top: 15px; right: 0; color: #696861; background: #e6e6df; }
+.hero-card-back span { font-size: 10px; font-weight: 700; }
+.hero-card-back strong { margin-top: 4px; font-size: 18px; }
+.hero-card-front { left: 0; bottom: 4px; z-index: 1; color: white; background: #20201d; transform: rotate(-3deg); }
+.hero-card-front > span:first-child { color: #c9c8c0; font-size: 9px; font-weight: 800; }
+.hero-card-front > strong { margin-top: 8px; font-size: 15px; line-height: 1.35; }
+.hero-card-badge { position: absolute; top: 18px; right: 18px; width: 34px; height: 34px; display: grid !important; place-items: center; color: #171714; border-radius: 50%; background: var(--yellow); }
+.hero-bars { position: absolute; left: 20px; bottom: 17px; display: flex !important; align-items: end; gap: 4px; }
+.hero-bars i { width: 10px; border-radius: 2px 2px 0 0; background: #898982; }
+.hero-bars i:nth-child(1) { height: 9px; }
+.hero-bars i:nth-child(2) { height: 15px; }
+.hero-bars i:nth-child(3) { height: 22px; background: var(--yellow); }
 
 .workspace { position: relative; padding: 46px 20px 65px; background: #ecece5; border-top: 1px solid #e2e1d8; }
 
@@ -108,8 +124,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .error-message { display: flex; align-items: center; gap: 7px; margin: 12px 0 0; color: var(--red); font-size: 12px; font-weight: 600; }
 
-.privacy-note { margin: 24px 0 0; display: flex; align-items: center; gap: 8px; padding: 14px 16px; border: 1px solid #deddd2; border-radius: 12px; color: #5f5e56; background: #f8f8f3; font-size: 11px; }
+.privacy-note { margin: 24px 0 0; display: flex; align-items: center; gap: 10px; padding: 13px 16px; border: 1px solid #d8ddd4; border-radius: 12px; color: #5f5e56; background: #fafbf8; }
 .privacy-note svg { flex: none; color: var(--green); }
+.privacy-note p { margin: 0; }
+.privacy-note strong, .privacy-note span { display: block; }
+.privacy-note strong { color: #3f4b42; font-size: 11px; }
+.privacy-note span { margin-top: 3px; color: #747b72; font-size: 9px; line-height: 1.5; }
 
 .primary-button, .secondary-button { min-height: 50px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; border-radius: 11px; font-weight: 700; transition: transform .15s ease, background .15s ease, opacity .15s ease; }
 .primary-button { padding: 0 23px; border: 1px solid #1e1e1b; color: white; background: #22221f; box-shadow: 0 8px 20px rgba(32,32,28,.15); }
@@ -317,9 +337,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .brand-mark { width: 30px; height: 30px; }
   .main-nav { width: 100%; order: 2; }
   .main-nav button { flex: 1; padding: 6px 8px; font-size: 10px; }
-  .hero { width: calc(100% - 32px); margin: 26px auto 38px; }
+  .hero { width: calc(100% - 32px); min-height: auto; margin: 32px auto 38px; grid-template-columns: 1fr; gap: 22px; }
   .hero h1 { font-size: 35px; }
-  .hero > p { font-size: 14px; }
+  .hero-copy > p { font-size: 13px; }
+  .hero-cards { width: 280px; height: 180px; margin: 0 auto; }
+  .hero-card { width: 205px; height: 115px; }
   .workspace { padding: 34px 12px 45px; }
   .stepper li { min-width: 82px; font-size: 10px; }
   .panel { padding: 23px 17px; border-radius: 18px; }

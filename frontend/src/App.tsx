@@ -238,8 +238,22 @@ export default function App() {
         {view === "report" ? (
           <>
         <section className="hero">
-          <h1>당황스러운 주문 오류,<br /><em>상담에 필요한 내용</em>부터 정리해 드려요.</h1>
-          <p>겪으신 상황을 적으면 AI가 기술 증상과 주문 상담정보를 나누고, 저장 전 확인할 수 있게 정리합니다.</p>
+          <div className="hero-copy">
+            <h1>당황스러운 주문 오류!<br /><em>상담에 필요한 내용</em>부터<br /> 정리해 드립니다.</h1>
+            <p>겪으신 상황을 작성해주시면 AI가 기술 증상과 주문 상담정보를 나누고, 저장 전 직접 확인할 수 있게 도와드립니다.</p>
+          </div>
+          <div className="hero-cards" aria-hidden="true">
+            <div className="hero-card hero-card-back">
+              <span>문제 제보 분리</span>
+              <strong>의미 기반</strong>
+            </div>
+            <div className="hero-card hero-card-front">
+              <span>MTS 장애 제보</span>
+              <strong>손쉬운<br />장애대응 제공</strong>
+              <span className="hero-card-badge"><BrainCircuit size={17} /></span>
+              <span className="hero-bars"><i /><i /><i /></span>
+            </div>
+          </div>
         </section>
 
         <section className="workspace" aria-label="고객 제보 작성">
@@ -280,10 +294,13 @@ export default function App() {
               </div>
               {error ? <p id="report-error" className="error-message" role="alert"><TriangleAlert size={16} /> {error}</p> : null}
 
-              <p className="privacy-note">
+              <div className="privacy-note">
                 <ShieldCheck size={20} />
-                입력한 개인정보는 분석 전에 마스킹 처리되며, 원문은 브라우저에 저장하지 않습니다.
-              </p>
+                <p>
+                  <strong>입력하신 개인정보는 분석 전에 제거됩니다.</strong>
+                  <span>원문은 브라우저에 저장하지 않으며, 주문 정보는 상담 확인용으로 분리합니다.</span>
+                </p>
+              </div>
 
               <button className="primary-button analyze-button" type="button" onClick={handleAnalyze} disabled={isLoading || !isValidReport}>
                 {isLoading ? <><span className="spinner" /> 안전하게 분석 중...</> : <>AI로 내용 정리하기 <ArrowRight size={18} /></>}
