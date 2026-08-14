@@ -24,6 +24,9 @@ docker compose up --build
 
 API 컨테이너는 시작할 때 `alembic upgrade head`를 실행합니다.
 
+핵심 업무 테이블과 개인정보 분리 원칙은 [ERD](docs/erd.md), 백엔드 API 기준안은
+[API contract](docs/api-contract.md)에 정리되어 있습니다.
+
 작업 종료 시 데이터 볼륨을 보존하도록 다음 명령을 사용합니다.
 
 ```powershell

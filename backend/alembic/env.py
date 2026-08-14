@@ -4,13 +4,13 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from app import models
 from app.config import get_settings
-from app.db import Base
 
 config = context.config
 database_url = get_settings().database_url.get_secret_value()
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
-target_metadata = Base.metadata
+target_metadata = models.Base.metadata
 
 
 def run_migrations_offline() -> None:
