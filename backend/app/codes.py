@@ -1,0 +1,46 @@
+from enum import StrEnum
+
+
+class ReportStatus(StrEnum):
+    ANALYSIS_PENDING = "ANALYSIS_PENDING"
+    AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+    CONFIRMED = "CONFIRMED"
+    ANALYSIS_FAILED = "ANALYSIS_FAILED"
+
+
+class AnalysisStatus(StrEnum):
+    PENDING = "PENDING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class FieldStatus(StrEnum):
+    CONFIRMED_FROM_TEXT = "CONFIRMED_FROM_TEXT"
+    NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
+    UNKNOWN = "UNKNOWN"
+    OUT_OF_SCOPE = "OUT_OF_SCOPE"
+
+
+class TechnicalChannel(StrEnum):
+    MABLE = "MABLE"
+
+
+class FeatureArea(StrEnum):
+    DOMESTIC_STOCK_ORDER = "DOMESTIC_STOCK_ORDER"
+
+
+class SubmissionStatus(StrEnum):
+    CUSTOMER_REPORTED_SUBMITTED = "CUSTOMER_REPORTED_SUBMITTED"
+    CUSTOMER_REPORTED_NOT_SUBMITTED = "CUSTOMER_REPORTED_NOT_SUBMITTED"
+    UNKNOWN = "UNKNOWN"
+
+
+class OrderAction(StrEnum):
+    SELL = "SELL"
+    UNKNOWN = "UNKNOWN"
+
+
+class OrderType(StrEnum):
+    LIMIT = "LIMIT"
+    MARKET = "MARKET"
+    UNKNOWN = "UNKNOWN"
