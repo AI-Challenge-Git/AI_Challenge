@@ -55,6 +55,35 @@ def test_pii_filter_masks_allowed_types_without_returning_values() -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "sensitive_value", "kind"),
+    [
+        ("대표번호는 1588-1234입니다.", "1588-1234", "PHONE"),
+        ("인터넷 전화는 070-1234-5678입니다.", "070-1234-5678", "PHONE"),
+        ("붙여 쓴 휴대전화는 01012345678입니다.", "01012345678", "PHONE"),
+        ("계좌 후보는 1234567890입니다.", "1234567890", "ACCOUNT"),
+        ("계좌 후보는 12345678901234입니다.", "12345678901234", "ACCOUNT"),
+        ("계좌 후보는 123-456-789012입니다.", "123-456-789012", "ACCOUNT"),
+    ],
+)
+def test_pii_filter_masks_supported_synthetic_formats(
+    text: str,
+    sensitive_value: str,
+    kind: str,
+) -> None:
+    result = scan_and_mask(text)
+
+    assert result.decision is PiiDecision.MASKED
+    assert sensitive_value not in result.masked_text
+    assert result.detected_kinds == (kind,)
+
+
+@pytest.mark.parametrize("digits", ["1" * 9, "1" * 15])
+def test_compact_account_candidate_has_explicit_length_boundaries(digits: str) -> None:
+    result = scan_and_mask(f"합성 숫자 {digits}입니다.")
+    assert result.decision is PiiDecision.ALLOW
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "주민등록번호는 900101-1234567입니다.",
@@ -107,6 +136,51 @@ def test_confirmation_schema_rejects_invalid_financial_values() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("quantity", True),
+        ("quantity", "20"),
+        ("price_krw", True),
+        ("price_krw", "10000"),
+    ],
+)
+def test_confirmation_schema_rejects_coerced_numbers(field_name: str, value: object) -> None:
+    payload: dict[str, object] = {
+        "action": "SELL",
+        "symbol_name": "합성종목",
+        "symbol_code": "000000",
+        "quantity": 20,
+        "order_type": "LIMIT",
+        "price_krw": 10_000,
+        "attempted_at": None,
+    }
+    payload[field_name] = value
+
+    with pytest.raises(ValidationError):
+        ConsultationConfirmation.model_validate(payload)
+
+
+def test_confirmation_schema_trims_symptom_and_rejects_blank_value() -> None:
+    confirmation = TechnicalConfirmation(
+        issue_type="UNKNOWN",
+        symptom="  화면 멈춤  ",
+        submission_status=SubmissionStatus.UNKNOWN,
+        error_code=None,
+        reported_occurred_at=None,
+    )
+    assert confirmation.symptom == "화면 멈춤"
+
+    with pytest.raises(ValidationError):
+        TechnicalConfirmation(
+            issue_type="UNKNOWN",
+            symptom="   ",
+            submission_status=SubmissionStatus.UNKNOWN,
+            error_code=None,
+            reported_occurred_at=None,
+        )
+
+
 def test_confirmation_schema_requires_timezone_aware_times() -> None:
     with pytest.raises(ValidationError):
         TechnicalConfirmation(
@@ -144,3 +218,21 @@ def test_contracts_forbid_unknown_fields_and_canonical_hash_is_stable() -> None:
     assert canonical_json_sha256({"b": 2, "a": "한글"}) == canonical_json_sha256(
         {"a": "한글", "b": 2}
     )
+
+
+def test_report_create_requires_uuid4() -> None:
+    accepted = ReportCreateRequest.model_validate(
+        {
+            "client_request_id": "58e06f0a-1220-46a0-b30f-e840716846be",
+            "text": "합성 제보 문장으로 실제 개인정보를 포함하지 않습니다.",
+        }
+    )
+    assert accepted.client_request_id.version == 4
+
+    with pytest.raises(ValidationError):
+        ReportCreateRequest.model_validate(
+            {
+                "client_request_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                "text": "합성 제보 문장으로 실제 개인정보를 포함하지 않습니다.",
+            }
+        )

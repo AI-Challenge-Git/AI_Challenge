@@ -1,7 +1,15 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    UUID4,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from app.codes import (
     FieldStatus,
@@ -13,7 +21,11 @@ from app.codes import (
 
 
 class ApiModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        hide_input_in_errors=True,
+        str_strip_whitespace=True,
+    )
 
 
 class StrictAiModel(BaseModel):
@@ -66,13 +78,13 @@ class ExtractionResult(StrictAiModel):
 
 
 class ReportCreateRequest(ApiModel):
-    client_request_id: UUID
+    client_request_id: UUID4
     text: str
 
 
 class TechnicalConfirmation(ApiModel):
     issue_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
-    symptom: str | None = Field(default=None, max_length=500)
+    symptom: str | None = Field(default=None, min_length=1, max_length=500)
     submission_status: SubmissionStatus
     error_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
     reported_occurred_at: datetime | None
@@ -87,11 +99,11 @@ class TechnicalConfirmation(ApiModel):
 
 class ConsultationConfirmation(ApiModel):
     action: OrderAction
-    symbol_name: str | None = Field(default=None, max_length=80)
+    symbol_name: str | None = Field(default=None, min_length=1, max_length=80)
     symbol_code: str | None = Field(default=None, pattern=r"^[0-9]{6}$")
-    quantity: int | None = Field(default=None, gt=0)
+    quantity: StrictInt | None = Field(default=None, gt=0)
     order_type: OrderType
-    price_krw: int | None = Field(default=None, gt=0)
+    price_krw: StrictInt | None = Field(default=None, gt=0)
     attempted_at: datetime | None
 
     @field_validator("attempted_at")
@@ -109,7 +121,7 @@ class ConsultationConfirmation(ApiModel):
 
 
 class ReportConfirmationRequest(ApiModel):
-    analysis_version: int = Field(ge=1)
+    analysis_version: StrictInt = Field(ge=1)
     technical_symptom: TechnicalConfirmation
     consultation: ConsultationConfirmation
 
