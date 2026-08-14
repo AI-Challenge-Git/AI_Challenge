@@ -5,6 +5,9 @@ COPY --from=uv /uv /uvx /bin/
 
 WORKDIR /app
 
+RUN groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -19,6 +22,8 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY app ./app
 
+USER app
+
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
