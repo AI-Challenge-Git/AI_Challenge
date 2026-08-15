@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from uuid import UUID
 
@@ -13,10 +14,20 @@ from pydantic import (
 
 from app.codes import (
     FieldStatus,
+    IssueType,
     OrderAction,
     OrderType,
     ReportStatus,
     SubmissionStatus,
+)
+
+# FE-07 / AI-05: 원문에 날짜 없이 시각만 있으면(예: "09:03") CONFIRMED_FROM_TEXT로
+# 확정할 수 없다. 날짜+시각+UTC offset이 모두 있는 완전한 형식일 때만 허용한다.
+# 이 값은 masked_text(고객 원문)에서만 근거를 취하며, 이미지 첨부 등 텍스트 외
+# 입력에서 유추한 시각은 여기 해당하지 않는다 (이미지는 저장만 하고 AI가
+# 판단하지 않음 — 판단은 상담사 몫).
+_FULL_DATETIME_WITH_OFFSET = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
 )
 
 
@@ -39,10 +50,14 @@ class CandidateField[T](StrictAiModel):
 
     @model_validator(mode="after")
     def validate_unknown_value(self) -> "CandidateField[T]":
-        if self.status is FieldStatus.UNKNOWN and (
+        # AI-05: 근거 없는 값은 value·evidence 모두 null.
+        # UNKNOWN과 OUT_OF_SCOPE 둘 다 여기 해당한다.
+        if self.status in (FieldStatus.UNKNOWN, FieldStatus.OUT_OF_SCOPE) and (
             self.value is not None or self.evidence_quote is not None
         ):
-            raise ValueError("UNKNOWN fields cannot contain a value or evidence")
+            raise ValueError(
+                f"{self.status} fields cannot contain a value or evidence"
+            )
         if self.status is FieldStatus.CONFIRMED_FROM_TEXT and (
             self.value is None or not self.evidence_quote
         ):
@@ -51,11 +66,27 @@ class CandidateField[T](StrictAiModel):
 
 
 class TechnicalCandidate(StrictAiModel):
-    issue_type: CandidateField[str]
+    issue_type: CandidateField[IssueType]
     symptom: CandidateField[str]
     submission_status: CandidateField[SubmissionStatus]
     error_code: CandidateField[str]
-    reported_occurred_at: CandidateField[datetime]
+    # FE-07: 날짜 없는 시각("09:03")을 표현해야 하므로 datetime이 아니라 str로 둔다.
+    # 완전한 날짜+시각+offset이 있을 때만 CONFIRMED_FROM_TEXT를 허용한다 (아래 validator).
+    reported_occurred_at: CandidateField[str]
+
+    @model_validator(mode="after")
+    def enforce_occurred_at_confirmation_rule(self) -> "TechnicalCandidate":
+        field = self.reported_occurred_at
+        if field.status is FieldStatus.CONFIRMED_FROM_TEXT:
+            if field.value is None or not _FULL_DATETIME_WITH_OFFSET.match(
+                field.value
+            ):
+                raise ValueError(
+                    "reported_occurred_at can be CONFIRMED_FROM_TEXT only when "
+                    "the source text contains a full date, time, and UTC offset. "
+                    "Date-less times (e.g. '09:03') must use NEEDS_CONFIRMATION."
+                )
+        return self
 
 
 class ConsultationCandidate(StrictAiModel):
@@ -65,7 +96,20 @@ class ConsultationCandidate(StrictAiModel):
     quantity: CandidateField[int]
     order_type: CandidateField[OrderType]
     price_krw: CandidateField[int]
-    attempted_at: CandidateField[datetime]
+    attempted_at: CandidateField[str]
+
+    @model_validator(mode="after")
+    def enforce_attempted_at_confirmation_rule(self) -> "ConsultationCandidate":
+        field = self.attempted_at
+        if field.status is FieldStatus.CONFIRMED_FROM_TEXT:
+            if field.value is None or not _FULL_DATETIME_WITH_OFFSET.match(
+                field.value
+            ):
+                raise ValueError(
+                    "attempted_at can be CONFIRMED_FROM_TEXT only when the "
+                    "source text contains a full date, time, and UTC offset."
+                )
+        return self
 
 
 class ExtractionResult(StrictAiModel):
@@ -83,7 +127,7 @@ class ReportCreateRequest(ApiModel):
 
 
 class TechnicalConfirmation(ApiModel):
-    issue_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+    issue_type: IssueType
     symptom: str | None = Field(default=None, min_length=1, max_length=500)
     submission_status: SubmissionStatus
     error_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")

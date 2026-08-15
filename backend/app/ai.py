@@ -1,12 +1,15 @@
 from typing import Protocol
 
-from app.codes import FieldStatus
+from app.codes import FieldStatus, IssueType
 from app.schemas import (
     CandidateField,
     ConsultationCandidate,
     ExtractionResult,
     TechnicalCandidate,
 )
+
+# AI-11: 마스킹 placeholder는 실제 값으로 복원·추론하지 않는다.
+_PLACEHOLDER_TOKENS = frozenset({"[PHONE]", "[ACCOUNT]", "[EMAIL]"})
 
 
 class DualExtractor(Protocol):
@@ -25,8 +28,8 @@ class FakeDualExtractor:
             raise ValueError("masked_text cannot be empty")
 
         return ExtractionResult(
-            schema_version="dual-extraction.fake.v1",
-            taxonomy_version="issue-taxonomy.pending",
+            schema_version="dual-extraction.v1",
+            taxonomy_version="issue-type.v1",
             adapter_name="fake",
             model_id=None,
             technical=TechnicalCandidate(
@@ -49,8 +52,36 @@ class FakeDualExtractor:
 
 
 def validate_evidence_quotes(result: ExtractionResult, masked_text: str) -> None:
+    """AI-03: evidence_quote는 masked_text의 실제 substring이어야 한다."""
     for section in (result.technical, result.consultation):
         for field_name in type(section).model_fields:
             quote = getattr(section, field_name).evidence_quote
             if quote is not None and quote not in masked_text:
-                raise ValueError("AI evidence must be a substring of masked_text")
+                raise ValueError(
+                    f"{field_name}: AI evidence must be a substring of masked_text"
+                )
+
+
+def validate_placeholder_integrity(result: ExtractionResult) -> None:
+    """
+    AI-11: evidence_quote가 마스킹 placeholder([PHONE] 등)를 가리키는 경우,
+    value는 그 placeholder를 실제 값으로 추론·복원한 결과여서는 안 된다.
+    """
+    for section in (result.technical, result.consultation):
+        for field_name in type(section).model_fields:
+            field = getattr(section, field_name)
+            if field.evidence_quote in _PLACEHOLDER_TOKENS:
+                if field.value not in _PLACEHOLDER_TOKENS:
+                    raise ValueError(
+                        f"{field_name}: placeholder evidence cannot resolve to "
+                        "an inferred concrete value"
+                    )
+
+
+def validate_extraction_result(result: ExtractionResult, masked_text: str) -> None:
+    """
+    분석 결과 전체를 검증한다. 하나라도 위반하면 응답 전체를 거부한다
+    (개별 필드가 아니라 ExtractionResult 단위로 실패 처리).
+    """
+    validate_evidence_quotes(result, masked_text)
+    validate_placeholder_integrity(result)
