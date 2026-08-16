@@ -51,8 +51,9 @@ class CandidateField[T](StrictAiModel):
     @model_validator(mode="after")
     def validate_unknown_value(self) -> "CandidateField[T]":
         # AI-05: 근거 없는 값은 value·evidence 모두 null.
-        # UNKNOWN과 OUT_OF_SCOPE 둘 다 여기 해당한다.
-        if self.status in (FieldStatus.UNKNOWN, FieldStatus.OUT_OF_SCOPE) and (
+        # CONFIRMED_FROM_TEXT만 유일하게 value를 가질 수 있다.
+        # UNKNOWN, OUT_OF_SCOPE, NEEDS_CONFIRMATION은 전부 value/evidence가 null이어야 한다.
+        if self.status is not FieldStatus.CONFIRMED_FROM_TEXT and (
             self.value is not None or self.evidence_quote is not None
         ):
             raise ValueError(
