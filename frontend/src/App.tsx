@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -15,7 +15,7 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { analyzeReport, deleteConsultationCard, saveConfirmedReport } from "./api";
+import { analyzeReport, deleteConsultationCard, saveConfirmedReport, validateScreenshot } from "./api";
 import AgentDesk from "./AgentDesk";
 import Dashboard from "./Dashboard";
 import type {
@@ -62,6 +62,7 @@ const ORDER_TYPE_LABEL: Record<ConsultationData["order_type"], string> = {
 };
 
 type Stage = "input" | "review" | "complete";
+type AnalysisState = "idle" | "pending" | "confirmation" | "failed" | "complete";
 
 interface ResultFieldProps {
   label: string;
@@ -122,20 +123,30 @@ export default function App() {
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [savedCard, setSavedCard] = useState<SavedCard | null>(null);
   const [editedFields, setEditedFields] = useState<Set<string>>(new Set());
+  const [analysisState, setAnalysisState] = useState<AnalysisState>("idle");
+  const [occurredAtConfirmed, setOccurredAtConfirmed] = useState(false);
+  const [screenshot, setScreenshot] = useState<File | null>(null);
+  const [screenshotName, setScreenshotName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const analyzeRequestId = useRef("");
+  const saveRequestId = useRef("");
+  const deleteRequestId = useRef("");
 
-  const isValidReport = reportText.trim().length >= 20;
+  const reportLength = [...reportText.trim().normalize("NFC")].length;
+  const isValidReport = reportLength >= 20 && reportLength <= 500;
 
   const markEdited = (field: string) => {
     setEditedFields((current) => new Set(current).add(field));
+    saveRequestId.current = "";
   };
 
   const updateTechnical = <K extends keyof TechnicalData>(key: K, value: TechnicalData[K]) => {
     setAnalysis((current) =>
       current ? { ...current, technical: { ...current.technical, [key]: value } } : current,
     );
+    if (key === "occurred_date" || key === "occurred_at") setOccurredAtConfirmed(false);
     markEdited(`technical.${String(key)}`);
   };
 
@@ -152,16 +163,23 @@ export default function App() {
       return;
     }
     setIsLoading(true);
+    setAnalysisState("pending");
     setError(null);
     try {
-      const pendingAnalysis = analyzeReport(reportText.trim());
+      analyzeRequestId.current ||= crypto.randomUUID();
+      const result = await analyzeReport(reportText, analyzeRequestId.current, screenshot ?? undefined);
       setReportText("");
-      const result = await pendingAnalysis;
+      setScreenshot(null);
+      setScreenshotName("");
       setAnalysis(result);
       setEditedFields(new Set());
+      setOccurredAtConfirmed(false);
+      setAnalysisState("confirmation");
+      analyzeRequestId.current = "";
       setStage("review");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (reason) {
+      setAnalysisState("failed");
       setError(reason instanceof Error ? reason.message : "분석 중 문제가 발생했습니다.");
     } finally {
       setIsLoading(false);
@@ -170,16 +188,26 @@ export default function App() {
 
   const handleSave = async () => {
     if (!analysis) return;
+    if (analysis.technical.occurred_at && (!analysis.technical.occurred_date || !occurredAtConfirmed)) {
+      setError("발생 날짜와 시각을 직접 확인해 주세요.");
+      return;
+    }
     setIsLoading(true);
     setError(null);
     try {
+      saveRequestId.current ||= crypto.randomUUID();
       const saved = await saveConfirmedReport({
+        analysis_id: analysis.analysis_id,
+        analysis_version: analysis.analysis_version,
+        attachment_id: analysis.attachment?.id ?? null,
         masked_text: analysis.masked_text,
         technical: analysis.technical,
         consultation: analysis.consultation,
-      });
+      }, saveRequestId.current);
       setSavedCard(saved);
       setReportText("");
+      setAnalysisState("complete");
+      saveRequestId.current = "";
       setStage("complete");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (reason) {
@@ -195,8 +223,15 @@ export default function App() {
     setAnalysis(null);
     setSavedCard(null);
     setEditedFields(new Set());
+    setAnalysisState("idle");
+    setOccurredAtConfirmed(false);
+    setScreenshot(null);
+    setScreenshotName("");
     setError(null);
     setCopied(false);
+    analyzeRequestId.current = "";
+    saveRequestId.current = "";
+    deleteRequestId.current = "";
   };
 
   const copyReference = async () => {
@@ -207,11 +242,12 @@ export default function App() {
   };
 
   const deleteCard = async () => {
-    if (!savedCard || !window.confirm("상담 준비카드를 삭제할까요? 삭제 후에는 참조번호로 조회할 수 없습니다.")) return;
+    if (!savedCard || !window.confirm("이 참조번호와 연결된 제보 전체를 삭제할까요? 삭제 후에는 다시 조회할 수 없습니다.")) return;
     setIsLoading(true);
     setError(null);
     try {
-      await deleteConsultationCard(savedCard.reference_number);
+      deleteRequestId.current ||= crypto.randomUUID();
+      await deleteConsultationCard(savedCard.reference_number, deleteRequestId.current);
       reset();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "상담 준비카드를 삭제하지 못했습니다.");
@@ -273,37 +309,50 @@ export default function App() {
                 <textarea
                   value={reportText}
                   onChange={(event) => {
-                    setReportText(event.target.value.slice(0, 500));
+                    if ([...event.target.value.normalize("NFC")].length <= 500) setReportText(event.target.value);
+                    analyzeRequestId.current = "";
+                    setAnalysisState("idle");
                     if (error) setError(null);
                   }}
                   placeholder="예: 9시쯤 KB 앱에서 매도 주문을 눌렀는데 계속 로딩되고 주문번호를 확인하지 못했어요."
                   aria-describedby="report-help report-error"
                   aria-label="MTS 오류 상황"
                   aria-invalid={Boolean(error)}
-                  maxLength={500}
                 />
-                <span className={reportText.length > 480 ? "char-count limit" : "char-count"}>
-                  {reportText.length} / 500자
+                <span className={reportLength > 480 ? "char-count limit" : "char-count"}>
+                  {reportLength} / 500자
                 </span>
               </div>
               <div className="input-meta">
                 <p id="report-help">계좌번호·전화번호·이메일은 자동 마스킹됩니다. 주민등록번호·비밀번호·OTP가 포함되면 요청을 거부합니다.</p>
-                <button type="button" className="example-button" onClick={() => setReportText(EXAMPLE_REPORT)}>
+                <button type="button" className="example-button" onClick={() => { setReportText(EXAMPLE_REPORT); analyzeRequestId.current = ""; setAnalysisState("idle"); }}>
                   예시 문장 사용
                 </button>
               </div>
+              <label className="image-upload">
+                <span>오류 화면 이미지 (선택)</span>
+                <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  try {
+                    if (file) validateScreenshot(file);
+                    setScreenshot(file);
+                    setScreenshotName(file?.name ?? "");
+                    analyzeRequestId.current = "";
+                    setAnalysisState("idle");
+                    setError(null);
+                  } catch (reason) {
+                    event.target.value = "";
+                    setScreenshot(null);
+                    setScreenshotName("");
+                    setError(reason instanceof Error ? reason.message : "이미지를 첨부하지 못했습니다.");
+                  }
+                }} />
+                <small>{screenshotName || "PNG·JPG·WebP, 최대 5MB · 계좌번호 등 개인정보가 보이지 않게 가려 주세요."}</small>
+              </label>
               {error ? <p id="report-error" className="error-message" role="alert"><TriangleAlert size={16} /> {error}</p> : null}
 
-              <div className="privacy-note">
-                <ShieldCheck size={20} />
-                <p>
-                  <strong>입력하신 개인정보는 분석 전에 제거됩니다.</strong>
-                  <span>원문은 브라우저에 저장하지 않으며, 주문 정보는 상담 확인용으로 분리합니다.</span>
-                </p>
-              </div>
-
-              <button className="primary-button analyze-button" type="button" onClick={handleAnalyze} disabled={isLoading || !isValidReport}>
-                {isLoading ? <><span className="spinner" /> 안전하게 분석 중...</> : <>AI로 내용 정리하기 <ArrowRight size={18} /></>}
+              <button className="primary-button analyze-button" type="button" onClick={handleAnalyze} disabled={analysisState === "pending" || !isValidReport}>
+                {analysisState === "pending" ? <><span className="spinner" /> 안전하게 분석 중...</> : analysisState === "failed" ? <>같은 요청으로 다시 시도 <ArrowRight size={18} /></> : <>AI로 내용 정리하기 <ArrowRight size={18} /></>}
               </button>
             </div>
           ) : null}
@@ -316,7 +365,7 @@ export default function App() {
                   <h2>AI가 정리한 내용이 맞는지 확인해 주세요.</h2>
                   <p>틀린 값은 바로 고치고, 기억나지 않는 값은 ‘모름’으로 두어도 됩니다.</p>
                 </div>
-                <button className="text-button" type="button" onClick={() => setStage("input")}><ArrowLeft size={16} /> 제보 다시 쓰기</button>
+                <button className="text-button" type="button" onClick={() => { setStage("input"); setAnalysis(null); setAnalysisState("idle"); setOccurredAtConfirmed(false); setError(null); }}><ArrowLeft size={16} /> 제보 다시 쓰기</button>
               </div>
 
               {analysis.masked_items.length > 0 ? (
@@ -328,6 +377,13 @@ export default function App() {
                 <p>{analysis.masked_text}</p>
               </details>
 
+              {analysis.attachment ? (
+                <figure className="attachment-preview">
+                  <img src={analysis.attachment.url} alt="고객이 첨부한 MTS 오류 화면" />
+                  <figcaption>첨부한 오류 화면 · 최종 저장 후 상담원이 함께 확인합니다.</figcaption>
+                </figure>
+              ) : null}
+
               <div className="result-grid">
                 <article className="result-card technical-card">
                   <header>
@@ -336,6 +392,9 @@ export default function App() {
                     <span className="privacy-chip">개인 주문정보 제외</span>
                   </header>
                   <div className="field-grid">
+                    <ResultField label="발생 날짜" status={analysis.technical.field_statuses.occurred_date} evidence={analysis.technical.evidence.occurred_date} edited={editedFields.has("technical.occurred_date")}>
+                      <input aria-label="발생 날짜" type="date" value={analysis.technical.occurred_date ?? ""} onChange={(e) => updateTechnical("occurred_date", e.target.value || null)} />
+                    </ResultField>
                     <ResultField label="이용 채널" status={analysis.technical.field_statuses.channel} evidence={analysis.technical.evidence.channel} edited={editedFields.has("technical.channel")}>
                       <select aria-label="이용 채널" value={analysis.technical.channel} onChange={(e) => updateTechnical("channel", e.target.value as TechnicalData["channel"])}>
                         <option value="M-able">M-able</option><option value="UNKNOWN">모름</option>
@@ -344,6 +403,7 @@ export default function App() {
                     <ResultField label="발생 시각" status={analysis.technical.field_statuses.occurred_at} evidence={analysis.technical.evidence.occurred_at} edited={editedFields.has("technical.occurred_at")}>
                       <input aria-label="발생 시각" type="time" value={analysis.technical.occurred_at ?? ""} onChange={(e) => updateTechnical("occurred_at", e.target.value || null)} />
                     </ResultField>
+                    {analysis.technical.occurred_at ? <label className="verification-check"><input type="checkbox" checked={occurredAtConfirmed} onChange={(e) => setOccurredAtConfirmed(e.target.checked)} /> 발생 날짜와 시각을 직접 확인했습니다.</label> : null}
                     <ResultField label="기능 영역" status={analysis.technical.field_statuses.feature_area} evidence={analysis.technical.evidence.feature_area} edited={editedFields.has("technical.feature_area")}>
                       <select aria-label="기능 영역" value={analysis.technical.feature_area} onChange={(e) => updateTechnical("feature_area", e.target.value as TechnicalData["feature_area"])}>
                         <option value="DOMESTIC_STOCK_ORDER">국내주식 주문</option><option value="UNKNOWN">모름</option>
@@ -356,6 +416,7 @@ export default function App() {
                     </ResultField>
                     <ResultField label="공통 증상" status={analysis.technical.field_statuses.symptom} evidence={analysis.technical.evidence.symptom} edited={editedFields.has("technical.symptom")}>
                       <input aria-label="공통 증상" value={analysis.technical.symptom} onChange={(e) => updateTechnical("symptom", e.target.value)} />
+                      <p className="evidence">종목·수량·가격·주문 구분·개인정보는 입력하지 마세요. 저장 시 서버가 다시 검사합니다.</p>
                     </ResultField>
                     <ResultField label="주문 제출 여부" status={analysis.technical.field_statuses.submission_status} evidence={analysis.technical.evidence.submission_status} edited={editedFields.has("technical.submission_status")}>
                       <select aria-label="주문 제출 여부" value={analysis.technical.submission_status} onChange={(e) => updateTechnical("submission_status", e.target.value as TechnicalData["submission_status"])}>
@@ -418,17 +479,17 @@ export default function App() {
                 <strong>{savedCard.reference_number}</strong>
                 <button type="button" onClick={copyReference}>{copied ? <><Check size={16} /> 복사됨</> : <><Copy size={16} /> 번호 복사</>}</button>
               </div>
-              <div className="expiry"><Clock3 size={17} /> {new Date(savedCard.expires_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}까지 유효 · 2시간 후 자동 만료</div>
+              <div className="expiry"><Clock3 size={17} /> {new Date(savedCard.expires_at).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })}까지 유효 · 2시간 후 자동 만료</div>
               <div className="order-warning"><TriangleAlert size={19} /><p><strong>상담 준비카드는 주문 접수증이 아닙니다.</strong><span>실제 주문은 공식 고객센터 또는 영업점에서 본인확인과 주문내용 재확인을 거쳐야 합니다.</span></p></div>
               {error ? <p className="error-message" role="alert"><TriangleAlert size={16} /> {error}</p> : null}
               <button className="secondary-button" type="button" onClick={reset}>새 제보 작성하기</button>
-              <button className="delete-button" type="button" onClick={deleteCard} disabled={isLoading}><Trash2 size={15} /> {isLoading ? "삭제 중..." : "상담 준비카드 삭제"}</button>
+              <button className="delete-button" type="button" onClick={deleteCard} disabled={isLoading}><Trash2 size={15} /> {isLoading ? "삭제 중..." : "제보 전체 삭제"}</button>
             </div>
           ) : null}
 
           <div className="safety-notice" role="note">
             <Info size={17} aria-hidden="true" />
-            <p>현재 표시되는 내용은 고객 제보를 바탕으로 탐지된 <strong>장애 의심 신호</strong>이며, 공식 확인한 장애가 아닐 수 있습니다.</p>
+            <p>현재 표시되는 내용은 고객 제보를 바탕으로 탐지된 <strong>장애 의심 신호</strong>이며, 공식 확인한 장애가 아닐 수 있습니다.<br />상담 준비정보는 주문 접수·체결 증빙이 아니므로 공식 채널에서 주문 상태를 확인해 주세요.</p>
             <a href="https://www.kbsec.com/go.able?linkcd=m06030002" target="_blank" rel="noreferrer">KB증권 고객센터 1588-6611 <ExternalLink size={12} aria-hidden="true" /></a>
           </div>
         </section>

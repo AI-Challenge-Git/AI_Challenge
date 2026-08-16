@@ -140,7 +140,7 @@ export function analyzeLocally(input: string): AnalysisResponse {
     symptomEvidence = orderEvidence;
   }
 
-  const technicalEvidence: Record<string, string> = {};
+  const technicalEvidence: TechnicalData["evidence"] = {};
   if (occurred.evidence) technicalEvidence.occurred_at = occurred.evidence;
   if (channelEvidence) technicalEvidence.channel = channelEvidence;
   if (orderEvidence) technicalEvidence.feature_area = orderEvidence;
@@ -153,6 +153,7 @@ export function analyzeLocally(input: string): AnalysisResponse {
   }
 
   const technical: TechnicalData = {
+    occurred_date: null,
     occurred_at: occurred.value,
     channel: channelEvidence ? "M-able" : "UNKNOWN",
     feature_area: orderEvidence ? "DOMESTIC_STOCK_ORDER" : "UNKNOWN",
@@ -161,7 +162,8 @@ export function analyzeLocally(input: string): AnalysisResponse {
     submission_status: submittedEvidence ? "SUBMITTED" : "UNKNOWN",
     error_code: null,
     field_statuses: {
-      occurred_at: confirmed(occurred.value),
+      occurred_date: occurred.value ? "NEEDS_CONFIRMATION" : "UNKNOWN",
+      occurred_at: occurred.value ? "NEEDS_CONFIRMATION" : "UNKNOWN",
       channel: channelEvidence ? "CONFIRMED_FROM_TEXT" : "NEEDS_CONFIRMATION",
       feature_area: orderEvidence ? "CONFIRMED_FROM_TEXT" : "NEEDS_CONFIRMATION",
       issue_type: issueType === "UNKNOWN" ? "UNKNOWN" : "CONFIRMED_FROM_TEXT",
@@ -184,7 +186,7 @@ export function analyzeLocally(input: string): AnalysisResponse {
   const price = extractPrice(text);
   const orderTypeEvidence = firstMatch(text, /지정가|시장가/);
 
-  const consultationEvidence: Record<string, string> = {};
+  const consultationEvidence: ConsultationData["evidence"] = {};
   if (sellEvidence || buyEvidence) consultationEvidence.action = sellEvidence ?? buyEvidence!;
   if (symbolEvidence) {
     consultationEvidence.symbol_name = symbolEvidence;
@@ -220,10 +222,19 @@ export function analyzeLocally(input: string): AnalysisResponse {
           ? "NEEDS_CONFIRMATION"
           : "UNKNOWN",
       price: confirmed(price.value),
-      attempted_at: confirmed(occurred.value),
+      attempted_at: occurred.value ? "NEEDS_CONFIRMATION" : "UNKNOWN",
     },
     evidence: consultationEvidence,
   };
 
-  return { masked_text: masked.text, masked_items: masked.detected, technical, consultation };
+  return {
+    analysis_id: crypto.randomUUID(),
+    analysis_version: 1,
+    status: "confirmation",
+    attachment: null,
+    masked_text: masked.text,
+    masked_items: masked.detected,
+    technical,
+    consultation,
+  };
 }

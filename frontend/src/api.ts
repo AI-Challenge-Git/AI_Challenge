@@ -1,6 +1,7 @@
 import { analyzeLocally, maskSensitiveText } from "./mocks/analyzeReport";
 import type {
   AgentCase,
+  AgentSession,
   AgentVerificationInput,
   AgentVerificationResult,
   AnalysisResponse,
@@ -12,6 +13,9 @@ import type {
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "");
 export const DEMO_REFERENCE_NUMBER = "KBSOS-7H4Q-9M2P";
+const SESSION_TOKEN_KEY = "mts-sos-session-token";
+let memorySessionToken = "";
+const mockAttachments = new Map<string, string>();
 
 let mockDashboard: DashboardSnapshot = {
   updated_at: new Date().toISOString(),
@@ -32,8 +36,8 @@ let mockDashboard: DashboardSnapshot = {
       report_count: 32,
       raw_report_count: 38,
       change: "+167%",
-      first_seen: "09:02",
-      last_seen: "10:18",
+      first_seen: "2026-08-15T00:02:00.000Z",
+      last_seen: "2026-08-15T01:18:00.000Z",
       channel: "M-able",
       feature_area: "국내주식 주문",
       symptom: "매도 주문 버튼을 누른 뒤 로딩 화면이 끝나지 않고 주문번호를 확인하지 못함",
@@ -48,8 +52,8 @@ let mockDashboard: DashboardSnapshot = {
       report_count: 18,
       raw_report_count: 22,
       change: "+80%",
-      first_seen: "09:17",
-      last_seen: "10:11",
+      first_seen: "2026-08-15T00:17:00.000Z",
+      last_seen: "2026-08-15T01:11:00.000Z",
       channel: "M-able",
       feature_area: "국내주식 주문",
       symptom: "주문 제출 뒤 완료 또는 실패 결과가 표시되지 않아 접수 여부를 알 수 없음",
@@ -64,8 +68,8 @@ let mockDashboard: DashboardSnapshot = {
       report_count: 7,
       raw_report_count: 9,
       change: "-42%",
-      first_seen: "08:41",
-      last_seen: "09:36",
+      first_seen: "2026-08-14T23:41:00.000Z",
+      last_seen: "2026-08-15T00:36:00.000Z",
       channel: "M-able",
       feature_area: "체결내역 조회",
       symptom: "주문은 체결됐으나 체결 내역과 잔고 화면 반영이 늦게 나타남",
@@ -78,7 +82,7 @@ let mockDashboard: DashboardSnapshot = {
     title: "KB증권 주문장애 발생 시 처리특례",
     version: "민원사무편람",
     checked_at: "2026-08-14",
-    source_url: "https://www.kbsec.com/go.able?linkcd=s061000010002",
+    source_url: "https://www.kbsec.com/go.able?linkcd=s060318010004&utm_source=chatgpt.com",
   },
 };
 
@@ -91,6 +95,7 @@ function makeMockCase(
   expires_at: string,
   technical: TechnicalData,
   consultation: ConsultationData,
+  attachment_url: string | null = null,
 ): AgentCase {
   return {
     reference_number,
@@ -99,6 +104,7 @@ function makeMockCase(
     consultation,
     related_signal: mockDashboard.signals[0] ?? null,
     similarity: mockDashboard.signals.length ? 0.94 : null,
+    attachment_url,
   };
 }
 
@@ -119,22 +125,51 @@ function randomGroup(length: number): string {
   return Array.from({ length }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
 }
 
+function newSessionToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+function sessionToken(): string {
+  if (typeof sessionStorage === "undefined") return memorySessionToken ||= newSessionToken();
+  const stored = sessionStorage.getItem(SESSION_TOKEN_KEY);
+  if (stored) return stored;
+  const token = newSessionToken();
+  sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+  return token;
+}
+
 async function parseError(response: Response): Promise<string> {
   try {
-    const body = (await response.json()) as { detail?: string; title?: string };
-    return body.detail ?? body.title ?? "요청을 처리하지 못했습니다.";
+    const body = (await response.json()) as { detail?: unknown };
+    if (typeof body.detail === "string") return body.detail;
+    if (Array.isArray(body.detail)) {
+      const messages = body.detail.flatMap((item) =>
+        item && typeof item === "object" && "msg" in item ? [String(item.msg)] : [],
+      );
+      if (messages.length) return messages.join(", ");
+    }
+    if (body.detail && typeof body.detail === "object") return "요청 값이 올바르지 않습니다.";
+    return "요청을 처리하지 못했습니다.";
   } catch {
     return "요청을 처리하지 못했습니다.";
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, token: string | null = sessionToken()): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
-    credentials: "include",
-    headers: { Accept: "application/json, application/problem+json", "Content-Type": "application/json" },
     ...init,
+    headers: {
+      Accept: "application/json, application/problem+json",
+      ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init.headers,
+    },
   });
-  if (!response.ok) throw new Error(await parseError(response));
+  if (!response.ok) {
+    const detail = await parseError(response);
+    throw new Error(response.status === 409 ? `최신 상태와 충돌했습니다. 다시 확인해 주세요. ${detail}` : detail);
+  }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
@@ -142,29 +177,72 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 function isAnalysisResponse(value: unknown): value is AnalysisResponse {
   if (!value || typeof value !== "object") return false;
   const body = value as Record<string, unknown>;
-  return typeof body.masked_text === "string"
+  return typeof body.analysis_id === "string"
+    && typeof body.analysis_version === "number"
+    && body.status === "confirmation"
+    && (body.attachment === null || Boolean(
+      body.attachment
+      && typeof body.attachment === "object"
+      && typeof (body.attachment as Record<string, unknown>).id === "string"
+      && typeof (body.attachment as Record<string, unknown>).url === "string",
+    ))
+    && typeof body.masked_text === "string"
     && Array.isArray(body.masked_items)
     && Boolean(body.technical && typeof body.technical === "object")
     && Boolean(body.consultation && typeof body.consultation === "object");
 }
 
-export async function analyzeReport(rawText: string): Promise<AnalysisResponse> {
-  if (!apiBaseUrl) return analyzeLocally(rawText);
+export function normalizeReportText(rawText: string): string {
+  const text = rawText.trim().normalize("NFC");
+  const length = [...text].length;
+  if (length < 20 || length > 500) throw new Error("오류 상황을 20자 이상 500자 이하로 입력해 주세요.");
+  return text;
+}
 
-  const clientMasked = maskSensitiveText(rawText);
-  const body = await request<unknown>("/api/reports/analyze", {
+export function validateScreenshot(file: File): void {
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error("PNG, JPG, WebP 이미지만 첨부할 수 있습니다.");
+  if (file.size > 5 * 1024 * 1024) throw new Error("이미지는 5MB 이하만 첨부할 수 있습니다.");
+}
+
+export async function analyzeReport(rawText: string, clientRequestId: string = crypto.randomUUID(), screenshot?: File): Promise<AnalysisResponse> {
+  const text = normalizeReportText(rawText);
+  const requestBody = JSON.stringify({ text, client_request_id: clientRequestId });
+  if (new TextEncoder().encode(requestBody).byteLength > 16 * 1024) throw new Error("입력 용량은 16KiB 이하여야 합니다.");
+  if (screenshot) validateScreenshot(screenshot);
+  if (!apiBaseUrl) {
+    const result = analyzeLocally(text);
+    if (!screenshot) return result;
+    const id = crypto.randomUUID();
+    const url = URL.createObjectURL(screenshot);
+    mockAttachments.set(id, url);
+    return { ...result, attachment: { id, url } };
+  }
+
+  const clientMasked = maskSensitiveText(text);
+  const body = screenshot ? new FormData() : requestBody;
+  if (body instanceof FormData) {
+    body.set("text", clientMasked.text);
+    body.set("client_request_id", clientRequestId);
+    body.set("screenshot", screenshot!);
+  }
+  const responseBody = await request<unknown>("/api/reports/analyze", {
     method: "POST",
-    body: JSON.stringify({ text: clientMasked.text }),
+    body: body instanceof FormData
+      ? body
+      : JSON.stringify({ text: clientMasked.text, client_request_id: clientRequestId }),
   });
-  if (!isAnalysisResponse(body)) throw new Error("AI 분석 응답 형식이 올바르지 않습니다.");
-  return body;
+  if (!isAnalysisResponse(responseBody)) throw new Error("AI 분석 응답 형식이 올바르지 않습니다.");
+  return responseBody;
 }
 
 export async function saveConfirmedReport(payload: {
+  analysis_id: string;
+  analysis_version: number;
+  attachment_id: string | null;
   masked_text: string;
   technical: TechnicalData;
   consultation: ConsultationData;
-}): Promise<SavedCard> {
+}, clientRequestId: string = crypto.randomUUID()): Promise<SavedCard> {
   if (!apiBaseUrl) {
     const saved = {
       reference_number: `KBSOS-${randomGroup(4)}-${randomGroup(4)}`,
@@ -181,7 +259,7 @@ export async function saveConfirmedReport(payload: {
             ...first,
             report_count: first.report_count + 1,
             raw_report_count: first.raw_report_count + 1,
-            last_seen: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+            last_seen: new Date().toISOString(),
           }, ...rest]
         : [],
       volume: mockDashboard.volume.map((item, index) =>
@@ -190,18 +268,22 @@ export async function saveConfirmedReport(payload: {
     };
     mockCards.set(
       saved.reference_number,
-      makeMockCase(saved.reference_number, saved.expires_at, payload.technical, payload.consultation),
+      makeMockCase(
+        saved.reference_number,
+        saved.expires_at,
+        payload.technical,
+        payload.consultation,
+        payload.attachment_id ? mockAttachments.get(payload.attachment_id) ?? null : null,
+      ),
     );
     return saved;
   }
 
-  const sessionId = sessionStorage.getItem("mts-sos-session") ?? crypto.randomUUID();
-  sessionStorage.setItem("mts-sos-session", sessionId);
   const body = await request<{
     consultation_card: { reference_number: string; expires_at: string };
   }>("/api/reports", {
     method: "POST",
-    body: JSON.stringify({ ...payload, session_id: sessionId }),
+    body: JSON.stringify({ ...payload, client_request_id: clientRequestId }),
   });
   return {
     reference_number: body.consultation_card.reference_number,
@@ -214,7 +296,17 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
   return request<DashboardSnapshot>("/api/signals/dashboard");
 }
 
-export async function getConsultationCard(reference: string): Promise<AgentCase> {
+export async function loginAgent(employeeId: string, password: string): Promise<AgentSession> {
+  if (!apiBaseUrl) return { access_token: `mock-agent-${crypto.randomUUID()}`, agent_label: employeeId };
+  const body = await request<{ access_token: string; agent_label?: string }>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ employee_id: employeeId, password }),
+  }, null);
+  if (!body.access_token) throw new Error("로그인 응답에 인증 토큰이 없습니다.");
+  return { access_token: body.access_token, agent_label: body.agent_label ?? employeeId };
+}
+
+export async function getConsultationCard(reference: string, agentToken?: string): Promise<AgentCase> {
   const normalized = reference.trim().toUpperCase();
   if (!apiBaseUrl) {
     const card = mockCards.get(normalized);
@@ -225,29 +317,43 @@ export async function getConsultationCard(reference: string): Promise<AgentCase>
   return request<AgentCase>("/api/consultation-cards/lookup", {
     method: "POST",
     body: JSON.stringify({ reference_number: normalized }),
-  });
+  }, agentToken);
 }
 
-export async function deleteConsultationCard(reference: string): Promise<void> {
+export async function deleteConsultationCard(reference: string, clientRequestId: string = crypto.randomUUID()): Promise<void> {
   const normalized = reference.trim().toUpperCase();
   if (!apiBaseUrl) {
-    if (!mockCards.delete(normalized)) throw new Error("삭제할 상담 준비카드를 찾지 못했습니다.");
+    const card = mockCards.get(normalized);
+    if (!card) throw new Error("삭제할 상담 준비카드를 찾지 못했습니다.");
+    if (card.attachment_url?.startsWith("blob:")) URL.revokeObjectURL(card.attachment_url);
+    mockCards.delete(normalized);
     return;
   }
   await request<void>("/api/consultation-cards", {
     method: "DELETE",
-    body: JSON.stringify({ reference_number: normalized }),
+    body: JSON.stringify({ reference_number: normalized, client_request_id: clientRequestId }),
   });
 }
 
 export async function saveAgentVerification(
   reference: string,
   payload: AgentVerificationInput,
+  agentToken?: string,
+  clientRequestId: string = crypto.randomUUID(),
 ): Promise<AgentVerificationResult> {
   const normalized = reference.trim().toUpperCase();
   if (!apiBaseUrl) {
     const card = await getConsultationCard(normalized);
     const issues: AgentVerificationResult["issues"] = [];
+    if (card.consultation.action !== "UNKNOWN" && payload.action !== card.consultation.action) {
+      issues.push({
+        field: "action",
+        level: "IMPORTANT",
+        label: "주문 구분 불일치",
+        customer_value: card.consultation.action,
+        agent_value: payload.action,
+      });
+    }
     if (card.consultation.symbol_name !== null && payload.symbol_name !== card.consultation.symbol_name) {
       issues.push({
         field: "symbol_name",
@@ -255,6 +361,15 @@ export async function saveAgentVerification(
         label: "종목 불일치",
         customer_value: card.consultation.symbol_name,
         agent_value: payload.symbol_name ?? "모름",
+      });
+    }
+    if (card.consultation.symbol_code !== null && payload.symbol_code !== card.consultation.symbol_code) {
+      issues.push({
+        field: "symbol_code",
+        level: "IMPORTANT",
+        label: "종목코드 불일치",
+        customer_value: card.consultation.symbol_code,
+        agent_value: payload.symbol_code ?? "모름",
       });
     }
     if (card.consultation.quantity !== null && payload.quantity !== card.consultation.quantity) {
@@ -275,7 +390,24 @@ export async function saveAgentVerification(
         agent_value: payload.price === null ? "모름" : `${payload.price.toLocaleString()}원`,
       });
     }
-    if (payload.submission_status === "UNKNOWN") {
+    if (card.consultation.order_type !== "UNKNOWN" && payload.order_type !== card.consultation.order_type) {
+      issues.push({
+        field: "order_type",
+        level: "IMPORTANT",
+        label: "주문 방식 불일치",
+        customer_value: card.consultation.order_type,
+        agent_value: payload.order_type,
+      });
+    }
+    if (card.technical.submission_status !== "UNKNOWN" && payload.submission_status !== card.technical.submission_status) {
+      issues.push({
+        field: "submission_status",
+        level: "IMPORTANT",
+        label: "주문 제출 여부 불일치",
+        customer_value: card.technical.submission_status,
+        agent_value: payload.submission_status,
+      });
+    } else if (payload.submission_status === "UNKNOWN") {
       issues.push({
         field: "submission_status",
         level: "NEEDS_CONFIRMATION",
@@ -289,7 +421,9 @@ export async function saveAgentVerification(
       technical: { ...card.technical, submission_status: payload.submission_status },
       consultation: {
         ...card.consultation,
+        action: payload.action,
         symbol_name: payload.symbol_name,
+        symbol_code: payload.symbol_code,
         quantity: payload.quantity,
         price: payload.price,
         order_type: payload.order_type,
@@ -298,7 +432,11 @@ export async function saveAgentVerification(
     return { saved_at: new Date().toISOString(), issues };
   }
   return request<AgentVerificationResult>(
-    `/api/consultation-cards/${encodeURIComponent(normalized)}/verifications`,
-    { method: "POST", body: JSON.stringify(payload) },
+    "/api/consultation-cards/verifications",
+    {
+      method: "POST",
+      body: JSON.stringify({ reference_number: normalized, ...payload, client_request_id: clientRequestId }),
+    },
+    agentToken,
   );
 }

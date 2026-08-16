@@ -4,7 +4,27 @@ export type FieldStatus =
   | "UNKNOWN"
   | "OUT_OF_SCOPE";
 
+type TechnicalField =
+  | "occurred_date"
+  | "occurred_at"
+  | "channel"
+  | "feature_area"
+  | "issue_type"
+  | "symptom"
+  | "submission_status"
+  | "error_code";
+
+type ConsultationField =
+  | "action"
+  | "symbol_name"
+  | "symbol_code"
+  | "quantity"
+  | "order_type"
+  | "price"
+  | "attempted_at";
+
 export interface TechnicalData {
+  occurred_date: string | null;
   occurred_at: string | null;
   channel: "M-able" | "UNKNOWN";
   feature_area: "DOMESTIC_STOCK_ORDER" | "UNKNOWN";
@@ -16,8 +36,8 @@ export interface TechnicalData {
   symptom: string;
   submission_status: "SUBMITTED" | "NOT_SUBMITTED" | "UNKNOWN";
   error_code: string | null;
-  field_statuses: Record<string, FieldStatus>;
-  evidence: Record<string, string>;
+  field_statuses: Record<TechnicalField, FieldStatus>;
+  evidence: Partial<Record<TechnicalField, string>>;
 }
 
 export interface ConsultationData {
@@ -28,11 +48,15 @@ export interface ConsultationData {
   order_type: "LIMIT" | "MARKET" | "UNKNOWN";
   price: number | null;
   attempted_at: string | null;
-  field_statuses: Record<string, FieldStatus>;
-  evidence: Record<string, string>;
+  field_statuses: Record<ConsultationField, FieldStatus>;
+  evidence: Partial<Record<ConsultationField, string>>;
 }
 
 export interface AnalysisResponse {
+  analysis_id: string;
+  analysis_version: number;
+  status: "confirmation";
+  attachment: { id: string; url: string } | null;
   masked_text: string;
   masked_items: string[];
   technical: TechnicalData;
@@ -88,15 +112,23 @@ export interface AgentCase {
   consultation: ConsultationData;
   related_signal: SignalItem | null;
   similarity: number | null;
+  attachment_url: string | null;
 }
 
 export interface AgentVerificationInput {
-  agent_id: string;
+  action: ConsultationData["action"];
   symbol_name: string | null;
+  symbol_code: string | null;
   quantity: number | null;
   price: number | null;
   order_type: ConsultationData["order_type"];
   submission_status: TechnicalData["submission_status"];
+  order_history_checked: true;
+}
+
+export interface AgentSession {
+  access_token: string;
+  agent_label: string;
 }
 
 export interface VerificationIssue {
