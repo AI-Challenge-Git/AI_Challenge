@@ -11,6 +11,10 @@ describe("민감정보 마스킹", () => {
     expect(result.text).not.toContain("010-1234-5678");
     expect(result.text).not.toContain("123-456-789012");
     expect(result.text).not.toContain("test@example.com");
+    expect(result.text).toContain("[전화번호]");
+    expect(result.text).toContain("[계좌번호]");
+    expect(result.text).toContain("[이메일]");
+    expect(result.text).not.toContain("마스킹]");
     expect(result.detected).toEqual(expect.arrayContaining(["전화번호", "계좌번호", "이메일"]));
   });
 

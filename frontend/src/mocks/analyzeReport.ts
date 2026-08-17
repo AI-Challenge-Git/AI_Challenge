@@ -64,7 +64,7 @@ export function maskSensitiveText(text: string): { text: string; detected: strin
     if (pattern.test(masked)) {
       detected.push(label);
       pattern.lastIndex = 0;
-      masked = masked.replace(pattern, `[${label} 마스킹]`);
+      masked = masked.replace(pattern, `[${label}]`);
     }
   }
   return { text: masked, detected };
