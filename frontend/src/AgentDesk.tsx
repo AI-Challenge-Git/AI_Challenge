@@ -1,5 +1,11 @@
 import { type FormEvent, useRef, useState } from "react";
-import { DEMO_REFERENCE_NUMBER, getConsultationCard, loginAgent, saveAgentVerification } from "./api";
+import {
+  DEMO_AGENT_ID,
+  DEMO_AGENT_PASSWORD,
+  getConsultationCard,
+  loginAgent,
+  saveAgentVerification,
+} from "./api";
 import type {
   AgentCase,
   AgentSession,
@@ -121,11 +127,11 @@ export default function AgentDesk() {
         <section className="dashboard-card agent-login">
           <header><div><span className="section-kicker">AGENT ACCESS</span><h1>상담원 로그인</h1></div></header>
           <form className="agent-form" onSubmit={login}>
-            <label>사번<input name="agentId" defaultValue="CS1024" autoComplete="username" minLength={4} required /></label>
-            <label>비밀번호<input name="password" type="password" defaultValue="demo" autoComplete="current-password" minLength={4} required /></label>
+            <label>사번<input name="agentId" defaultValue={DEMO_AGENT_ID} autoComplete="username" minLength={4} required /></label>
+            <label>비밀번호<input name="password" type="password" defaultValue={DEMO_AGENT_PASSWORD} autoComplete="current-password" minLength={4} required /></label>
             <button className="primary-button" type="submit" disabled={loggingIn}>{loggingIn ? "로그인 중..." : "로그인"}</button>
             {error ? <p className="error-message" role="alert">{error}</p> : null}
-            <p className="agent-note">로그인 API가 발급한 토큰으로만 상담원 기능을 요청합니다.</p>
+            <p className="agent-note">데모 계정 <strong>{DEMO_AGENT_ID}</strong> / <strong>{DEMO_AGENT_PASSWORD}</strong></p>
           </form>
         </section>
       </div>
@@ -143,7 +149,7 @@ export default function AgentDesk() {
         <section className="dashboard-card reference-search">
           <form onSubmit={search}>
             <label htmlFor="reference">상담 참조번호</label>
-            <div><input id="reference" name="reference" defaultValue={DEMO_REFERENCE_NUMBER} required maxLength={32} /><button className="primary-button" type="submit" disabled={searching}>{searching ? "검색 중..." : "조회"}</button></div>
+            <div><input id="reference" name="reference" placeholder="상담 참조번호 입력" required maxLength={32} /><button className="primary-button" type="submit" disabled={searching}>{searching ? "검색 중..." : "조회"}</button></div>
           </form>
           {error ? <p className="error-message" role="alert">{error}</p> : null}
         </section>

@@ -31,7 +31,10 @@ export interface TechnicalData {
   issue_type:
     | "ORDER_SUBMISSION_FAILURE"
     | "ORDER_RESULT_UNCONFIRMED"
-    | "ORDER_OTHER"
+    | "LOGIN_ACCESS_FAILURE"
+    | "BALANCE_INQUIRY_ERROR"
+    | "DEVICE_NETWORK_SUSPECTED"
+    | "UNRELATED_OR_AMBIGUOUS"
     | "UNKNOWN";
   symptom: string;
   submission_status: "SUBMITTED" | "NOT_SUBMITTED" | "UNKNOWN";
@@ -62,6 +65,31 @@ export interface AnalysisResponse {
   technical: TechnicalData;
   consultation: ConsultationData;
 }
+
+export interface AnalysisPendingResponse {
+  analysis_id: string;
+  analysis_version: number;
+  status: "pending";
+}
+
+export interface AnalysisFailedResponse {
+  analysis_id: string;
+  analysis_version: number;
+  status: "failed";
+  error: { code: "TIMEOUT" | "INVALID_SCHEMA" | "PROVIDER_UNAVAILABLE" };
+}
+
+export interface AnalysisCompleteResponse {
+  analysis_id: string;
+  analysis_version: number;
+  status: "complete";
+}
+
+export type AnalysisResult =
+  | AnalysisResponse
+  | AnalysisPendingResponse
+  | AnalysisFailedResponse
+  | AnalysisCompleteResponse;
 
 export interface SavedCard {
   reference_number: string;
