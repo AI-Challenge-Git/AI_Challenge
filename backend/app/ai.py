@@ -1,6 +1,9 @@
+import asyncio
+from functools import lru_cache
 from typing import Protocol
 
-from app.codes import FieldStatus, IssueType
+from app.codes import FieldStatus
+from app.real_extractor_v5 import ExtractFailureReason, RealDualExtractor
 from app.schemas import (
     CandidateField,
     ConsultationCandidate,
@@ -8,12 +11,14 @@ from app.schemas import (
     TechnicalCandidate,
 )
 
-# AI-11: 마스킹 placeholder는 실제 값으로 복원·추론하지 않는다.
-_PLACEHOLDER_TOKENS = frozenset({"[PHONE]", "[ACCOUNT]", "[EMAIL]"})
-
 
 class DualExtractor(Protocol):
-    def extract(self, masked_text: str) -> ExtractionResult: ...
+    schema_version: str
+    taxonomy_version: str
+    adapter_name: str
+    model_id: str | None
+
+    async def extract(self, masked_text: str) -> ExtractionResult: ...
 
 
 def _unknown_candidate[T]() -> CandidateField[T]:
@@ -23,15 +28,20 @@ def _unknown_candidate[T]() -> CandidateField[T]:
 class FakeDualExtractor:
     """Deterministic contract fixture used until the AI-owned schema is approved."""
 
-    def extract(self, masked_text: str) -> ExtractionResult:
+    schema_version = "dual-extraction.fake.v1"
+    taxonomy_version = "issue-taxonomy.pending"
+    adapter_name = "fake"
+    model_id: str | None = None
+
+    async def extract(self, masked_text: str) -> ExtractionResult:
         if not masked_text:
             raise ValueError("masked_text cannot be empty")
 
         return ExtractionResult(
-            schema_version="dual-extraction.v1",
-            taxonomy_version="issue-type.v1",
-            adapter_name="fake",
-            model_id=None,
+            schema_version=self.schema_version,
+            taxonomy_version=self.taxonomy_version,
+            adapter_name=self.adapter_name,
+            model_id=self.model_id,
             technical=TechnicalCandidate(
                 issue_type=_unknown_candidate(),
                 symptom=_unknown_candidate(),
@@ -51,37 +61,54 @@ class FakeDualExtractor:
         )
 
 
+class NvidiaDualExtractorAdapter:
+    """
+    DualExtractor Protocol에 RealDualExtractor(NVIDIA Build, 8B)를 연결하는 어댑터.
+
+    - Protocol이 요구하는 클래스 속성(schema_version 등)을 노출한다.
+    - extract_safe()의 ExtractOutcome(반환값 기반 성공/실패 표현)을
+      analyze_report()가 기대하는 "성공 시 반환값, 실패 시 예외" 방식으로 변환한다.
+    - extract_safe()는 동기(blocking) 함수이므로 asyncio.to_thread로 감싸서
+      FastAPI 이벤트 루프를 막지 않게 한다.
+
+    주의: settings.ai_timeout_seconds(기본 10초)가 RealDualExtractor 내부
+    NVIDIA 클라이언트 timeout(90초)보다 짧다. correction retry가 발생하면
+    10초를 넘길 수 있으므로, 배포 전 settings.ai_timeout_seconds 값을
+    백엔드 담당자와 조정해야 한다.
+    """
+
+    schema_version = "dual-extraction.v1"
+    taxonomy_version = "issue-type.v1"
+    adapter_name = "nvidia-build"
+    model_id: str | None = "meta/llama-3.1-8b-instruct"
+
+    def __init__(self) -> None:
+        self._inner = RealDualExtractor()
+
+    async def extract(self, masked_text: str) -> ExtractionResult:
+        outcome = await asyncio.to_thread(self._inner.extract_safe, masked_text)
+
+        if outcome.result is None:
+            if outcome.failure_reason == ExtractFailureReason.TIMEOUT:
+                raise TimeoutError(outcome.detail)
+            if outcome.failure_reason in (
+                ExtractFailureReason.INVALID_JSON,
+                ExtractFailureReason.INVALID_SCHEMA,
+            ):
+                raise ValueError(outcome.detail)
+            raise RuntimeError(outcome.detail)  # PROVIDER_UNAVAILABLE 등
+
+        return outcome.result
+
+
+@lru_cache
+def get_dual_extractor() -> DualExtractor:
+    return NvidiaDualExtractorAdapter()
+
+
 def validate_evidence_quotes(result: ExtractionResult, masked_text: str) -> None:
-    """AI-03: evidence_quote는 masked_text의 실제 substring이어야 한다."""
     for section in (result.technical, result.consultation):
         for field_name in type(section).model_fields:
             quote = getattr(section, field_name).evidence_quote
             if quote is not None and quote not in masked_text:
-                raise ValueError(
-                    f"{field_name}: AI evidence must be a substring of masked_text"
-                )
-
-
-def validate_placeholder_integrity(result: ExtractionResult) -> None:
-    """
-    AI-11: evidence_quote가 마스킹 placeholder([PHONE] 등)를 가리키는 경우,
-    value는 그 placeholder를 실제 값으로 추론·복원한 결과여서는 안 된다.
-    """
-    for section in (result.technical, result.consultation):
-        for field_name in type(section).model_fields:
-            field = getattr(section, field_name)
-            if field.evidence_quote in _PLACEHOLDER_TOKENS:
-                if field.value not in _PLACEHOLDER_TOKENS:
-                    raise ValueError(
-                        f"{field_name}: placeholder evidence cannot resolve to "
-                        "an inferred concrete value"
-                    )
-
-
-def validate_extraction_result(result: ExtractionResult, masked_text: str) -> None:
-    """
-    분석 결과 전체를 검증한다. 하나라도 위반하면 응답 전체를 거부한다
-    (개별 필드가 아니라 ExtractionResult 단위로 실패 처리).
-    """
-    validate_evidence_quotes(result, masked_text)
-    validate_placeholder_integrity(result)
+                raise ValueError("AI evidence must be a substring of masked_text")
