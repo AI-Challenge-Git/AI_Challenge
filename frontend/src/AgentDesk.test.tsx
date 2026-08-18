@@ -8,6 +8,19 @@ afterEach(() => {
 });
 
 describe("상담 참조번호 조회", () => {
+  it("실제 API 주소가 있어도 데모 계정은 Mock 상담원 화면을 사용한다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.resetModules();
+    const { DEMO_REFERENCE_NUMBER, getConsultationCard, loginAgent } = await import("./api");
+
+    const agent = await loginAgent("CS1024", "demo");
+    expect((await getConsultationCard(DEMO_REFERENCE_NUMBER, agent.access_token)).reference_number)
+      .toBe(DEMO_REFERENCE_NUMBER);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("참조번호를 정규화하고 없는 번호를 거절한다", async () => {
     const { DEMO_REFERENCE_NUMBER, getConsultationCard } = await import("./api");
     expect((await getConsultationCard("  kbsos-7h4q-9m2p ")).reference_number).toBe(DEMO_REFERENCE_NUMBER);
@@ -139,6 +152,7 @@ describe("상담 참조번호 조회", () => {
       crypto.randomUUID(),
       new File(["image"], "error.png", { type: "image/png" }),
     );
+    if (analysis.status !== "confirmation") throw new Error("Mock 분석이 완료되지 않았습니다.");
     const saved = await saveConfirmedReport({
       analysis_id: analysis.analysis_id,
       analysis_version: analysis.analysis_version,

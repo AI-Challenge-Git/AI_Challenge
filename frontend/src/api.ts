@@ -5,14 +5,19 @@ import type {
   AgentVerificationInput,
   AgentVerificationResult,
   AnalysisResponse,
+  AnalysisResult,
   ConsultationData,
   DashboardSnapshot,
+  FieldStatus,
   SavedCard,
   TechnicalData,
 } from "./types";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "");
 export const DEMO_REFERENCE_NUMBER = "KBSOS-7H4Q-9M2P";
+export const DEMO_AGENT_ID = "CS1024";
+export const DEMO_AGENT_PASSWORD = "demo";
+const DEMO_AGENT_TOKEN = "mock-agent-demo";
 const SESSION_TOKEN_KEY = "mts-sos-session-token";
 let memorySessionToken = "";
 const mockAttachments = new Map<string, string>();
@@ -139,20 +144,30 @@ function sessionToken(): string {
   return token;
 }
 
-async function parseError(response: Response): Promise<string> {
+export class ApiError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function parseError(response: Response): Promise<ApiError> {
   try {
-    const body = (await response.json()) as { detail?: unknown };
-    if (typeof body.detail === "string") return body.detail;
+    const body = (await response.json()) as { code?: unknown; detail?: unknown };
+    const code = typeof body.code === "string" ? body.code : undefined;
+    if (code === "STALE_ANALYSIS") return new ApiError("더 최신 분석 결과가 있습니다. 다시 분석해 주세요.", code);
+    if (code === "ANALYSIS_NOT_READY") return new ApiError("분석이 아직 완료되지 않았습니다. 다시 분석해 주세요.", code);
+    if (typeof body.detail === "string") return new ApiError(body.detail, code);
     if (Array.isArray(body.detail)) {
       const messages = body.detail.flatMap((item) =>
         item && typeof item === "object" && "msg" in item ? [String(item.msg)] : [],
       );
-      if (messages.length) return messages.join(", ");
+      if (messages.length) return new ApiError(messages.join(", "), code);
     }
-    if (body.detail && typeof body.detail === "object") return "요청 값이 올바르지 않습니다.";
-    return "요청을 처리하지 못했습니다.";
+    if (body.detail && typeof body.detail === "object") return new ApiError("요청 값이 올바르지 않습니다.", code);
+    return new ApiError("요청을 처리하지 못했습니다.", code);
   } catch {
-    return "요청을 처리하지 못했습니다.";
+    return new ApiError("요청을 처리하지 못했습니다.");
   }
 }
 
@@ -167,29 +182,160 @@ async function request<T>(path: string, init: RequestInit = {}, token: string | 
     },
   });
   if (!response.ok) {
-    const detail = await parseError(response);
-    throw new Error(response.status === 409 ? `최신 상태와 충돌했습니다. 다시 확인해 주세요. ${detail}` : detail);
+    throw await parseError(response);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
-function isAnalysisResponse(value: unknown): value is AnalysisResponse {
-  if (!value || typeof value !== "object") return false;
-  const body = value as Record<string, unknown>;
-  return typeof body.analysis_id === "string"
-    && typeof body.analysis_version === "number"
-    && body.status === "confirmation"
-    && (body.attachment === null || Boolean(
-      body.attachment
-      && typeof body.attachment === "object"
-      && typeof (body.attachment as Record<string, unknown>).id === "string"
-      && typeof (body.attachment as Record<string, unknown>).url === "string",
-    ))
-    && typeof body.masked_text === "string"
-    && Array.isArray(body.masked_items)
-    && Boolean(body.technical && typeof body.technical === "object")
-    && Boolean(body.consultation && typeof body.consultation === "object");
+type CandidateField<T> = {
+  value: T | null;
+  status: FieldStatus;
+  evidence_quote: string | null;
+};
+
+const fieldStatuses: FieldStatus[] = ["CONFIRMED_FROM_TEXT", "NEEDS_CONFIRMATION", "UNKNOWN", "OUT_OF_SCOPE"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object");
+}
+
+function candidate<T>(section: Record<string, unknown>, name: string): CandidateField<T> {
+  const raw = section[name];
+  if (!isRecord(raw) || !fieldStatuses.includes(raw.status as FieldStatus)) {
+    throw new Error("AI 분석 응답 형식이 올바르지 않습니다.");
+  }
+  return {
+    value: (raw.value ?? null) as T | null,
+    status: raw.status as FieldStatus,
+    evidence_quote: typeof raw.evidence_quote === "string" ? raw.evidence_quote : null,
+  };
+}
+
+function splitDateTime(value: string | null): { date: string | null; time: string | null } {
+  if (!value) return { date: null, time: null };
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) throw new Error("AI 분석 응답의 발생 시각 형식이 올바르지 않습니다.");
+  const date = [parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate()]
+    .map((part, index) => index ? String(part).padStart(2, "0") : String(part))
+    .join("-");
+  const time = `${String(parsed.getHours()).padStart(2, "0")}:${String(parsed.getMinutes()).padStart(2, "0")}`;
+  return { date, time };
+}
+
+function adaptAnalysisResult(value: unknown): AnalysisResult {
+  if (!isRecord(value)
+    || typeof value.analysis_id !== "string"
+    || typeof value.analysis_version !== "number"
+    || !["pending", "confirmation", "failed", "complete"].includes(String(value.status))) {
+    throw new Error("AI 분석 응답 형식이 올바르지 않습니다.");
+  }
+  const base = { analysis_id: value.analysis_id, analysis_version: value.analysis_version };
+  if (value.status === "pending" || value.status === "complete") return { ...base, status: value.status };
+  if (value.status === "failed") {
+    const error = isRecord(value.error) ? value.error : null;
+    if (!error || !["TIMEOUT", "INVALID_SCHEMA", "PROVIDER_UNAVAILABLE"].includes(String(error.code))) {
+      throw new Error("AI 분석 응답 형식이 올바르지 않습니다.");
+    }
+    return { ...base, status: "failed", error: { code: error.code as "TIMEOUT" | "INVALID_SCHEMA" | "PROVIDER_UNAVAILABLE" } };
+  }
+  if (!isRecord(value.technical)
+    || !isRecord(value.consultation)
+    || typeof value.masked_text !== "string"
+    || !Array.isArray(value.masked_items)) {
+    throw new Error("AI 분석 응답 형식이 올바르지 않습니다.");
+  }
+
+  const issueType = candidate<TechnicalData["issue_type"]>(value.technical, "issue_type");
+  const symptom = candidate<string>(value.technical, "symptom");
+  const submissionStatus = candidate<string>(value.technical, "submission_status");
+  const errorCode = candidate<string>(value.technical, "error_code");
+  const occurred = candidate<string>(value.technical, "reported_occurred_at");
+  const occurredParts = splitDateTime(occurred.value);
+  const action = candidate<ConsultationData["action"]>(value.consultation, "action");
+  const symbolName = candidate<string>(value.consultation, "symbol_name");
+  const symbolCode = candidate<string>(value.consultation, "symbol_code");
+  const quantity = candidate<number>(value.consultation, "quantity");
+  const orderType = candidate<ConsultationData["order_type"]>(value.consultation, "order_type");
+  const price = candidate<number>(value.consultation, "price_krw");
+  const attemptedAt = candidate<string>(value.consultation, "attempted_at");
+
+  const technical: TechnicalData = {
+    occurred_date: occurredParts.date,
+    occurred_at: occurredParts.time,
+    channel: "UNKNOWN",
+    feature_area: "UNKNOWN",
+    issue_type: issueType.value ?? "UNKNOWN",
+    symptom: symptom.value ?? "",
+    submission_status: submissionStatus.value === "CUSTOMER_REPORTED_SUBMITTED"
+      ? "SUBMITTED"
+      : submissionStatus.value === "CUSTOMER_REPORTED_NOT_SUBMITTED"
+        ? "NOT_SUBMITTED"
+        : "UNKNOWN",
+    error_code: errorCode.value,
+    field_statuses: {
+      occurred_date: occurred.status,
+      occurred_at: occurred.status,
+      channel: "UNKNOWN",
+      feature_area: "UNKNOWN",
+      issue_type: issueType.status,
+      symptom: symptom.status,
+      submission_status: submissionStatus.status,
+      error_code: errorCode.status,
+    },
+    evidence: {
+      ...(occurred.evidence_quote ? { occurred_date: occurred.evidence_quote, occurred_at: occurred.evidence_quote } : {}),
+      ...(issueType.evidence_quote ? { issue_type: issueType.evidence_quote } : {}),
+      ...(symptom.evidence_quote ? { symptom: symptom.evidence_quote } : {}),
+      ...(submissionStatus.evidence_quote ? { submission_status: submissionStatus.evidence_quote } : {}),
+      ...(errorCode.evidence_quote ? { error_code: errorCode.evidence_quote } : {}),
+    },
+  };
+  const consultation: ConsultationData = {
+    action: action.value ?? "UNKNOWN",
+    symbol_name: symbolName.value,
+    symbol_code: symbolCode.value,
+    quantity: quantity.value,
+    order_type: orderType.value ?? "UNKNOWN",
+    price: price.value,
+    attempted_at: attemptedAt.value,
+    field_statuses: {
+      action: action.status,
+      symbol_name: symbolName.status,
+      symbol_code: symbolCode.status,
+      quantity: quantity.status,
+      order_type: orderType.status,
+      price: price.status,
+      attempted_at: attemptedAt.status,
+    },
+    evidence: {
+      ...(action.evidence_quote ? { action: action.evidence_quote } : {}),
+      ...(symbolName.evidence_quote ? { symbol_name: symbolName.evidence_quote } : {}),
+      ...(symbolCode.evidence_quote ? { symbol_code: symbolCode.evidence_quote } : {}),
+      ...(quantity.evidence_quote ? { quantity: quantity.evidence_quote } : {}),
+      ...(orderType.evidence_quote ? { order_type: orderType.evidence_quote } : {}),
+      ...(price.evidence_quote ? { price: price.evidence_quote } : {}),
+      ...(attemptedAt.evidence_quote ? { attempted_at: attemptedAt.evidence_quote } : {}),
+    },
+  };
+  let attachment: AnalysisResponse["attachment"] = null;
+  if (value.attachment !== null) {
+    if (!isRecord(value.attachment)
+      || typeof value.attachment.id !== "string"
+      || typeof value.attachment.url !== "string") {
+      throw new Error("AI 분석 응답 형식이 올바르지 않습니다.");
+    }
+    attachment = { id: value.attachment.id, url: value.attachment.url };
+  }
+  return {
+    ...base,
+    status: "confirmation",
+    attachment,
+    masked_text: value.masked_text,
+    masked_items: value.masked_items.map(String),
+    technical,
+    consultation,
+  };
 }
 
 export function normalizeReportText(rawText: string): string {
@@ -204,7 +350,7 @@ export function validateScreenshot(file: File): void {
   if (file.size > 5 * 1024 * 1024) throw new Error("이미지는 5MB 이하만 첨부할 수 있습니다.");
 }
 
-export async function analyzeReport(rawText: string, clientRequestId: string = crypto.randomUUID(), screenshot?: File): Promise<AnalysisResponse> {
+export async function analyzeReport(rawText: string, clientRequestId: string = crypto.randomUUID(), screenshot?: File): Promise<AnalysisResult> {
   const text = normalizeReportText(rawText);
   const requestBody = JSON.stringify({ text, client_request_id: clientRequestId });
   if (new TextEncoder().encode(requestBody).byteLength > 16 * 1024) throw new Error("입력 용량은 16KiB 이하여야 합니다.");
@@ -217,22 +363,32 @@ export async function analyzeReport(rawText: string, clientRequestId: string = c
     mockAttachments.set(id, url);
     return { ...result, attachment: { id, url } };
   }
+  if (screenshot) throw new Error("현재 백엔드 연동에서는 이미지 첨부를 지원하지 않습니다. 이미지를 제거하고 다시 시도해 주세요.");
 
   const clientMasked = maskSensitiveText(text);
-  const body = screenshot ? new FormData() : requestBody;
-  if (body instanceof FormData) {
-    body.set("text", clientMasked.text);
-    body.set("client_request_id", clientRequestId);
-    body.set("screenshot", screenshot!);
+  const body = JSON.stringify({ text: clientMasked.text, client_request_id: clientRequestId });
+  // ponytail: 30초 동안 같은 멱등 요청을 폴링한다. 장기 작업이 필요해지면 전용 상태 조회 API로 교체.
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const result = adaptAnalysisResult(await request<unknown>("/api/reports/analyze", { method: "POST", body }));
+    if (result.status !== "pending") return result;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  const responseBody = await request<unknown>("/api/reports/analyze", {
-    method: "POST",
-    body: body instanceof FormData
-      ? body
-      : JSON.stringify({ text: clientMasked.text, client_request_id: clientRequestId }),
-  });
-  if (!isAnalysisResponse(responseBody)) throw new Error("AI 분석 응답 형식이 올바르지 않습니다.");
-  return responseBody;
+  throw new Error("분석이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.");
+}
+
+function localDateTimeToIso(date: string | null, time: string | null): string | null {
+  if (!date && !time) return null;
+  if (!date || !time) throw new Error("발생 날짜와 시각을 모두 입력해 주세요.");
+  const value = new Date(`${date}T${time}:00`);
+  if (Number.isNaN(value.getTime())) throw new Error("발생 날짜와 시각 형식이 올바르지 않습니다.");
+  return value.toISOString();
+}
+
+function toOffsetIso(value: string | null): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) throw new Error("주문 시각 형식이 올바르지 않습니다.");
+  return parsed.toISOString();
 }
 
 export async function saveConfirmedReport(payload: {
@@ -279,16 +435,67 @@ export async function saveConfirmedReport(payload: {
     return saved;
   }
 
+  const { technical, consultation, ...report } = payload;
+  if (consultation.action === "BUY") throw new Error("현재 백엔드 계약에서는 매도 또는 모름만 선택할 수 있습니다.");
+  if (consultation.quantity !== null
+    && (!Number.isInteger(consultation.quantity) || consultation.quantity <= 0)) {
+    throw new Error("수량은 0보다 큰 정수로 입력해 주세요.");
+  }
+  if (consultation.order_type === "LIMIT"
+    && (!Number.isInteger(consultation.price) || (consultation.price ?? 0) <= 0)) {
+    throw new Error("지정가는 0보다 큰 정수 가격을 입력해 주세요.");
+  }
+  if (consultation.order_type === "MARKET" && consultation.price !== null) {
+    throw new Error("시장가는 가격을 입력하지 않아야 합니다.");
+  }
+  const confirmation = {
+    ...report,
+    technical: {
+      issue_type: technical.issue_type,
+      symptom: technical.symptom.trim() || null,
+      submission_status: technical.submission_status === "SUBMITTED"
+        ? "CUSTOMER_REPORTED_SUBMITTED"
+        : technical.submission_status === "NOT_SUBMITTED"
+          ? "CUSTOMER_REPORTED_NOT_SUBMITTED"
+          : "UNKNOWN",
+      error_code: technical.error_code,
+      reported_occurred_at: localDateTimeToIso(technical.occurred_date, technical.occurred_at),
+    },
+    consultation: {
+      action: consultation.action,
+      symbol_name: consultation.symbol_name,
+      symbol_code: consultation.symbol_code,
+      quantity: consultation.quantity,
+      order_type: consultation.order_type,
+      price_krw: consultation.order_type === "MARKET" ? null : consultation.price,
+      attempted_at: toOffsetIso(consultation.attempted_at),
+    },
+    client_request_id: clientRequestId,
+  };
+
   const body = await request<{
     consultation_card: { reference_number: string; expires_at: string };
   }>("/api/reports", {
     method: "POST",
-    body: JSON.stringify({ ...payload, client_request_id: clientRequestId }),
+    body: JSON.stringify(confirmation),
   });
-  return {
+  const saved = {
     reference_number: body.consultation_card.reference_number,
     expires_at: body.consultation_card.expires_at,
   };
+  mockCards.set(
+    saved.reference_number.toUpperCase(),
+    makeMockCase(saved.reference_number, saved.expires_at, technical, consultation),
+  );
+  return saved;
+}
+
+export async function discardAnalysis(analysisId: string, clientRequestId: string = crypto.randomUUID()): Promise<void> {
+  if (!apiBaseUrl) return;
+  await request<void>("/api/reports", {
+    method: "DELETE",
+    body: JSON.stringify({ analysis_id: analysisId, client_request_id: clientRequestId }),
+  });
 }
 
 export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
@@ -297,7 +504,10 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
 }
 
 export async function loginAgent(employeeId: string, password: string): Promise<AgentSession> {
-  if (!apiBaseUrl) return { access_token: `mock-agent-${crypto.randomUUID()}`, agent_label: employeeId };
+  if (employeeId === DEMO_AGENT_ID && password === DEMO_AGENT_PASSWORD) {
+    return { access_token: DEMO_AGENT_TOKEN, agent_label: `${employeeId} (데모)` };
+  }
+  if (!apiBaseUrl) throw new Error("데모 계정 정보를 확인해 주세요.");
   const body = await request<{ access_token: string; agent_label?: string }>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ employee_id: employeeId, password }),
@@ -308,7 +518,7 @@ export async function loginAgent(employeeId: string, password: string): Promise<
 
 export async function getConsultationCard(reference: string, agentToken?: string): Promise<AgentCase> {
   const normalized = reference.trim().toUpperCase();
-  if (!apiBaseUrl) {
+  if (!apiBaseUrl || agentToken === DEMO_AGENT_TOKEN) {
     const card = mockCards.get(normalized);
     if (!card) throw new Error("일치하는 참조번호를 찾지 못했습니다.");
     if (new Date(card.expires_at).getTime() <= Date.now()) throw new Error("만료된 참조번호입니다.");
@@ -342,8 +552,8 @@ export async function saveAgentVerification(
   clientRequestId: string = crypto.randomUUID(),
 ): Promise<AgentVerificationResult> {
   const normalized = reference.trim().toUpperCase();
-  if (!apiBaseUrl) {
-    const card = await getConsultationCard(normalized);
+  if (!apiBaseUrl || agentToken === DEMO_AGENT_TOKEN) {
+    const card = await getConsultationCard(normalized, agentToken);
     const issues: AgentVerificationResult["issues"] = [];
     if (card.consultation.action !== "UNKNOWN" && payload.action !== card.consultation.action) {
       issues.push({

@@ -136,7 +136,7 @@ export function analyzeLocally(input: string): AnalysisResponse {
     symptom = "주문 결과 미확인";
     symptomEvidence = resultEvidence;
   } else if (orderEvidence) {
-    issueType = "ORDER_OTHER";
+    issueType = "UNRELATED_OR_AMBIGUOUS";
     symptom = "주문 단계 오류(상세 확인 필요)";
     symptomEvidence = orderEvidence;
   }
@@ -198,7 +198,7 @@ export function analyzeLocally(input: string): AnalysisResponse {
   if (orderTypeEvidence) consultationEvidence.order_type = orderTypeEvidence;
   if (occurred.evidence) consultationEvidence.attempted_at = occurred.evidence;
 
-  const action: ConsultationData["action"] = sellEvidence ? "SELL" : buyEvidence ? "BUY" : "UNKNOWN";
+  const action: ConsultationData["action"] = sellEvidence ? "SELL" : "UNKNOWN";
   const orderType: ConsultationData["order_type"] = orderTypeEvidence
     ? orderTypeEvidence.includes("지정가")
       ? "LIMIT"

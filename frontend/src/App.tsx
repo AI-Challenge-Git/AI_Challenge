@@ -15,7 +15,14 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { analyzeReport, deleteConsultationCard, saveConfirmedReport, validateScreenshot } from "./api";
+import {
+  analyzeReport,
+  ApiError,
+  deleteConsultationCard,
+  discardAnalysis,
+  saveConfirmedReport,
+  validateScreenshot,
+} from "./api";
 import AgentDesk from "./AgentDesk";
 import Dashboard from "./Dashboard";
 import type {
@@ -25,9 +32,6 @@ import type {
   SavedCard,
   TechnicalData,
 } from "./types";
-
-const EXAMPLE_REPORT =
-  "9시 3분쯤 KB 앱에서 삼전 스무 주를 7만 원에 팔려고 했는데 주문 버튼을 누른 뒤 계속 로딩됐고 주문번호는 확인하지 못했어요.";
 
 const STATUS_LABEL: Record<FieldStatus, string> = {
   CONFIRMED_FROM_TEXT: "원문 확인",
@@ -39,7 +43,10 @@ const STATUS_LABEL: Record<FieldStatus, string> = {
 const ISSUE_LABEL: Record<TechnicalData["issue_type"], string> = {
   ORDER_SUBMISSION_FAILURE: "주문 제출 단계 오류",
   ORDER_RESULT_UNCONFIRMED: "주문 결과 미확인",
-  ORDER_OTHER: "기타 주문 오류",
+  LOGIN_ACCESS_FAILURE: "로그인·접속 오류",
+  BALANCE_INQUIRY_ERROR: "잔고 조회 오류",
+  DEVICE_NETWORK_SUSPECTED: "기기·네트워크 의심",
+  UNRELATED_OR_AMBIGUOUS: "기타·불명확",
   UNKNOWN: "모름",
 };
 
@@ -49,9 +56,8 @@ const SUBMISSION_LABEL: Record<TechnicalData["submission_status"], string> = {
   UNKNOWN: "확인 불가",
 };
 
-const ACTION_LABEL: Record<ConsultationData["action"], string> = {
+const ACTION_LABEL = {
   SELL: "매도",
-  BUY: "매수",
   UNKNOWN: "모름",
 };
 
@@ -132,6 +138,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const analyzeRequestId = useRef("");
   const saveRequestId = useRef("");
+  const discardRequestId = useRef("");
   const deleteRequestId = useRef("");
 
   const reportLength = [...reportText.trim().normalize("NFC")].length;
@@ -168,6 +175,19 @@ export default function App() {
     try {
       analyzeRequestId.current ||= crypto.randomUUID();
       const result = await analyzeReport(reportText, analyzeRequestId.current, screenshot ?? undefined);
+      if (result.status === "failed") {
+        setAnalysisState("failed");
+        analyzeRequestId.current = "";
+        setError("분석을 완료하지 못했습니다. 다시 시도해 주세요.");
+        return;
+      }
+      if (result.status === "complete") {
+        setAnalysisState("complete");
+        analyzeRequestId.current = "";
+        setError("이미 확인이 완료된 분석입니다. 새 제보로 다시 시작해 주세요.");
+        return;
+      }
+      if (result.status === "pending") return;
       setReportText("");
       setScreenshot(null);
       setScreenshotName("");
@@ -176,6 +196,7 @@ export default function App() {
       setOccurredAtConfirmed(false);
       setAnalysisState("confirmation");
       analyzeRequestId.current = "";
+      discardRequestId.current = "";
       setStage("review");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (reason) {
@@ -188,8 +209,18 @@ export default function App() {
 
   const handleSave = async () => {
     if (!analysis) return;
-    if (analysis.technical.occurred_at && (!analysis.technical.occurred_date || !occurredAtConfirmed)) {
+    if ((analysis.technical.occurred_date || analysis.technical.occurred_at)
+      && (!analysis.technical.occurred_date || !analysis.technical.occurred_at || !occurredAtConfirmed)) {
       setError("발생 날짜와 시각을 직접 확인해 주세요.");
+      return;
+    }
+    if (analysis.consultation.order_type === "LIMIT"
+      && (!Number.isInteger(analysis.consultation.price) || (analysis.consultation.price ?? 0) <= 0)) {
+      setError("지정가는 0보다 큰 정수 가격을 입력해 주세요.");
+      return;
+    }
+    if (analysis.consultation.order_type === "MARKET" && analysis.consultation.price !== null) {
+      setError("시장가는 가격을 입력하지 않아야 합니다.");
       return;
     }
     setIsLoading(true);
@@ -211,7 +242,31 @@ export default function App() {
       setStage("complete");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (reason) {
+      if (reason instanceof ApiError
+        && (reason.code === "STALE_ANALYSIS" || reason.code === "ANALYSIS_NOT_READY")) {
+        setReportText(analysis.masked_text);
+        setAnalysis(null);
+        setAnalysisState("idle");
+        setStage("input");
+        analyzeRequestId.current = "";
+        saveRequestId.current = "";
+      }
       setError(reason instanceof Error ? reason.message : "저장 중 문제가 발생했습니다.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const discardReport = async () => {
+    if (!analysis) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      discardRequestId.current ||= crypto.randomUUID();
+      await discardAnalysis(analysis.analysis_id, discardRequestId.current);
+      reset();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "미확정 제보를 폐기하지 못했습니다.");
     } finally {
       setIsLoading(false);
     }
@@ -231,6 +286,7 @@ export default function App() {
     setCopied(false);
     analyzeRequestId.current = "";
     saveRequestId.current = "";
+    discardRequestId.current = "";
     deleteRequestId.current = "";
   };
 
@@ -325,9 +381,6 @@ export default function App() {
               </div>
               <div className="input-meta">
                 <p id="report-help">계좌번호·전화번호·이메일은 자동 마스킹됩니다. 주민등록번호·비밀번호·OTP가 포함되면 요청을 거부합니다.</p>
-                <button type="button" className="example-button" onClick={() => { setReportText(EXAMPLE_REPORT); analyzeRequestId.current = ""; setAnalysisState("idle"); }}>
-                  예시 문장 사용
-                </button>
               </div>
               <label className="image-upload">
                 <span>오류 화면 이미지 (선택)</span>
@@ -352,7 +405,7 @@ export default function App() {
               {error ? <p id="report-error" className="error-message" role="alert"><TriangleAlert size={16} /> {error}</p> : null}
 
               <button className="primary-button analyze-button" type="button" onClick={handleAnalyze} disabled={analysisState === "pending" || !isValidReport}>
-                {analysisState === "pending" ? <><span className="spinner" /> 안전하게 분석 중...</> : analysisState === "failed" ? <>같은 요청으로 다시 시도 <ArrowRight size={18} /></> : <>AI로 내용 정리하기 <ArrowRight size={18} /></>}
+                  {analysisState === "pending" ? <><span className="spinner" /> 안전하게 분석 중...</> : analysisState === "failed" ? <>다시 분석하기 <ArrowRight size={18} /></> : <>AI로 내용 정리하기 <ArrowRight size={18} /></>}
               </button>
             </div>
           ) : null}
@@ -365,7 +418,7 @@ export default function App() {
                   <h2>AI가 정리한 내용이 맞는지 확인해 주세요.</h2>
                   <p>틀린 값은 바로 고치고, 기억나지 않는 값은 ‘모름’으로 두어도 됩니다.</p>
                 </div>
-                <button className="text-button" type="button" onClick={() => { setStage("input"); setAnalysis(null); setAnalysisState("idle"); setOccurredAtConfirmed(false); setError(null); }}><ArrowLeft size={16} /> 제보 다시 쓰기</button>
+                <button className="text-button" type="button" onClick={discardReport} disabled={isLoading}><ArrowLeft size={16} /> {isLoading ? "폐기 중..." : "제보 다시 쓰기"}</button>
               </div>
 
               {analysis.masked_items.length > 0 ? (

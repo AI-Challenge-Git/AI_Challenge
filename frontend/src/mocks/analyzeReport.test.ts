@@ -43,6 +43,7 @@ describe("민감정보 마스킹", () => {
 
   it("API Mock 경로에서도 감지 항목을 유지한다", async () => {
     const result = await analyzeReport("연락처는 010-1234-5678이고 주문 화면이 계속 로딩됐어요.");
+    if (result.status !== "confirmation") throw new Error("Mock 분석이 완료되지 않았습니다.");
     expect(result.masked_items).toContain("전화번호");
   });
 });
