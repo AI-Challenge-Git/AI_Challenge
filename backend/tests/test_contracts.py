@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.ai import FakeDualExtractor
-from app.codes import OrderAction, OrderType, SubmissionStatus
+from app.codes import IssueType, OrderAction, OrderType, SubmissionStatus
 from app.schemas import ConsultationConfirmation, ReportCreateRequest, TechnicalConfirmation
 from app.security import (
     InvalidReportTextError,
@@ -16,7 +16,9 @@ from app.security import (
     canonical_json_sha256,
     decode_session_token,
     ensure_confirmation_strings_are_safe,
+    make_reference_number,
     normalize_report_text,
+    reference_digest,
     scan_and_mask,
     session_digest,
 )
@@ -113,6 +115,17 @@ def test_session_token_requires_32_random_bytes_and_uses_hmac() -> None:
         decode_session_token("short")
 
 
+def test_reference_number_has_128_bit_output_and_is_never_the_stored_value() -> None:
+    principal = b"p" * 32
+    reference = make_reference_number(principal, b"a" * 16, b"r" * 16, b"k" * 32)
+
+    assert len(reference) == 32
+    assert reference.startswith("KBSOS-")
+    assert reference == make_reference_number(principal, b"a" * 16, b"r" * 16, b"k" * 32)
+    assert reference.encode() != reference_digest(reference, b"k" * 32)
+    assert reference_digest(reference, b"k" * 32) != reference_digest(reference, b"q" * 32)
+
+
 def test_confirmation_schema_rejects_invalid_financial_values() -> None:
     with pytest.raises(ValidationError):
         ConsultationConfirmation(
@@ -122,6 +135,16 @@ def test_confirmation_schema_rejects_invalid_financial_values() -> None:
             quantity=-1,
             order_type=OrderType.LIMIT,
             price_krw=0,
+            attempted_at=None,
+        )
+    with pytest.raises(ValidationError):
+        ConsultationConfirmation(
+            action=OrderAction.SELL,
+            symbol_name="삼성전자",
+            symbol_code="005930",
+            quantity=1,
+            order_type=OrderType.LIMIT,
+            price_krw=None,
             attempted_at=None,
         )
     with pytest.raises(ValidationError):
@@ -163,7 +186,7 @@ def test_confirmation_schema_rejects_coerced_numbers(field_name: str, value: obj
 
 def test_confirmation_schema_trims_symptom_and_rejects_blank_value() -> None:
     confirmation = TechnicalConfirmation(
-        issue_type="UNKNOWN",
+        issue_type=IssueType.UNKNOWN,
         symptom="  화면 멈춤  ",
         submission_status=SubmissionStatus.UNKNOWN,
         error_code=None,
@@ -173,7 +196,7 @@ def test_confirmation_schema_trims_symptom_and_rejects_blank_value() -> None:
 
     with pytest.raises(ValidationError):
         TechnicalConfirmation(
-            issue_type="UNKNOWN",
+            issue_type=IssueType.UNKNOWN,
             symptom="   ",
             submission_status=SubmissionStatus.UNKNOWN,
             error_code=None,
@@ -184,7 +207,7 @@ def test_confirmation_schema_trims_symptom_and_rejects_blank_value() -> None:
 def test_confirmation_schema_requires_timezone_aware_times() -> None:
     with pytest.raises(ValidationError):
         TechnicalConfirmation(
-            issue_type="UNKNOWN",
+            issue_type=IssueType.UNKNOWN,
             symptom=None,
             submission_status=SubmissionStatus.UNKNOWN,
             error_code=None,
@@ -192,10 +215,12 @@ def test_confirmation_schema_requires_timezone_aware_times() -> None:
         )
 
 
-def test_fake_extractor_is_deterministic_and_contains_no_order_data_in_technical() -> None:
+async def test_fake_extractor_is_deterministic_and_contains_no_order_data_in_technical() -> None:
     extractor = FakeDualExtractor()
-    first = extractor.extract("주문 버튼을 누른 뒤 계속 로딩되고 결과를 확인하지 못했습니다.")
-    second = extractor.extract("주문 버튼을 누른 뒤 계속 로딩되고 결과를 확인하지 못했습니다.")
+    first = await extractor.extract("주문 버튼을 누른 뒤 계속 로딩되고 결과를 확인하지 못했습니다.")
+    second = await extractor.extract(
+        "주문 버튼을 누른 뒤 계속 로딩되고 결과를 확인하지 못했습니다."
+    )
 
     assert first == second
     assert first.adapter_name == "fake"

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -6,6 +7,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    RootModel,
     StrictInt,
     field_validator,
     model_validator,
@@ -13,6 +15,7 @@ from pydantic import (
 
 from app.codes import (
     FieldStatus,
+    IssueType,
     OrderAction,
     OrderType,
     ReportStatus,
@@ -51,7 +54,7 @@ class CandidateField[T](StrictAiModel):
 
 
 class TechnicalCandidate(StrictAiModel):
-    issue_type: CandidateField[str]
+    issue_type: CandidateField[IssueType]
     symptom: CandidateField[str]
     submission_status: CandidateField[SubmissionStatus]
     error_code: CandidateField[str]
@@ -83,7 +86,7 @@ class ReportCreateRequest(ApiModel):
 
 
 class TechnicalConfirmation(ApiModel):
-    issue_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+    issue_type: IssueType
     symptom: str | None = Field(default=None, min_length=1, max_length=500)
     submission_status: SubmissionStatus
     error_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
@@ -117,13 +120,19 @@ class ConsultationConfirmation(ApiModel):
     def validate_market_price(self) -> "ConsultationConfirmation":
         if self.order_type is OrderType.MARKET and self.price_krw is not None:
             raise ValueError("market orders cannot contain price_krw")
+        if self.order_type is OrderType.LIMIT and self.price_krw is None:
+            raise ValueError("limit orders require price_krw")
         return self
 
 
 class ReportConfirmationRequest(ApiModel):
+    analysis_id: UUID
     analysis_version: StrictInt = Field(ge=1)
-    technical_symptom: TechnicalConfirmation
+    attachment_id: UUID | None
+    masked_text: str = Field(min_length=1, max_length=500)
+    technical: TechnicalConfirmation
     consultation: ConsultationConfirmation
+    client_request_id: UUID4
 
 
 class AnalysisResponse(ApiModel):
@@ -155,3 +164,71 @@ class ProblemDetails(ApiModel):
     code: str | None = None
     request_id: str | None = None
     errors: list[dict[str, str]] | None = None
+
+
+class AttachmentResponse(ApiModel):
+    id: UUID
+    url: str
+
+
+class ReportAnalysisPendingResponse(ApiModel):
+    analysis_id: UUID
+    analysis_version: int
+    status: Literal["pending"]
+
+
+class ReportAnalysisConfirmationResponse(ApiModel):
+    analysis_id: UUID
+    analysis_version: int
+    status: Literal["confirmation"]
+    attachment: AttachmentResponse | None
+    masked_text: str
+    masked_items: list[str]
+    technical: TechnicalCandidate
+    consultation: ConsultationCandidate
+
+
+class ReportAnalysisFailedResponse(ApiModel):
+    analysis_id: UUID
+    analysis_version: int
+    status: Literal["failed"]
+    error: SafeError
+
+
+class ReportAnalysisCompleteResponse(ApiModel):
+    analysis_id: UUID
+    analysis_version: int
+    status: Literal["complete"]
+
+
+class ReportAnalysisResponse(
+    RootModel[
+        Annotated[
+            ReportAnalysisPendingResponse
+            | ReportAnalysisConfirmationResponse
+            | ReportAnalysisFailedResponse
+            | ReportAnalysisCompleteResponse,
+            Field(discriminator="status"),
+        ]
+    ]
+):
+    pass
+
+
+class ConsultationCardIssued(ApiModel):
+    reference_number: str = Field(pattern=r"^KBSOS-[A-Z2-7]{26}$")
+    expires_at: datetime
+
+
+class ReportConfirmedResponse(ApiModel):
+    consultation_card: ConsultationCardIssued
+
+
+class DiscardReportRequest(ApiModel):
+    analysis_id: UUID
+    client_request_id: UUID4
+
+
+class DeleteConsultationCardRequest(ApiModel):
+    reference_number: str = Field(pattern=r"^KBSOS-[A-Z2-7]{26}$")
+    client_request_id: UUID4

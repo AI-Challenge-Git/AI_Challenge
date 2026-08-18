@@ -18,11 +18,17 @@ services:
   api:
     build:
       context: ./backend
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     environment:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mts_sos}:${POSTGRES_PASSWORD:-mts_sos}@db:5432/${POSTGRES_DB:-mts_sos}
       DATABASE_ECHO: ${DATABASE_ECHO:-false}
       CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:5173"]}'
+      ACTIVE_POLICY_VERSION: ${ACTIVE_POLICY_VERSION:-kb-trading-failure-guidance-2026-08-18}
+      PII_POLICY_VERSION: ${PII_POLICY_VERSION:-pii-mask.v1}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-10}
+      SESSION_HMAC_KEY: ${SESSION_HMAC_KEY:-development-session-hmac-key-change-me}
+      REFERENCE_HMAC_KEY: ${REFERENCE_HMAC_KEY:-development-reference-hmac-key-change-me}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
