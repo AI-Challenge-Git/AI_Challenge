@@ -29,6 +29,22 @@ from app.codes import (
 _FULL_DATETIME_WITH_OFFSET = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
 )
+_KOREAN_FULL_DATE_PATTERN = re.compile(
+    r"\d{4}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일"
+)
+_KOREAN_TIME_PATTERN = re.compile(
+    r"(?:(?:오전|오후)\s*)?\d{1,2}\s*시(?:\s*\d{1,2}\s*분)?"
+)
+
+
+def _evidence_contains_explicit_date_and_time(evidence: str | None) -> bool:
+    """근거 문자열에 연·월·일과 시각이 모두 원문 그대로 명시되어 있는지 확인."""
+    if not evidence:
+        return False
+    return bool(
+        _KOREAN_FULL_DATE_PATTERN.search(evidence)
+        and _KOREAN_TIME_PATTERN.search(evidence)
+    )
 
 
 class ApiModel(BaseModel):
@@ -49,20 +65,29 @@ class CandidateField[T](StrictAiModel):
     evidence_quote: str | None
 
     @model_validator(mode="after")
-    def validate_unknown_value(self) -> "CandidateField[T]":
-        # AI-05: 근거 없는 값은 value·evidence 모두 null.
-        # CONFIRMED_FROM_TEXT만 유일하게 value를 가질 수 있다.
-        # UNKNOWN, OUT_OF_SCOPE, NEEDS_CONFIRMATION은 전부 value/evidence가 null이어야 한다.
-        if self.status is not FieldStatus.CONFIRMED_FROM_TEXT and (
-            self.value is not None or self.evidence_quote is not None
-        ):
-            raise ValueError(
-                f"{self.status} fields cannot contain a value or evidence"
-            )
-        if self.status is FieldStatus.CONFIRMED_FROM_TEXT and (
-            self.value is None or not self.evidence_quote
-        ):
-            raise ValueError("confirmed fields require a value and evidence")
+    def validate_field_state(self) -> "CandidateField[T]":
+        # AI-05: 근거 없는 값은 AI가 임의로 확정하지 않는다.
+        # status별 value/evidence_quote 허용 규칙:
+        #   CONFIRMED_FROM_TEXT   -> value 필수, evidence_quote 필수
+        #   NEEDS_CONFIRMATION    -> value=null 필수, evidence_quote는 선택
+        #                            (원문에 단서는 있으나 확정할 수 없는 경우,
+        #                             근거만 남겨 상담원/운영자가 참고할 수 있게 한다)
+        #   UNKNOWN, OUT_OF_SCOPE -> value=null 필수, evidence_quote=null 필수
+        if self.status is FieldStatus.CONFIRMED_FROM_TEXT:
+            if self.value is None or not self.evidence_quote:
+                raise ValueError(
+                    "CONFIRMED_FROM_TEXT fields require a value and evidence"
+                )
+        elif self.status is FieldStatus.NEEDS_CONFIRMATION:
+            if self.value is not None:
+                raise ValueError(
+                    "NEEDS_CONFIRMATION fields cannot contain a confirmed value"
+                )
+        else:  # UNKNOWN, OUT_OF_SCOPE
+            if self.value is not None or self.evidence_quote is not None:
+                raise ValueError(
+                    f"{self.status.value} fields cannot contain a value or evidence"
+                )
         return self
 
 
@@ -79,13 +104,19 @@ class TechnicalCandidate(StrictAiModel):
     def enforce_occurred_at_confirmation_rule(self) -> "TechnicalCandidate":
         field = self.reported_occurred_at
         if field.status is FieldStatus.CONFIRMED_FROM_TEXT:
-            if field.value is None or not _FULL_DATETIME_WITH_OFFSET.match(
-                field.value
-            ):
+            value_is_full_datetime = (
+                field.value is not None
+                and _FULL_DATETIME_WITH_OFFSET.fullmatch(field.value) is not None
+            )
+            evidence_has_explicit_date_and_time = (
+                _evidence_contains_explicit_date_and_time(field.evidence_quote)
+            )
+            if not value_is_full_datetime or not evidence_has_explicit_date_and_time:
                 raise ValueError(
                     "reported_occurred_at can be CONFIRMED_FROM_TEXT only when "
-                    "the source text contains a full date, time, and UTC offset. "
-                    "Date-less times (e.g. '09:03') must use NEEDS_CONFIRMATION."
+                    "value is a full ISO 8601 datetime with UTC offset and evidence_quote "
+                    "explicitly contains year, month, day, and time from the source text. "
+                    "Partial dates or date-less times must use NEEDS_CONFIRMATION."
                 )
         return self
 
@@ -103,12 +134,19 @@ class ConsultationCandidate(StrictAiModel):
     def enforce_attempted_at_confirmation_rule(self) -> "ConsultationCandidate":
         field = self.attempted_at
         if field.status is FieldStatus.CONFIRMED_FROM_TEXT:
-            if field.value is None or not _FULL_DATETIME_WITH_OFFSET.match(
-                field.value
-            ):
+            value_is_full_datetime = (
+                field.value is not None
+                and _FULL_DATETIME_WITH_OFFSET.fullmatch(field.value) is not None
+            )
+            evidence_has_explicit_date_and_time = (
+                _evidence_contains_explicit_date_and_time(field.evidence_quote)
+            )
+            if not value_is_full_datetime or not evidence_has_explicit_date_and_time:
                 raise ValueError(
-                    "attempted_at can be CONFIRMED_FROM_TEXT only when the "
-                    "source text contains a full date, time, and UTC offset."
+                    "attempted_at can be CONFIRMED_FROM_TEXT only when value is a full "
+                    "ISO 8601 datetime with UTC offset and evidence_quote explicitly contains "
+                    "year, month, day, and time from the source text. Partial dates or "
+                    "date-less times must use NEEDS_CONFIRMATION."
                 )
         return self
 
