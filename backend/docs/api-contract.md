@@ -1,83 +1,44 @@
 # MTS SOS Desk API contract
 
-OpenAPI가 최종 단일 원본이며, 이 문서는 구현과 함께 계속 갱신하는 백엔드 기준안이다.
-프론트엔드·AI 합의가 끝나지 않은 항목은 합의 gate에 남기고 실제 계약으로 확정하지 않는다.
+실제 단일 원본은 `backend/openapi.json`이며 `frontend/src/generated/api.ts`는 이 파일에서
+생성한다.
 
 ## 공통 규칙
 
-- Prefix: `/api/v1`
-- 고객 capability: `Authorization: Bearer <43-char-base64url-token>`
-- 성공 응답 중 report·analysis·card 데이터: `Cache-Control: no-store`
-- 오류: RFC 9457 `application/problem+json`
-- 요청 model은 예상하지 않은 필드를 거부한다.
-- 서버 시각은 offset을 포함한 UTC ISO 8601로 반환한다.
+- 업무 prefix: `/api`
+- 고객 인증: `Authorization: Bearer <43-char-base64url-token>`
+- 변경 요청: UUID v4 `client_request_id`
+- 민감 응답: `Cache-Control: no-store`
+- 오류: `application/problem+json`
+- 참조번호와 token은 URL에 넣지 않는다.
 
-## Endpoints
+## 구현 endpoint
 
 | Method | Path | 의미 |
 |---|---|---|
-| POST | `/api/v1/reports` | 원문 검사·마스킹·멱등 report 생성·Fake 분석 |
-| GET | `/api/v1/reports/{report_id}` | 소유 session의 report와 최신 분석 조회 |
-| PUT | `/api/v1/reports/{report_id}/confirmation` | 최신 분석에 대한 고객 최종값 전체 확정 |
+| POST | `/api/reports/analyze` | 서버 개인정보 검사·마스킹과 Fake 이중 구조화 |
+| POST | `/api/reports` | 고객 전체 확인, 기술 증상·상담정보 분리 저장, 상담카드 발급 |
+| DELETE | `/api/reports` | 저장 전 이탈한 미확정 제보 폐기 |
+| DELETE | `/api/consultation-cards` | 소유권 확인 후 report root 전체 삭제 |
 
-일반 CRUD, 카드 DELETE, 분석 재시도, 상담원·운영자 API는 현재 만들지 않는다.
+분석 요청은 16 KiB 이하 JSON이며 제보문은 NFC 정규화 후 20~500자로 제한한다. 같은
+principal·작업·요청 ID의 재시도는 기존 결과를 반환하고 payload가 다르면 `409`다.
+분석 row를 `PENDING`으로 먼저 commit한 뒤 transaction 밖에서 adapter를 호출하며 응답
+상태는 `pending`, `confirmation`, `failed`, `complete` 중 하나다. 실패 code는 `TIMEOUT`,
+`INVALID_SCHEMA`, `PROVIDER_UNAVAILABLE`만 외부에 노출한다.
 
-## POST `/api/v1/reports`
+고객 확인은 `analysis_id`, 최신 `analysis_version`, 서버의 `masked_text`, 전체 `technical`과
+`consultation`을 전송한다. 최신 `SUCCEEDED` 분석만 확정할 수 있으며 지정가는 양의 정수
+가격이 필수이고 시장가 가격은 `null`이어야 한다. 성공 시 128-bit HMAC 기반 난수형
+참조번호와 서버 기준 2시간 만료시각을 반환한다. DB에는 참조번호 평문을 저장하지 않는다.
 
-```json
-{
-  "client_request_id": "58e06f0a-1220-46a0-b30f-e840716846be",
-  "text": "주문 버튼을 누른 뒤 계속 로딩되고 주문번호를 확인하지 못했어요."
-}
-```
+미확정 제보 폐기 요청은 body에 `analysis_id`와 `client_request_id`를 넣는다. 현재 익명
+세션이 소유한 미확정 report root만 삭제하며 같은 요청 재시도는 `204`, 확정된 제보는
+`409`다. API consumer는 폐기 성공 후에만 분석 화면을 초기화해야 한다.
 
-- 신규 생성은 `201`, 같은 session과 `client_request_id` 재요청은 `200`이다.
-- 원문은 trim·NFC 정규화 후 20~500 Unicode code point를 검사한다.
-- 휴대전화·지역번호·070·080·15xx~18xx 전화번호와 이메일을 마스킹한다.
-- 계좌번호 후보는 구분자 3그룹 또는 구분자 없는 10~14자리 숫자를 마스킹한다.
-- 주민번호·비밀번호·OTP 후보는 `422`로 거부한다.
-- 활성 policy snapshot 또는 마스킹 경계를 사용할 수 없으면 `503`이며 row를 만들지 않는다.
+삭제 요청은 body에 `reference_number`와 `client_request_id`를 넣는다. 성공 시 `204`이며
+report, analysis, 기술 증상, 상담카드를 cascade 삭제하고 비식별 audit와 삭제 멱등 기록만
+남긴다.
 
-## GET `/api/v1/reports/{report_id}`
-
-- token 없음·형식 오류는 `401`이다.
-- 존재하지 않거나 다른 session의 report는 동일하게 `404`다.
-- UUID만으로 masked text나 분석 후보를 조회할 수 없다.
-
-## PUT `/api/v1/reports/{report_id}/confirmation`
-
-```json
-{
-  "analysis_version": 1,
-  "technical_symptom": {
-    "issue_type": "UNKNOWN",
-    "symptom": null,
-    "submission_status": "UNKNOWN",
-    "error_code": null,
-    "reported_occurred_at": null
-  },
-  "consultation": {
-    "action": "SELL",
-    "symbol_name": "삼성전자",
-    "symbol_code": "005930",
-    "quantity": 20,
-    "order_type": "LIMIT",
-    "price_krw": 70000,
-    "attempted_at": "2026-08-14T00:03:00Z"
-  }
-}
-```
-
-- `channel`, `feature_area`, `taxonomy_version`은 서버가 최신 분석과 scope에서 설정한다.
-- 문자열 수정값은 서버에서 민감정보를 다시 검사한다.
-- stale version이나 이미 확정된 다른 payload는 `409`다.
-- 기술 증상과 상담카드 생성 및 report `CONFIRMED` 전이는 한 transaction이다.
-
-## 합의 gate
-
-- FE-01~11: OpenAPI type, session token, 멱등성, 상태 UX, confirmation payload 승인
-- AI-01~11: 추출 schema, field status, evidence, taxonomy, provider metadata 승인
-- TEAM-02~04: 보존기간, 카드 삭제 의미, 공식 policy source 승인
-
-승인 전 실제 AI adapter, 카드 DELETE, 참조번호·TTL, 보호된 상담원·운영자 endpoint를
-구현하지 않는다.
+현재 실제 AI provider와 screenshot object storage는 연결하지 않았다. 분석은 동일 schema를
+사용하는 deterministic Fake이며 attachment는 `null`이다.

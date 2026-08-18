@@ -46,6 +46,7 @@ erDiagram
         uuid policy_snapshot_id FK
         varchar pii_policy_version
         text masked_text
+        char request_payload_sha256
         varchar status
         timestamptz received_at
         timestamptz confirmed_at
@@ -92,8 +93,30 @@ erDiagram
         varchar order_type
         bigint price_krw
         timestamptz attempted_at
+        bytea reference_digest UK
+        timestamptz expires_at
+        uuid confirmation_request_id
+        char confirmation_payload_sha256
         timestamptz created_at
         timestamptz updated_at
+    }
+
+    idempotency_records {
+        uuid id PK
+        bytea principal_digest
+        varchar operation
+        uuid client_request_id
+        char payload_sha256
+        int response_status
+        timestamptz created_at
+    }
+
+    audit_logs {
+        uuid id PK
+        varchar actor_type
+        varchar action
+        char resource_fingerprint
+        timestamptz created_at
     }
 ```
 
@@ -107,4 +130,5 @@ erDiagram
 - 확정 기술정보와 주문상담정보는 각각 `technical_symptoms`, `consultation_cards`로
   물리 분리한다.
 - `technical_symptoms`에는 종목·수량·가격·매매 방향 컬럼이 없다.
-- 참조번호·TTL·vector·군집·역할·감사로그는 합의된 후속 migration에서 추가한다.
+- 참조번호 digest·TTL·삭제 멱등 기록·비식별 삭제 감사는 구현되어 있다.
+- vector·군집·상담원 역할과 조회 감사는 후속 migration에서 추가한다.

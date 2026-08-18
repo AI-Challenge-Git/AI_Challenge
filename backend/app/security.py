@@ -129,6 +129,27 @@ def session_digest(token: str, hmac_key: bytes) -> bytes:
     return hmac.digest(hmac_key, decode_session_token(token), "sha256")
 
 
+def make_reference_number(
+    principal_digest: bytes,
+    analysis_id: bytes,
+    client_request_id: bytes,
+    hmac_key: bytes,
+) -> str:
+    if len(hmac_key) < 32:
+        raise ValueError("reference HMAC key must contain at least 32 bytes")
+    entropy = hmac.digest(hmac_key, principal_digest + analysis_id + client_request_id, "sha256")[
+        :16
+    ]
+    encoded = base64.b32encode(entropy).decode().rstrip("=")
+    return f"KBSOS-{encoded}"
+
+
+def reference_digest(reference_number: str, hmac_key: bytes) -> bytes:
+    if len(hmac_key) < 32:
+        raise ValueError("reference HMAC key must contain at least 32 bytes")
+    return hmac.digest(hmac_key, reference_number.encode("ascii"), "sha256")
+
+
 def canonical_json_sha256(value: dict[str, Any]) -> str:
     encoded = json.dumps(
         value,

@@ -8,16 +8,17 @@ import type {
 type MaskRule = { label: string; pattern: RegExp };
 
 const REJECT_RULES: MaskRule[] = [
-  { label: "주민등록번호", pattern: /\b\d{6}\s*[- ]\s*[1-4]\d{6}\b/g },
+  { label: "주민등록번호", pattern: /(?<!\d)\d{6}[\s.\/‐‑‒–—―−-]*[1-4]\d{6}(?!\d)/g },
   { label: "OTP", pattern: /(?:OTP|일회용\s*비밀번호)\s*[:：은는]?\s*\d{4,8}/gi },
   { label: "비밀번호", pattern: /(?:비밀번호|패스워드)\s*[:：은는]?\s*[A-Za-z0-9!@#$%^&*]{4,30}/gi },
 ];
 
 const MASK_RULES: MaskRule[] = [
-  { label: "전화번호", pattern: /\b(?:01[016789]|0[2-6][1-5]?)\s*[-.) ]?\s*\d{3,4}\s*[-. ]?\s*\d{4}\b/g },
-  { label: "이메일", pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi },
-  { label: "카드번호", pattern: /\b(?:\d{4}\s*[- ]\s*){3}\d{4}\b/g },
-  { label: "계좌번호", pattern: /\b\d{2,6}\s*[- ]\s*\d{2,6}\s*[- ]\s*\d{2,8}\b/g },
+  { label: "전화번호", pattern: /(?<!\d)\(?(?:01[016789]|0[2-6][1-5]?)\)?[\s.\/‐‑‒–—―−-]*\d{3,4}[\s.\/‐‑‒–—―−-]*\d{4}(?!\d)/g },
+  { label: "이메일", pattern: /\b[A-Z0-9._%+-]+\s*@\s*[A-Z0-9.-]+\s*\.\s*[A-Z]{2,}\b/gi },
+  { label: "계좌번호", pattern: /(?:입금\s*)?계좌(?:번호)?\s*[:：은는]?\s*\d{8,16}(?!\d)/g },
+  { label: "카드번호", pattern: /(?<!\d)\d{4}(?:[\s.\/‐‑‒–—―−-]*\d{4}){3}(?!\d)/g },
+  { label: "계좌번호", pattern: /(?<!\d)(?:\d{2,6}[\s.\/‐‑‒–—―−-]+){2,3}\d{4,8}(?!\d)/g },
 ];
 
 const SYMBOLS = [
@@ -64,7 +65,7 @@ export function maskSensitiveText(text: string): { text: string; detected: strin
     if (pattern.test(masked)) {
       detected.push(label);
       pattern.lastIndex = 0;
-      masked = masked.replace(pattern, `[${label} 마스킹]`);
+      masked = masked.replace(pattern, `[${label}]`);
     }
   }
   return { text: masked, detected };
@@ -135,12 +136,12 @@ export function analyzeLocally(input: string): AnalysisResponse {
     symptom = "주문 결과 미확인";
     symptomEvidence = resultEvidence;
   } else if (orderEvidence) {
-    issueType = "ORDER_OTHER";
+    issueType = "UNRELATED_OR_AMBIGUOUS";
     symptom = "주문 단계 오류(상세 확인 필요)";
     symptomEvidence = orderEvidence;
   }
 
-  const technicalEvidence: Record<string, string> = {};
+  const technicalEvidence: TechnicalData["evidence"] = {};
   if (occurred.evidence) technicalEvidence.occurred_at = occurred.evidence;
   if (channelEvidence) technicalEvidence.channel = channelEvidence;
   if (orderEvidence) technicalEvidence.feature_area = orderEvidence;
@@ -153,6 +154,7 @@ export function analyzeLocally(input: string): AnalysisResponse {
   }
 
   const technical: TechnicalData = {
+    occurred_date: null,
     occurred_at: occurred.value,
     channel: channelEvidence ? "M-able" : "UNKNOWN",
     feature_area: orderEvidence ? "DOMESTIC_STOCK_ORDER" : "UNKNOWN",
@@ -161,7 +163,8 @@ export function analyzeLocally(input: string): AnalysisResponse {
     submission_status: submittedEvidence ? "SUBMITTED" : "UNKNOWN",
     error_code: null,
     field_statuses: {
-      occurred_at: confirmed(occurred.value),
+      occurred_date: occurred.value ? "NEEDS_CONFIRMATION" : "UNKNOWN",
+      occurred_at: occurred.value ? "NEEDS_CONFIRMATION" : "UNKNOWN",
       channel: channelEvidence ? "CONFIRMED_FROM_TEXT" : "NEEDS_CONFIRMATION",
       feature_area: orderEvidence ? "CONFIRMED_FROM_TEXT" : "NEEDS_CONFIRMATION",
       issue_type: issueType === "UNKNOWN" ? "UNKNOWN" : "CONFIRMED_FROM_TEXT",
@@ -184,7 +187,7 @@ export function analyzeLocally(input: string): AnalysisResponse {
   const price = extractPrice(text);
   const orderTypeEvidence = firstMatch(text, /지정가|시장가/);
 
-  const consultationEvidence: Record<string, string> = {};
+  const consultationEvidence: ConsultationData["evidence"] = {};
   if (sellEvidence || buyEvidence) consultationEvidence.action = sellEvidence ?? buyEvidence!;
   if (symbolEvidence) {
     consultationEvidence.symbol_name = symbolEvidence;
@@ -195,7 +198,7 @@ export function analyzeLocally(input: string): AnalysisResponse {
   if (orderTypeEvidence) consultationEvidence.order_type = orderTypeEvidence;
   if (occurred.evidence) consultationEvidence.attempted_at = occurred.evidence;
 
-  const action: ConsultationData["action"] = sellEvidence ? "SELL" : buyEvidence ? "BUY" : "UNKNOWN";
+  const action: ConsultationData["action"] = sellEvidence ? "SELL" : "UNKNOWN";
   const orderType: ConsultationData["order_type"] = orderTypeEvidence
     ? orderTypeEvidence.includes("지정가")
       ? "LIMIT"
@@ -220,10 +223,19 @@ export function analyzeLocally(input: string): AnalysisResponse {
           ? "NEEDS_CONFIRMATION"
           : "UNKNOWN",
       price: confirmed(price.value),
-      attempted_at: confirmed(occurred.value),
+      attempted_at: occurred.value ? "NEEDS_CONFIRMATION" : "UNKNOWN",
     },
     evidence: consultationEvidence,
   };
 
-  return { masked_text: masked.text, masked_items: masked.detected, technical, consultation };
+  return {
+    analysis_id: crypto.randomUUID(),
+    analysis_version: 1,
+    status: "confirmation",
+    attachment: null,
+    masked_text: masked.text,
+    masked_items: masked.detected,
+    technical,
+    consultation,
+  };
 }
