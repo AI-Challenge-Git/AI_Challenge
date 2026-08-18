@@ -1,7 +1,9 @@
+import asyncio
 from functools import lru_cache
 from typing import Protocol
 
 from app.codes import FieldStatus
+from app.real_extractor_v5 import ExtractFailureReason, RealDualExtractor
 from app.schemas import (
     CandidateField,
     ConsultationCandidate,
@@ -59,9 +61,49 @@ class FakeDualExtractor:
         )
 
 
+class NvidiaDualExtractorAdapter:
+    """
+    DualExtractor Protocol에 RealDualExtractor(NVIDIA Build, 8B)를 연결하는 어댑터.
+
+    - Protocol이 요구하는 클래스 속성(schema_version 등)을 노출한다.
+    - extract_safe()의 ExtractOutcome(반환값 기반 성공/실패 표현)을
+      analyze_report()가 기대하는 "성공 시 반환값, 실패 시 예외" 방식으로 변환한다.
+    - extract_safe()는 동기(blocking) 함수이므로 asyncio.to_thread로 감싸서
+      FastAPI 이벤트 루프를 막지 않게 한다.
+
+    주의: settings.ai_timeout_seconds(기본 10초)가 RealDualExtractor 내부
+    NVIDIA 클라이언트 timeout(90초)보다 짧다. correction retry가 발생하면
+    10초를 넘길 수 있으므로, 배포 전 settings.ai_timeout_seconds 값을
+    백엔드 담당자와 조정해야 한다.
+    """
+
+    schema_version = "dual-extraction.v1"
+    taxonomy_version = "issue-type.v1"
+    adapter_name = "nvidia-build"
+    model_id: str | None = "meta/llama-3.1-8b-instruct"
+
+    def __init__(self) -> None:
+        self._inner = RealDualExtractor()
+
+    async def extract(self, masked_text: str) -> ExtractionResult:
+        outcome = await asyncio.to_thread(self._inner.extract_safe, masked_text)
+
+        if outcome.result is None:
+            if outcome.failure_reason == ExtractFailureReason.TIMEOUT:
+                raise TimeoutError(outcome.detail)
+            if outcome.failure_reason in (
+                ExtractFailureReason.INVALID_JSON,
+                ExtractFailureReason.INVALID_SCHEMA,
+            ):
+                raise ValueError(outcome.detail)
+            raise RuntimeError(outcome.detail)  # PROVIDER_UNAVAILABLE 등
+
+        return outcome.result
+
+
 @lru_cache
 def get_dual_extractor() -> DualExtractor:
-    return FakeDualExtractor()
+    return NvidiaDualExtractorAdapter()
 
 
 def validate_evidence_quotes(result: ExtractionResult, masked_text: str) -> None:
