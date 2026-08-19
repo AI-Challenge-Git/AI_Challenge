@@ -14,6 +14,7 @@ def test_core_metadata_contains_required_business_tables() -> None:
         "report_analyses",
         "technical_symptoms",
         "consultation_cards",
+        "attachments",
     } <= Base.metadata.tables.keys()
 
 
@@ -23,6 +24,7 @@ def test_sensitive_and_technical_data_boundaries_are_structural() -> None:
     report_columns = set(tables["reports"].columns.keys())
     technical_columns = set(tables["technical_symptoms"].columns.keys())
     consultation_columns = set(tables["consultation_cards"].columns.keys())
+    attachment_columns = set(tables["attachments"].columns.keys())
 
     assert {"raw_text", "original_text", "session_token", "reference_number"}.isdisjoint(
         all_columns
@@ -32,6 +34,8 @@ def test_sensitive_and_technical_data_boundaries_are_structural() -> None:
         technical_columns
     )
     assert {"symptom", "error_code", "issue_type"}.isdisjoint(consultation_columns)
+    assert "content" not in attachment_columns
+    assert {"object_key", "content_sha256", "byte_size"} <= attachment_columns
     assert not any(
         "vector" in str(column.type).lower()
         for table in tables.values()

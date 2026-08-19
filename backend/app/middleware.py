@@ -5,9 +5,16 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
 class JsonBodyLimitMiddleware:
-    def __init__(self, app: ASGIApp, max_bytes: int, paths: Iterable[str]) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        max_bytes: int,
+        multipart_max_bytes: int,
+        paths: Iterable[str],
+    ) -> None:
         self.app = app
         self.max_bytes = max_bytes
+        self.multipart_max_bytes = multipart_max_bytes
         self.paths = frozenset(paths)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -15,6 +22,10 @@ class JsonBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
+        content_type = dict(scope["headers"]).get(b"content-type", b"").lower()
+        is_multipart = content_type.startswith(b"multipart/form-data")
+        max_bytes = self.multipart_max_bytes if is_multipart else self.max_bytes
+        limit_label = "5 MiB 파일 제한" if is_multipart else "16 KiB"
         messages: list[Message] = []
         size = 0
         while True:
@@ -23,7 +34,7 @@ class JsonBodyLimitMiddleware:
             if message["type"] != "http.request":
                 break
             size += len(message.get("body", b""))
-            if size > self.max_bytes:
+            if size > max_bytes:
                 response = JSONResponse(
                     status_code=413,
                     media_type="application/problem+json",
@@ -31,7 +42,7 @@ class JsonBodyLimitMiddleware:
                         "type": "about:blank",
                         "title": "요청 본문이 너무 큽니다.",
                         "status": 413,
-                        "detail": "요청 본문은 16 KiB 이하여야 합니다.",
+                        "detail": f"요청 본문은 {limit_label} 이하여야 합니다.",
                         "code": "REQUEST_TOO_LARGE",
                     },
                     headers={"Cache-Control": "no-store"},

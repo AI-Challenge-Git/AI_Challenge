@@ -4,17 +4,22 @@ import json
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from io import BytesIO
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from PIL import Image, PngImagePlugin
 from sqlalchemy import delete, func, select
 
 from app.ai import FakeDualExtractor, get_dual_extractor
+from app.attachments import AttachmentStorageError, LocalAttachmentStore, get_attachment_store
 from app.codes import AnalysisStatus
 from app.db import engine, session_factory
 from app.main import app
 from app.models import (
+    Attachment,
     AuditLog,
     ConsultationCard,
     IdempotencyRecord,
@@ -70,6 +75,11 @@ class FailingExtractor(FakeDualExtractor):
         raise self.error
 
 
+class FailingAttachmentStore(LocalAttachmentStore):
+    async def put(self, object_key: str, content: bytes) -> None:
+        raise AttachmentStorageError("synthetic storage failure")
+
+
 async def _clean_business_data() -> None:
     async with session_factory() as session, session.begin():
         await session.execute(delete(Report))
@@ -78,11 +88,22 @@ async def _clean_business_data() -> None:
 
 
 @pytest.fixture(autouse=True)
-async def clean_business_data() -> AsyncIterator[None]:
+async def clean_business_data(tmp_path: Path) -> AsyncIterator[None]:
+    store = LocalAttachmentStore(tmp_path / "attachments")
+    app.dependency_overrides[get_attachment_store] = lambda: store
     await _clean_business_data()
     yield
     await _clean_business_data()
     await engine.dispose()
+    app.dependency_overrides.pop(get_attachment_store, None)
+
+
+def _screenshot_bytes() -> bytes:
+    output = BytesIO()
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("account", "123-456-789")
+    Image.new("RGB", (16, 12), "navy").save(output, format="PNG", pnginfo=metadata)
+    return output.getvalue()
 
 
 async def test_customer_report_lifecycle_is_persisted_idempotent_and_deletable() -> None:
@@ -486,3 +507,117 @@ async def test_abandoned_analysis_is_discarded_idempotently() -> None:
         assert await session.scalar(select(func.count()).select_from(Report)) == 0
         assert await session.scalar(select(func.count()).select_from(IdempotencyRecord)) == 1
         assert await session.scalar(select(func.count()).select_from(AuditLog)) == 1
+
+
+async def test_screenshot_is_sanitized_confirmed_and_deleted(tmp_path: Path) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        analyzed = await client.post(
+            "/api/reports/analyze",
+            headers=_headers(),
+            data={
+                "text": "주문 화면에서 버튼을 누른 뒤 계속 로딩되는 오류 상황입니다.",
+                "client_request_id": str(uuid4()),
+            },
+            files={"screenshot": ("error.png", _screenshot_bytes(), "image/png")},
+        )
+        assert analyzed.status_code == 200
+        analysis = analyzed.json()
+        assert analysis["status"] == "confirmation"
+        assert analysis["attachment"]["url"].startswith("data:image/png;base64,")
+
+        async with session_factory() as session:
+            attachment = await session.scalar(select(Attachment))
+            assert attachment is not None
+            stored = (tmp_path / "attachments" / attachment.object_key).read_bytes()
+            assert b"123-456-789" not in stored
+            assert attachment.byte_size == len(stored)
+
+        confirmation = {
+            "analysis_id": analysis["analysis_id"],
+            "analysis_version": analysis["analysis_version"],
+            "attachment_id": str(uuid4()),
+            "masked_text": analysis["masked_text"],
+            "technical": {
+                "issue_type": "UNKNOWN",
+                "symptom": None,
+                "submission_status": "UNKNOWN",
+                "error_code": None,
+                "reported_occurred_at": None,
+            },
+            "consultation": {
+                "action": "UNKNOWN",
+                "symbol_name": None,
+                "symbol_code": None,
+                "quantity": None,
+                "order_type": "UNKNOWN",
+                "price_krw": None,
+                "attempted_at": None,
+            },
+            "client_request_id": str(uuid4()),
+        }
+        mismatch = await client.post("/api/reports", headers=_headers(), json=confirmation)
+        assert mismatch.status_code == 409
+        assert mismatch.json()["code"] == "ATTACHMENT_CHANGED"
+
+        confirmation["attachment_id"] = analysis["attachment"]["id"]
+        confirmation["client_request_id"] = str(uuid4())
+        confirmed = await client.post("/api/reports", headers=_headers(), json=confirmation)
+        assert confirmed.status_code == 200
+
+        deleted = await client.request(
+            "DELETE",
+            "/api/consultation-cards",
+            headers=_headers(),
+            json={
+                "reference_number": confirmed.json()["consultation_card"]["reference_number"],
+                "client_request_id": str(uuid4()),
+            },
+        )
+        assert deleted.status_code == 204
+        assert not (tmp_path / "attachments" / attachment.object_key).exists()
+
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Attachment)) == 0
+
+
+async def test_screenshot_endpoint_rejects_invalid_file_without_leaking_it() -> None:
+    secret = b"not-an-image-with-account-123-456-789"
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        invalid = await client.post(
+            "/api/reports/analyze",
+            headers=_headers(),
+            data={
+                "text": "주문 화면에서 버튼을 누른 뒤 계속 로딩되는 오류 상황입니다.",
+                "client_request_id": str(uuid4()),
+            },
+            files={"screenshot": ("error.png", secret, "image/png")},
+        )
+
+    assert invalid.status_code == 422
+    assert invalid.json()["code"] == "INVALID_ATTACHMENT"
+    assert secret.decode() not in invalid.text
+
+
+async def test_screenshot_storage_failure_is_safe_and_rolls_back_report(tmp_path: Path) -> None:
+    app.dependency_overrides[get_attachment_store] = lambda: FailingAttachmentStore(
+        tmp_path / "failing-attachments"
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        failed = await client.post(
+            "/api/reports/analyze",
+            headers=_headers(),
+            data={
+                "text": "주문 화면에서 버튼을 누른 뒤 계속 로딩되는 오류 상황입니다.",
+                "client_request_id": str(uuid4()),
+            },
+            files={"screenshot": ("error.png", _screenshot_bytes(), "image/png")},
+        )
+
+    assert failed.status_code == 503
+    assert failed.json()["code"] == "ATTACHMENT_STORAGE_UNAVAILABLE"
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Report)) == 0
+        assert await session.scalar(select(func.count()).select_from(Attachment)) == 0

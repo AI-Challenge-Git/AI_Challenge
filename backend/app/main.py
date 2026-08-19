@@ -27,6 +27,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.add_middleware(
         JsonBodyLimitMiddleware,
         max_bytes=16 * 1024,
+        multipart_max_bytes=5 * 1024 * 1024 + 64 * 1024,
         paths={"/api/reports/analyze"},
     )
 
