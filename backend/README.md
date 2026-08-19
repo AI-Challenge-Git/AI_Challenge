@@ -5,10 +5,11 @@ MTS SOS Desk의 FastAPI 백엔드입니다. Python 3.13과 uv를 사용합니다
 ## 로컬 검증
 
 ```powershell
-uv sync --frozen --dev
-uv run pytest
+uv sync --frozen --all-groups
+uv run ruff format --check .
 uv run ruff check .
-uv run mypy
+uv run mypy app tests
+uv run pytest -q
 ```
 
 ## Docker Compose 실행
@@ -21,8 +22,25 @@ docker compose up --build
 
 - API liveness: `http://localhost:8000/health/live`
 - API readiness: `http://localhost:8000/health/ready`
+- 제보 분석: `POST http://localhost:8000/api/reports/analyze`
+- 고객 확인·상담카드 발급: `POST http://localhost:8000/api/reports`
+- 미확정 제보 폐기: `DELETE http://localhost:8000/api/reports`
+- 제보 전체 삭제: `DELETE http://localhost:8000/api/consultation-cards`
 
-API 컨테이너는 시작할 때 `alembic upgrade head`를 실행합니다.
+분석 API는 `pending`, `confirmation`, `failed`, `complete` 상태를 반환합니다. 현재 adapter는
+deterministic Fake이며 실제 AI provider는 연결하지 않습니다.
+
+로컬 Compose는 API 시작 전에 `alembic upgrade head`를 실행합니다. 운영 이미지의 기본
+명령은 API만 시작하며 migration은 단일 pre-deploy 단계에서 별도로 실행해야 합니다.
+
+OpenAPI와 프론트 생성 타입을 갱신하려면 다음을 실행합니다.
+
+```powershell
+cd backend
+uv run python -m scripts.export_openapi openapi.json
+cd ../frontend
+npm run generate:api
+```
 
 핵심 업무 테이블과 개인정보 분리 원칙은 [ERD](docs/erd.md), 백엔드 API 기준안은
 [API contract](docs/api-contract.md)에 정리되어 있습니다.

@@ -10,6 +10,9 @@ const STATUS: Record<SignalStatus, { label: string; tone: string }> = {
   RESOLVED: { label: "해소", tone: "resolved" },
 };
 
+const FEATURE_LABEL: Record<string, string> = { DOMESTIC_STOCK_ORDER: "국내주식 주문" };
+const formatTime = (value: string) => new Date(value).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
+
 export default function Dashboard() {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -47,7 +50,7 @@ export default function Dashboard() {
           <p>개인 주문정보를 제외하고 서버 시각 기준 최근 10분의 기술 증상을 확인합니다.</p>
         </div>
         <span className="updated-at">
-          {snapshot ? `${new Date(snapshot.updated_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })} 갱신 · 5초 주기` : "연결 중"}
+          {snapshot ? `${formatTime(snapshot.updated_at)} 갱신 · 5초 주기` : "연결 중"}
         </span>
       </header>
 
@@ -94,10 +97,10 @@ export default function Dashboard() {
                 <dl>
                   <div><dt>유효 제보</dt><dd>{selected.report_count}건</dd></div>
                   <div><dt>중복 제거 전</dt><dd>{selected.raw_report_count}건</dd></div>
-                  <div><dt>최초 감지</dt><dd>{selected.first_seen}</dd></div>
-                  <div><dt>최근 제보</dt><dd>{selected.last_seen}</dd></div>
+                  <div><dt>최초 감지</dt><dd>{formatTime(selected.first_seen)}</dd></div>
+                  <div><dt>최근 제보</dt><dd>{formatTime(selected.last_seen)}</dd></div>
                   <div><dt>영향 채널</dt><dd>{selected.channel}</dd></div>
-                  <div><dt>기능 영역</dt><dd>{selected.feature_area}</dd></div>
+                  <div><dt>기능 영역</dt><dd>{FEATURE_LABEL[selected.feature_area] ?? selected.feature_area}</dd></div>
                 </dl>
                 <div className="signal-copy"><span>공통 증상</span><p>{selected.symptom}</p></div>
                 <div className="signal-copy"><span>비식별 대표 제보</span><p>“{selected.representative_report}”</p></div>
@@ -111,7 +114,7 @@ export default function Dashboard() {
             <div><span className="section-kicker">POLICY SOURCE</span><strong>{snapshot.policy.title}</strong><small>{snapshot.policy.version} · {snapshot.policy.checked_at} 확인</small></div>
             {snapshot.policy.source_url ? <a href={snapshot.policy.source_url} target="_blank" rel="noreferrer">공식 문서 보기</a> : <span>출처 URL 연결 대기</span>}
           </section>
-          <p className="service-disclaimer">현재 표시되는 내용은 고객 제보를 바탕으로 탐지된 장애 의심 신호이며, 공식 확인한 장애가 아닐 수 있습니다.</p>
+          <p className="service-disclaimer">현재 표시되는 내용은 고객 제보를 바탕으로 탐지된 장애 의심 신호이며, 공식 확인한 장애가 아닐 수 있습니다. 상담 준비정보는 주문 접수·체결 증빙이 아니므로 공식 채널에서 주문 상태를 확인해 주세요.</p>
         </>
       ) : null}
     </div>

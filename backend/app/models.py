@@ -54,6 +54,10 @@ class Report(Base):
         CheckConstraint("octet_length(session_digest) = 32", name="session_digest_length"),
         CheckConstraint("char_length(masked_text) > 0", name="masked_text_not_empty"),
         CheckConstraint(
+            "request_payload_sha256 ~ '^[0-9a-f]{64}$'",
+            name="request_payload_sha256_lower_hex",
+        ),
+        CheckConstraint(
             "status IN ('ANALYSIS_PENDING', 'AWAITING_CONFIRMATION', "
             "'CONFIRMED', 'ANALYSIS_FAILED')",
             name="status_value",
@@ -76,6 +80,7 @@ class Report(Base):
     )
     pii_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
     masked_text: Mapped[str] = mapped_column(Text, nullable=False)
+    request_payload_sha256: Mapped[str] = mapped_column(CHAR(64), nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), default=ReportStatus.ANALYSIS_PENDING.value, nullable=False
     )
@@ -219,6 +224,26 @@ class ConsultationCard(Base):
             "order_type <> 'MARKET' OR price_krw IS NULL",
             name="market_order_without_price",
         ),
+        CheckConstraint(
+            "order_type <> 'LIMIT' OR price_krw IS NOT NULL",
+            name="limit_order_requires_price",
+        ),
+        CheckConstraint(
+            "reference_digest IS NULL OR octet_length(reference_digest) = 32",
+            name="reference_digest_length",
+        ),
+        CheckConstraint(
+            "confirmation_payload_sha256 IS NULL OR confirmation_payload_sha256 ~ '^[0-9a-f]{64}$'",
+            name="confirmation_payload_sha256_lower_hex",
+        ),
+        CheckConstraint(
+            "((reference_digest IS NULL AND expires_at IS NULL AND "
+            "confirmation_request_id IS NULL AND confirmation_payload_sha256 IS NULL) OR "
+            "(reference_digest IS NOT NULL AND expires_at IS NOT NULL AND "
+            "confirmation_request_id IS NOT NULL AND confirmation_payload_sha256 IS NOT NULL))",
+            name="reference_metadata_complete",
+        ),
+        Index("ix_consultation_cards_expires_at", "expires_at"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -235,6 +260,10 @@ class ConsultationCard(Base):
     order_type: Mapped[str] = mapped_column(String(16), nullable=False)
     price_krw: Mapped[int | None] = mapped_column(BigInteger)
     attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reference_digest: Mapped[bytes | None] = mapped_column(LargeBinary(32), unique=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmation_request_id: Mapped[UUID | None] = mapped_column(Uuid)
+    confirmation_payload_sha256: Mapped[str | None] = mapped_column(CHAR(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -243,3 +272,44 @@ class ConsultationCard(Base):
     )
 
     report: Mapped[Report] = relationship(back_populates="consultation_card")
+
+
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        UniqueConstraint("principal_digest", "operation", "client_request_id"),
+        CheckConstraint("octet_length(principal_digest) = 32", name="principal_digest_length"),
+        CheckConstraint(
+            "payload_sha256 ~ '^[0-9a-f]{64}$'",
+            name="payload_sha256_lower_hex",
+        ),
+        CheckConstraint("response_status BETWEEN 200 AND 599", name="response_status_range"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    principal_digest: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    operation: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    payload_sha256: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    response_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    __table_args__ = (
+        CheckConstraint(
+            "resource_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="resource_fingerprint_lower_hex",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_fingerprint: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
