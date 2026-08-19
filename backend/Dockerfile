@@ -6,7 +6,9 @@ COPY --from=uv /uv /uvx /bin/
 WORKDIR /app
 
 RUN groupadd --gid 10001 app \
-    && useradd --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+    && useradd --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app \
+    && mkdir -p /app/data/attachments \
+    && chown -R app:app /app/data
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
