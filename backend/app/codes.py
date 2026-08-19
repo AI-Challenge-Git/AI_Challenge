@@ -38,6 +38,7 @@ class SubmissionStatus(StrEnum):
 class OrderAction(StrEnum):
     SELL = "SELL"
     UNKNOWN = "UNKNOWN"
+    BUY = "BUY"
 
 
 class OrderType(StrEnum):
