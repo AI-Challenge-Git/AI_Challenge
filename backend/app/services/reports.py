@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -10,10 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.ai import DualExtractor, validate_evidence_quotes
+from app.attachments import (
+    AttachmentStorageError,
+    LocalAttachmentStore,
+    PreparedAttachment,
+    attachment_data_url,
+)
 from app.codes import AnalysisStatus, FeatureArea, ReportStatus, TechnicalChannel
 from app.config import Settings
 from app.errors import ServiceError
 from app.models import (
+    Attachment,
     AuditLog,
     ConsultationCard,
     IdempotencyRecord,
@@ -23,6 +31,7 @@ from app.models import (
     TechnicalSymptom,
 )
 from app.schemas import (
+    AttachmentResponse,
     ConsultationCandidate,
     ConsultationCardIssued,
     DeleteConsultationCardRequest,
@@ -55,6 +64,15 @@ CARD_TTL = timedelta(hours=2)
 
 def _payload_sha256(payload: BaseModel) -> str:
     return canonical_json_sha256(payload.model_dump(mode="json"))
+
+
+def _analyze_payload_sha256(
+    payload: ReportCreateRequest, attachment: PreparedAttachment | None
+) -> str:
+    value = payload.model_dump(mode="json")
+    if attachment is not None:
+        value["attachment_sha256"] = attachment.sha256
+    return canonical_json_sha256(value)
 
 
 async def _lock_idempotency_key(
@@ -131,6 +149,8 @@ async def analyze_report(
     request: ReportCreateRequest,
     settings: Settings,
     extractor: DualExtractor,
+    attachment_store: LocalAttachmentStore,
+    prepared_attachment: PreparedAttachment | None = None,
 ) -> ReportAnalysisResponse:
     try:
         normalized = normalize_report_text(request.text)
@@ -140,7 +160,8 @@ async def analyze_report(
     if scan.decision is PiiDecision.REJECT:
         raise ServiceError(422, "SENSITIVE_INPUT_REJECTED", "입력할 수 없는 민감정보가 있습니다.")
 
-    payload_sha256 = _payload_sha256(request)
+    payload_sha256 = _analyze_payload_sha256(request, prepared_attachment)
+    attachment_object_key: str | None = None
     async with session.begin():
         await _lock_idempotency_key(
             session, principal_digest, "ANALYZE_REPORT", request.client_request_id
@@ -151,7 +172,7 @@ async def analyze_report(
                 Report.session_digest == principal_digest,
                 Report.client_request_id == request.client_request_id,
             )
-            .options(selectinload(Report.analyses))
+            .options(selectinload(Report.analyses), selectinload(Report.attachment))
         )
         if existing is not None:
             if not hmac.compare_digest(existing.request_payload_sha256, payload_sha256):
@@ -183,8 +204,36 @@ async def analyze_report(
             model_id=extractor.model_id,
             status=AnalysisStatus.PENDING.value,
         )
+        if prepared_attachment is not None:
+            attachment_object_key = secrets.token_urlsafe(32)
+            report.attachment = Attachment(
+                object_key=attachment_object_key,
+                content_type=prepared_attachment.content_type,
+                byte_size=len(prepared_attachment.content),
+                width=prepared_attachment.width,
+                height=prepared_attachment.height,
+                content_sha256=prepared_attachment.sha256,
+            )
         session.add(report)
         await session.flush()
+
+    if prepared_attachment is not None and attachment_object_key is not None:
+        try:
+            await attachment_store.put(attachment_object_key, prepared_attachment.content)
+        except AttachmentStorageError as exc:
+            async with session.begin():
+                failed_report = await session.scalar(
+                    select(Report).where(Report.id == report.id).with_for_update()
+                )
+                if failed_report is not None:
+                    await session.delete(failed_report)
+            try:
+                await attachment_store.delete(attachment_object_key)
+            except AttachmentStorageError:
+                pass
+            raise ServiceError(
+                503, "ATTACHMENT_STORAGE_UNAVAILABLE", "이미지를 안전하게 저장하지 못했습니다."
+            ) from exc
 
     try:
         async with asyncio.timeout(settings.ai_timeout_seconds):
@@ -238,6 +287,41 @@ async def analyze_report(
     return _analysis_response(stored_report, stored_analysis)
 
 
+async def include_attachment_preview(
+    session: AsyncSession,
+    principal_digest: bytes,
+    response: ReportAnalysisResponse,
+    attachment_store: LocalAttachmentStore,
+) -> ReportAnalysisResponse:
+    if not isinstance(response.root, ReportAnalysisConfirmationResponse):
+        return response
+
+    attachment = await session.scalar(
+        select(Attachment)
+        .join(Report)
+        .join(ReportAnalysis, ReportAnalysis.report_id == Report.id)
+        .where(
+            ReportAnalysis.id == response.root.analysis_id,
+            Report.session_digest == principal_digest,
+        )
+    )
+    if attachment is None:
+        return response
+    try:
+        content = await attachment_store.read(attachment.object_key)
+    except AttachmentStorageError as exc:
+        raise ServiceError(
+            503, "ATTACHMENT_STORAGE_UNAVAILABLE", "이미지를 불러오지 못했습니다."
+        ) from exc
+    if not hmac.compare_digest(hashlib.sha256(content).hexdigest(), attachment.content_sha256):
+        raise ServiceError(503, "ATTACHMENT_INTEGRITY_ERROR", "이미지를 불러오지 못했습니다.")
+    response.root.attachment = AttachmentResponse(
+        id=attachment.id,
+        url=attachment_data_url(attachment.content_type, content),
+    )
+    return response
+
+
 async def confirm_report(
     session: AsyncSession,
     principal_digest: bytes,
@@ -268,7 +352,10 @@ async def confirm_report(
             select(Report)
             .join(ReportAnalysis)
             .where(ReportAnalysis.id == request.analysis_id)
-            .options(selectinload(Report.consultation_card))
+            .options(
+                selectinload(Report.consultation_card),
+                selectinload(Report.attachment),
+            )
             .with_for_update()
         )
         if report is None or not hmac.compare_digest(report.session_digest, principal_digest):
@@ -290,10 +377,9 @@ async def confirm_report(
             raise ServiceError(409, "ANALYSIS_NOT_READY", "완료된 분석만 확인할 수 있습니다.")
         if request.masked_text != report.masked_text:
             raise ServiceError(409, "MASKED_TEXT_CHANGED", "마스킹된 제보가 변경되었습니다.")
-        if request.attachment_id is not None:
-            raise ServiceError(
-                422, "ATTACHMENT_UNAVAILABLE", "이미지 저장은 아직 사용할 수 없습니다."
-            )
+        stored_attachment_id = report.attachment.id if report.attachment is not None else None
+        if request.attachment_id != stored_attachment_id:
+            raise ServiceError(409, "ATTACHMENT_CHANGED", "첨부 이미지를 다시 확인해 주세요.")
 
         reference_number = make_reference_number(
             principal_digest,
@@ -365,7 +451,7 @@ async def delete_report(
     principal_digest: bytes,
     request: DeleteConsultationCardRequest,
     settings: Settings,
-) -> None:
+) -> str | None:
     payload_sha256 = _payload_sha256(request)
     operation = "DELETE_REPORT"
     reference_key = settings.reference_hmac_key.get_secret_value().encode()
@@ -382,18 +468,22 @@ async def delete_report(
         if replay is not None:
             if not hmac.compare_digest(replay.payload_sha256, payload_sha256):
                 raise ServiceError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 ID의 내용이 다릅니다.")
-            return
+            return replay.attachment_object_key
 
         digest = reference_digest(request.reference_number, reference_key)
         report = await session.scalar(
             select(Report)
             .join(ConsultationCard)
             .where(ConsultationCard.reference_digest == digest)
+            .options(selectinload(Report.attachment))
             .with_for_update()
         )
         if report is None or not hmac.compare_digest(report.session_digest, principal_digest):
             raise ServiceError(404, "CARD_NOT_FOUND", "상담카드를 찾을 수 없습니다.")
 
+        attachment_object_key = (
+            report.attachment.object_key if report.attachment is not None else None
+        )
         session.add_all(
             (
                 IdempotencyRecord(
@@ -402,6 +492,7 @@ async def delete_report(
                     client_request_id=request.client_request_id,
                     payload_sha256=payload_sha256,
                     response_status=204,
+                    attachment_object_key=attachment_object_key,
                 ),
                 AuditLog(
                     actor_type="customer_session",
@@ -411,13 +502,14 @@ async def delete_report(
             )
         )
         await session.delete(report)
+        return attachment_object_key
 
 
 async def discard_report(
     session: AsyncSession,
     principal_digest: bytes,
     request: DiscardReportRequest,
-) -> None:
+) -> str | None:
     payload_sha256 = _payload_sha256(request)
     operation = "DISCARD_REPORT"
 
@@ -433,12 +525,13 @@ async def discard_report(
         if replay is not None:
             if not hmac.compare_digest(replay.payload_sha256, payload_sha256):
                 raise ServiceError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 ID의 내용이 다릅니다.")
-            return
+            return replay.attachment_object_key
 
         report = await session.scalar(
             select(Report)
             .join(ReportAnalysis)
             .where(ReportAnalysis.id == request.analysis_id)
+            .options(selectinload(Report.attachment))
             .with_for_update()
         )
         if report is None or not hmac.compare_digest(report.session_digest, principal_digest):
@@ -446,6 +539,9 @@ async def discard_report(
         if report.status != ReportStatus.AWAITING_CONFIRMATION.value:
             raise ServiceError(409, "REPORT_ALREADY_CONFIRMED", "이미 확인이 완료된 제보입니다.")
 
+        attachment_object_key = (
+            report.attachment.object_key if report.attachment is not None else None
+        )
         session.add_all(
             (
                 IdempotencyRecord(
@@ -454,6 +550,7 @@ async def discard_report(
                     client_request_id=request.client_request_id,
                     payload_sha256=payload_sha256,
                     response_status=204,
+                    attachment_object_key=attachment_object_key,
                 ),
                 AuditLog(
                     actor_type="customer_session",
@@ -463,3 +560,4 @@ async def discard_report(
             )
         )
         await session.delete(report)
+        return attachment_object_key

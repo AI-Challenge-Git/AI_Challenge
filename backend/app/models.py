@@ -96,6 +96,9 @@ class Report(Base):
     analyses: Mapped[list["ReportAnalysis"]] = relationship(
         back_populates="report", cascade="all, delete-orphan"
     )
+    attachment: Mapped["Attachment | None"] = relationship(
+        back_populates="report", cascade="all, delete-orphan", uselist=False
+    )
     technical_symptom: Mapped["TechnicalSymptom | None"] = relationship(
         back_populates="report", cascade="all, delete-orphan", uselist=False
     )
@@ -157,6 +160,51 @@ class ReportAnalysis(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     report: Mapped[Report] = relationship(back_populates="analyses")
+
+
+class Attachment(Base):
+    __tablename__ = "attachments"
+    __table_args__ = (
+        CheckConstraint(
+            "object_key ~ '^[A-Za-z0-9_-]{43}$'",
+            name="object_key_format",
+        ),
+        CheckConstraint(
+            "content_type IN ('image/png', 'image/jpeg', 'image/webp')",
+            name="content_type_value",
+        ),
+        CheckConstraint(
+            "byte_size BETWEEN 1 AND 5242880",
+            name="byte_size_range",
+        ),
+        CheckConstraint(
+            "width BETWEEN 1 AND 4096 AND height BETWEEN 1 AND 4096 AND width * height <= 16000000",
+            name="dimensions_range",
+        ),
+        CheckConstraint(
+            "content_sha256 ~ '^[0-9a-f]{64}$'",
+            name="content_sha256_lower_hex",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    report_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("reports.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    object_key: Mapped[str] = mapped_column(String(43), unique=True, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    report: Mapped[Report] = relationship(back_populates="attachment")
 
 
 class TechnicalSymptom(Base):
@@ -284,6 +332,10 @@ class IdempotencyRecord(Base):
             name="payload_sha256_lower_hex",
         ),
         CheckConstraint("response_status BETWEEN 200 AND 599", name="response_status_range"),
+        CheckConstraint(
+            "attachment_object_key IS NULL OR attachment_object_key ~ '^[A-Za-z0-9_-]{43}$'",
+            name="attachment_object_key_format",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -292,6 +344,7 @@ class IdempotencyRecord(Base):
     client_request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     payload_sha256: Mapped[str] = mapped_column(CHAR(64), nullable=False)
     response_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    attachment_object_key: Mapped[str | None] = mapped_column(String(43))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

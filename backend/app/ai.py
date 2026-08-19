@@ -3,6 +3,7 @@ from functools import lru_cache
 from typing import Protocol
 
 from app.codes import FieldStatus
+from app.config import get_settings
 from app.real_extractor_v5 import ExtractFailureReason, RealDualExtractor
 from app.schemas import (
     CandidateField,
@@ -103,6 +104,8 @@ class NvidiaDualExtractorAdapter:
 
 @lru_cache
 def get_dual_extractor() -> DualExtractor:
+    if get_settings().ai_adapter == "fake":
+        return FakeDualExtractor()
     return NvidiaDualExtractorAdapter()
 
 

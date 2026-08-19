@@ -165,44 +165,6 @@
         "title": "CandidateField[SubmissionStatus]",
         "type": "object"
       },
-      "CandidateField_datetime_": {
-        "additionalProperties": false,
-        "properties": {
-          "evidence_quote": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evidence Quote"
-          },
-          "status": {
-            "$ref": "#/components/schemas/FieldStatus"
-          },
-          "value": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value"
-          }
-        },
-        "required": [
-          "value",
-          "status",
-          "evidence_quote"
-        ],
-        "title": "CandidateField[datetime]",
-        "type": "object"
-      },
       "CandidateField_int_": {
         "additionalProperties": false,
         "properties": {
@@ -284,7 +246,7 @@
             "$ref": "#/components/schemas/CandidateField_OrderAction_"
           },
           "attempted_at": {
-            "$ref": "#/components/schemas/CandidateField_datetime_"
+            "$ref": "#/components/schemas/CandidateField_str_"
           },
           "order_type": {
             "$ref": "#/components/schemas/CandidateField_OrderType_"
@@ -484,6 +446,7 @@
         "type": "object"
       },
       "IssueType": {
+        "description": "AI-04: 평가 데이터 전체를 포괄하는 영문 stable code. taxonomy_version=\"issue-type.v1\" ",
         "enum": [
           "ORDER_SUBMISSION_FAILURE",
           "LOGIN_ACCESS_FAILURE",
@@ -821,26 +784,6 @@
         "title": "ReportConfirmedResponse",
         "type": "object"
       },
-      "ReportCreateRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "client_request_id": {
-            "format": "uuid4",
-            "title": "Client Request Id",
-            "type": "string"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "client_request_id",
-          "text"
-        ],
-        "title": "ReportCreateRequest",
-        "type": "object"
-      },
       "SafeError": {
         "additionalProperties": false,
         "properties": {
@@ -874,7 +817,7 @@
             "$ref": "#/components/schemas/CandidateField_IssueType_"
           },
           "reported_occurred_at": {
-            "$ref": "#/components/schemas/CandidateField_datetime_"
+            "$ref": "#/components/schemas/CandidateField_str_"
           },
           "submission_status": {
             "$ref": "#/components/schemas/CandidateField_SubmissionStatus_"
@@ -1211,7 +1154,49 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReportCreateRequest"
+                "additionalProperties": false,
+                "properties": {
+                  "client_request_id": {
+                    "format": "uuid4",
+                    "title": "Client Request Id",
+                    "type": "string"
+                  },
+                  "text": {
+                    "title": "Text",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "client_request_id",
+                  "text"
+                ],
+                "title": "ReportCreateRequest",
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "client_request_id": {
+                    "format": "uuid4",
+                    "type": "string"
+                  },
+                  "screenshot": {
+                    "description": "PNG, JPEG, or WebP; maximum 5 MiB",
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "client_request_id",
+                  "screenshot"
+                ],
+                "type": "object"
               }
             }
           },
@@ -1257,6 +1242,16 @@
               }
             },
             "description": "Body too large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unsupported media type"
           },
           "422": {
             "content": {
