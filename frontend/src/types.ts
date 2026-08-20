@@ -1,8 +1,6 @@
-export type FieldStatus =
-  | "CONFIRMED_FROM_TEXT"
-  | "NEEDS_CONFIRMATION"
-  | "UNKNOWN"
-  | "OUT_OF_SCOPE";
+import type { components } from "./generated/api";
+
+export type FieldStatus = components["schemas"]["FieldStatus"];
 
 type TechnicalField =
   | "occurred_date"
@@ -28,14 +26,7 @@ export interface TechnicalData {
   occurred_at: string | null;
   channel: "M-able" | "UNKNOWN";
   feature_area: "DOMESTIC_STOCK_ORDER" | "UNKNOWN";
-  issue_type:
-    | "ORDER_SUBMISSION_FAILURE"
-    | "ORDER_RESULT_UNCONFIRMED"
-    | "LOGIN_ACCESS_FAILURE"
-    | "BALANCE_INQUIRY_ERROR"
-    | "DEVICE_NETWORK_SUSPECTED"
-    | "UNRELATED_OR_AMBIGUOUS"
-    | "UNKNOWN";
+  issue_type: components["schemas"]["IssueType"];
   symptom: string;
   submission_status: "SUBMITTED" | "NOT_SUBMITTED" | "UNKNOWN";
   error_code: string | null;
@@ -44,11 +35,11 @@ export interface TechnicalData {
 }
 
 export interface ConsultationData {
-  action: "SELL" | "BUY" | "UNKNOWN";
+  action: components["schemas"]["OrderAction"];
   symbol_name: string | null;
   symbol_code: string | null;
   quantity: number | null;
-  order_type: "LIMIT" | "MARKET" | "UNKNOWN";
+  order_type: components["schemas"]["OrderType"];
   price: number | null;
   attempted_at: string | null;
   field_statuses: Record<ConsultationField, FieldStatus>;

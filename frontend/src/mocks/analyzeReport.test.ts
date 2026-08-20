@@ -79,4 +79,11 @@ describe("단일 제보 Mock 구조화", () => {
     expect(result.consultation.attempted_at).toBeNull();
     expect(result.consultation.field_statuses.quantity).toBe("UNKNOWN");
   });
+
+  it("매수 표현을 BUY로 구조화한다", () => {
+    const result = analyzeLocally("KB 앱에서 삼성전자 열 주를 시장가로 매수하려는데 주문 화면이 계속 멈춰 있어요.");
+
+    expect(result.consultation.action).toBe("BUY");
+    expect(result.consultation.field_statuses.action).toBe("CONFIRMED_FROM_TEXT");
+  });
 });

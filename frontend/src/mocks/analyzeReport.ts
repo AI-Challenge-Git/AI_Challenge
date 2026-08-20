@@ -198,7 +198,7 @@ export function analyzeLocally(input: string): AnalysisResponse {
   if (orderTypeEvidence) consultationEvidence.order_type = orderTypeEvidence;
   if (occurred.evidence) consultationEvidence.attempted_at = occurred.evidence;
 
-  const action: ConsultationData["action"] = sellEvidence ? "SELL" : "UNKNOWN";
+  const action: ConsultationData["action"] = sellEvidence ? "SELL" : buyEvidence ? "BUY" : "UNKNOWN";
   const orderType: ConsultationData["order_type"] = orderTypeEvidence
     ? orderTypeEvidence.includes("지정가")
       ? "LIMIT"
@@ -213,7 +213,7 @@ export function analyzeLocally(input: string): AnalysisResponse {
     price: price.value,
     attempted_at: occurred.value,
     field_statuses: {
-      action: action === "UNKNOWN" ? "UNKNOWN" : buyEvidence ? "OUT_OF_SCOPE" : "CONFIRMED_FROM_TEXT",
+      action: action === "UNKNOWN" ? "UNKNOWN" : "CONFIRMED_FROM_TEXT",
       symbol_name: confirmed(symbol?.name),
       symbol_code: confirmed(symbol?.code),
       quantity: confirmed(quantity.value),

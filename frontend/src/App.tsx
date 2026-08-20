@@ -58,6 +58,7 @@ const SUBMISSION_LABEL: Record<TechnicalData["submission_status"], string> = {
 
 const ACTION_LABEL = {
   SELL: "매도",
+  BUY: "매수",
   UNKNOWN: "모름",
 };
 
