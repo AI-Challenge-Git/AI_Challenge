@@ -446,7 +446,6 @@
         "type": "object"
       },
       "IssueType": {
-        "description": "AI-04: 평가 데이터 전체를 포괄하는 영문 stable code. taxonomy_version=\"issue-type.v1\" ",
         "enum": [
           "ORDER_SUBMISSION_FAILURE",
           "LOGIN_ACCESS_FAILURE",
@@ -462,7 +461,8 @@
       "OrderAction": {
         "enum": [
           "SELL",
-          "UNKNOWN"
+          "UNKNOWN",
+          "BUY"
         ],
         "title": "OrderAction",
         "type": "string"

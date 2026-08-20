@@ -19,7 +19,7 @@ const confirmationResponse = {
     symptom: candidate("주문 버튼 이후 지속 로딩", "CONFIRMED_FROM_TEXT", "계속 로딩"),
     submission_status: candidate("UNKNOWN", "UNKNOWN"),
     error_code: candidate(null, "UNKNOWN"),
-    reported_occurred_at: candidate("2026-08-18T00:03:00Z", "NEEDS_CONFIRMATION", "9시 3분쯤"),
+    reported_occurred_at: candidate(null, "NEEDS_CONFIRMATION", "9시 3분쯤"),
   },
   consultation: {
     action: candidate("SELL"),
@@ -28,7 +28,7 @@ const confirmationResponse = {
     quantity: candidate(20),
     order_type: candidate("LIMIT"),
     price_krw: candidate(70_000),
-    attempted_at: candidate("2026-08-18T00:03:00Z"),
+    attempted_at: candidate(null, "NEEDS_CONFIRMATION", "9시 3분쯤"),
   },
 };
 
@@ -102,8 +102,8 @@ describe("백엔드 분석 DTO 연동", () => {
 
     expect(result.status).toBe("confirmation");
     if (result.status !== "confirmation") return;
-    expect(result.technical).toMatchObject({ occurred_date: "2026-08-18", occurred_at: "09:03", issue_type: "ORDER_SUBMISSION_FAILURE" });
-    expect(result.consultation).toMatchObject({ price: 70_000, attempted_at: "2026-08-18T00:03:00Z" });
+    expect(result.technical).toMatchObject({ occurred_date: null, occurred_at: null, issue_type: "ORDER_SUBMISSION_FAILURE" });
+    expect(result.consultation).toMatchObject({ price: 70_000, attempted_at: null });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][1]?.body).toBe(fetchMock.mock.calls[1][1]?.body);
     expect((fetchMock.mock.calls[0][1]?.headers as Record<string, string>).Authorization)
@@ -148,7 +148,7 @@ describe("백엔드 분석 DTO 연동", () => {
       attachment_id: null,
       masked_text: confirmationResponse.masked_text,
       technical,
-      consultation,
+      consultation: { ...consultation, action: "BUY" },
     }, "50cfd27c-aef1-44fd-9e8c-de24ade721c3");
 
     const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
@@ -160,7 +160,7 @@ describe("백엔드 분석 DTO 연동", () => {
       reported_occurred_at: expect.stringMatching(/(?:Z|[+-]\d{2}:\d{2})$/),
     });
     expect(sent.consultation).toEqual({
-      action: "SELL",
+      action: "BUY",
       symbol_name: "삼성전자",
       symbol_code: "005930",
       quantity: 20,
@@ -172,7 +172,26 @@ describe("백엔드 분석 DTO 연동", () => {
 
     const agent = await loginAgent("CS1024", "demo");
     await expect(getConsultationCard(saved.reference_number, agent.access_token))
-      .resolves.toMatchObject({ reference_number: "KBSOS-TEST", technical, consultation });
+      .resolves.toMatchObject({ reference_number: "KBSOS-TEST", technical, consultation: { ...consultation, action: "BUY" } });
+  });
+
+  it("이미지는 multipart로 같은 멱등 요청에 포함한다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify(confirmationResponse)));
+    vi.stubGlobal("fetch", fetchMock);
+    const { analyzeReport } = await import("./api");
+    const screenshot = new File(["image"], "error.png", { type: "image/png" });
+    const requestId = crypto.randomUUID();
+    const reportText = "9시 3분쯤 주문 버튼 이후 계속 로딩되고 결과를 확인하지 못했습니다.";
+
+    await analyzeReport(reportText, requestId, screenshot);
+
+    const body = fetchMock.mock.calls[0][1]?.body;
+    expect(body).toBeInstanceOf(FormData);
+    expect((body as FormData).get("client_request_id")).toBe(requestId);
+    expect((body as FormData).get("screenshot")).toBe(screenshot);
+    expect((body as FormData).get("text")).toBe(reportText);
   });
 
   it("지정가 누락과 시장가 가격 입력은 네트워크 전송 전에 거부한다", async () => {
