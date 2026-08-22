@@ -1,4 +1,5 @@
 import { analyzeLocally, maskSensitiveText } from "./mocks/analyzeReport";
+import type { components, operations } from "./generated/api";
 import type {
   AgentCase,
   AgentSession,
@@ -12,6 +13,13 @@ import type {
   SavedCard,
   TechnicalData,
 } from "./types";
+
+type ApiAnalyzeJsonRequest = operations["analyze_api_reports_analyze_post"]["requestBody"]["content"]["application/json"];
+type ApiAnalysisResponse = components["schemas"]["ReportAnalysisResponse"];
+type ApiConfirmationRequest = components["schemas"]["ReportConfirmationRequest"];
+type ApiConfirmedResponse = components["schemas"]["ReportConfirmedResponse"];
+type ApiDiscardRequest = components["schemas"]["DiscardReportRequest"];
+type ApiDeleteCardRequest = components["schemas"]["DeleteConsultationCardRequest"];
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "");
 export const DEMO_REFERENCE_NUMBER = "KBSOS-7H4Q-9M2P";
@@ -363,13 +371,19 @@ export async function analyzeReport(rawText: string, clientRequestId: string = c
     mockAttachments.set(id, url);
     return { ...result, attachment: { id, url } };
   }
-  if (screenshot) throw new Error("현재 백엔드 연동에서는 이미지 첨부를 지원하지 않습니다. 이미지를 제거하고 다시 시도해 주세요.");
-
   const clientMasked = maskSensitiveText(text);
-  const body = JSON.stringify({ text: clientMasked.text, client_request_id: clientRequestId });
+  const analyzePayload: ApiAnalyzeJsonRequest = { text: clientMasked.text, client_request_id: clientRequestId };
+  const body: BodyInit = screenshot
+    ? new FormData()
+    : JSON.stringify(analyzePayload);
+  if (body instanceof FormData && screenshot) {
+    body.set("text", clientMasked.text);
+    body.set("client_request_id", clientRequestId);
+    body.set("screenshot", screenshot);
+  }
   // ponytail: 30초 동안 같은 멱등 요청을 폴링한다. 장기 작업이 필요해지면 전용 상태 조회 API로 교체.
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    const result = adaptAnalysisResult(await request<unknown>("/api/reports/analyze", { method: "POST", body }));
+    const result = adaptAnalysisResult(await request<ApiAnalysisResponse>("/api/reports/analyze", { method: "POST", body }));
     if (result.status !== "pending") return result;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
@@ -436,7 +450,6 @@ export async function saveConfirmedReport(payload: {
   }
 
   const { technical, consultation, ...report } = payload;
-  if (consultation.action === "BUY") throw new Error("현재 백엔드 계약에서는 매도 또는 모름만 선택할 수 있습니다.");
   if (consultation.quantity !== null
     && (!Number.isInteger(consultation.quantity) || consultation.quantity <= 0)) {
     throw new Error("수량은 0보다 큰 정수로 입력해 주세요.");
@@ -471,11 +484,9 @@ export async function saveConfirmedReport(payload: {
       attempted_at: toOffsetIso(consultation.attempted_at),
     },
     client_request_id: clientRequestId,
-  };
+  } satisfies ApiConfirmationRequest;
 
-  const body = await request<{
-    consultation_card: { reference_number: string; expires_at: string };
-  }>("/api/reports", {
+  const body = await request<ApiConfirmedResponse>("/api/reports", {
     method: "POST",
     body: JSON.stringify(confirmation),
   });
@@ -492,9 +503,10 @@ export async function saveConfirmedReport(payload: {
 
 export async function discardAnalysis(analysisId: string, clientRequestId: string = crypto.randomUUID()): Promise<void> {
   if (!apiBaseUrl) return;
+  const discard: ApiDiscardRequest = { analysis_id: analysisId, client_request_id: clientRequestId };
   await request<void>("/api/reports", {
     method: "DELETE",
-    body: JSON.stringify({ analysis_id: analysisId, client_request_id: clientRequestId }),
+    body: JSON.stringify(discard),
   });
 }
 
@@ -539,9 +551,10 @@ export async function deleteConsultationCard(reference: string, clientRequestId:
     mockCards.delete(normalized);
     return;
   }
+  const deletion: ApiDeleteCardRequest = { reference_number: normalized, client_request_id: clientRequestId };
   await request<void>("/api/consultation-cards", {
     method: "DELETE",
-    body: JSON.stringify({ reference_number: normalized, client_request_id: clientRequestId }),
+    body: JSON.stringify(deletion),
   });
 }
 
