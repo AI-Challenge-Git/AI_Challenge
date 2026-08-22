@@ -1,43 +1,457 @@
 {
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MTS SOS Desk API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health/live": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Live",
+        "operationId": "live_health_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Ready",
+        "operationId": "ready_health_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reports/analyze": {
+      "post": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Analyze",
+        "operationId": "analyze_api_reports_analyze_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "client_request_id": {
+                    "type": "string",
+                    "format": "uuid4",
+                    "title": "Client Request Id"
+                  },
+                  "text": {
+                    "type": "string",
+                    "title": "Text"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "client_request_id",
+                  "text"
+                ],
+                "title": "ReportCreateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "client_request_id": {
+                    "type": "string",
+                    "format": "uuid4"
+                  },
+                  "screenshot": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "PNG, JPEG, or WebP; maximum 5 MiB"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "text",
+                  "client_request_id",
+                  "screenshot"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportAnalysisResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid customer session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid or sensitive input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Required service data unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported media type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/reports": {
+      "post": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Confirm",
+        "operationId": "confirm_api_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportConfirmationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportConfirmedResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid customer session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid or sensitive input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Required service data unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Analysis not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Discard",
+        "operationId": "discard_api_reports_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscardReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Invalid customer session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid or sensitive input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Required service data unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Analysis not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/consultation-cards": {
+      "delete": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Delete Card",
+        "operationId": "delete_card_api_consultation_cards_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteConsultationCardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Invalid customer session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid or sensitive input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Required service data unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Card not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    }
+  },
   "components": {
     "schemas": {
       "AttachmentResponse": {
-        "additionalProperties": false,
         "properties": {
           "id": {
+            "type": "string",
             "format": "uuid",
-            "title": "Id",
-            "type": "string"
+            "title": "Id"
           },
           "url": {
-            "title": "Url",
-            "type": "string"
+            "type": "string",
+            "title": "Url"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "id",
           "url"
         ],
-        "title": "AttachmentResponse",
-        "type": "object"
+        "title": "AttachmentResponse"
       },
       "CandidateField_IssueType_": {
-        "additionalProperties": false,
         "properties": {
-          "evidence_quote": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evidence Quote"
-          },
-          "status": {
-            "$ref": "#/components/schemas/FieldStatus"
-          },
           "value": {
             "anyOf": [
               {
@@ -47,19 +461,10 @@
                 "type": "null"
               }
             ]
-          }
-        },
-        "required": [
-          "value",
-          "status",
-          "evidence_quote"
-        ],
-        "title": "CandidateField[IssueType]",
-        "type": "object"
-      },
-      "CandidateField_OrderAction_": {
-        "additionalProperties": false,
-        "properties": {
+          },
+          "status": {
+            "$ref": "#/components/schemas/FieldStatus"
+          },
           "evidence_quote": {
             "anyOf": [
               {
@@ -70,10 +475,19 @@
               }
             ],
             "title": "Evidence Quote"
-          },
-          "status": {
-            "$ref": "#/components/schemas/FieldStatus"
-          },
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value",
+          "status",
+          "evidence_quote"
+        ],
+        "title": "CandidateField[IssueType]"
+      },
+      "CandidateField_OrderAction_": {
+        "properties": {
           "value": {
             "anyOf": [
               {
@@ -83,19 +497,10 @@
                 "type": "null"
               }
             ]
-          }
-        },
-        "required": [
-          "value",
-          "status",
-          "evidence_quote"
-        ],
-        "title": "CandidateField[OrderAction]",
-        "type": "object"
-      },
-      "CandidateField_OrderType_": {
-        "additionalProperties": false,
-        "properties": {
+          },
+          "status": {
+            "$ref": "#/components/schemas/FieldStatus"
+          },
           "evidence_quote": {
             "anyOf": [
               {
@@ -106,10 +511,19 @@
               }
             ],
             "title": "Evidence Quote"
-          },
-          "status": {
-            "$ref": "#/components/schemas/FieldStatus"
-          },
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value",
+          "status",
+          "evidence_quote"
+        ],
+        "title": "CandidateField[OrderAction]"
+      },
+      "CandidateField_OrderType_": {
+        "properties": {
           "value": {
             "anyOf": [
               {
@@ -119,19 +533,10 @@
                 "type": "null"
               }
             ]
-          }
-        },
-        "required": [
-          "value",
-          "status",
-          "evidence_quote"
-        ],
-        "title": "CandidateField[OrderType]",
-        "type": "object"
-      },
-      "CandidateField_SubmissionStatus_": {
-        "additionalProperties": false,
-        "properties": {
+          },
+          "status": {
+            "$ref": "#/components/schemas/FieldStatus"
+          },
           "evidence_quote": {
             "anyOf": [
               {
@@ -142,10 +547,19 @@
               }
             ],
             "title": "Evidence Quote"
-          },
-          "status": {
-            "$ref": "#/components/schemas/FieldStatus"
-          },
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value",
+          "status",
+          "evidence_quote"
+        ],
+        "title": "CandidateField[OrderType]"
+      },
+      "CandidateField_SubmissionStatus_": {
+        "properties": {
           "value": {
             "anyOf": [
               {
@@ -155,19 +569,10 @@
                 "type": "null"
               }
             ]
-          }
-        },
-        "required": [
-          "value",
-          "status",
-          "evidence_quote"
-        ],
-        "title": "CandidateField[SubmissionStatus]",
-        "type": "object"
-      },
-      "CandidateField_int_": {
-        "additionalProperties": false,
-        "properties": {
+          },
+          "status": {
+            "$ref": "#/components/schemas/FieldStatus"
+          },
           "evidence_quote": {
             "anyOf": [
               {
@@ -178,10 +583,19 @@
               }
             ],
             "title": "Evidence Quote"
-          },
-          "status": {
-            "$ref": "#/components/schemas/FieldStatus"
-          },
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value",
+          "status",
+          "evidence_quote"
+        ],
+        "title": "CandidateField[SubmissionStatus]"
+      },
+      "CandidateField_int_": {
+        "properties": {
           "value": {
             "anyOf": [
               {
@@ -192,19 +606,10 @@
               }
             ],
             "title": "Value"
-          }
-        },
-        "required": [
-          "value",
-          "status",
-          "evidence_quote"
-        ],
-        "title": "CandidateField[int]",
-        "type": "object"
-      },
-      "CandidateField_str_": {
-        "additionalProperties": false,
-        "properties": {
+          },
+          "status": {
+            "$ref": "#/components/schemas/FieldStatus"
+          },
           "evidence_quote": {
             "anyOf": [
               {
@@ -215,10 +620,19 @@
               }
             ],
             "title": "Evidence Quote"
-          },
-          "status": {
-            "$ref": "#/components/schemas/FieldStatus"
-          },
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value",
+          "status",
+          "evidence_quote"
+        ],
+        "title": "CandidateField[int]"
+      },
+      "CandidateField_str_": {
+        "properties": {
           "value": {
             "anyOf": [
               {
@@ -229,24 +643,44 @@
               }
             ],
             "title": "Value"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FieldStatus"
+          },
+          "evidence_quote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Quote"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "value",
           "status",
           "evidence_quote"
         ],
-        "title": "CandidateField[str]",
-        "type": "object"
+        "title": "CandidateField[str]"
       },
       "ConsultationCandidate": {
-        "additionalProperties": false,
         "properties": {
           "action": {
             "$ref": "#/components/schemas/CandidateField_OrderAction_"
           },
-          "attempted_at": {
+          "symbol_name": {
             "$ref": "#/components/schemas/CandidateField_str_"
+          },
+          "symbol_code": {
+            "$ref": "#/components/schemas/CandidateField_str_"
+          },
+          "quantity": {
+            "$ref": "#/components/schemas/CandidateField_int_"
           },
           "order_type": {
             "$ref": "#/components/schemas/CandidateField_OrderType_"
@@ -254,16 +688,12 @@
           "price_krw": {
             "$ref": "#/components/schemas/CandidateField_int_"
           },
-          "quantity": {
-            "$ref": "#/components/schemas/CandidateField_int_"
-          },
-          "symbol_code": {
-            "$ref": "#/components/schemas/CandidateField_str_"
-          },
-          "symbol_name": {
+          "attempted_at": {
             "$ref": "#/components/schemas/CandidateField_str_"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "action",
           "symbol_name",
@@ -273,80 +703,52 @@
           "price_krw",
           "attempted_at"
         ],
-        "title": "ConsultationCandidate",
-        "type": "object"
+        "title": "ConsultationCandidate"
       },
       "ConsultationCardIssued": {
-        "additionalProperties": false,
         "properties": {
-          "expires_at": {
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
-          },
           "reference_number": {
+            "type": "string",
             "pattern": "^KBSOS-[A-Z2-7]{26}$",
-            "title": "Reference Number",
-            "type": "string"
+            "title": "Reference Number"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "reference_number",
           "expires_at"
         ],
-        "title": "ConsultationCardIssued",
-        "type": "object"
+        "title": "ConsultationCardIssued"
       },
       "ConsultationConfirmation": {
-        "additionalProperties": false,
         "properties": {
           "action": {
             "$ref": "#/components/schemas/OrderAction"
           },
-          "attempted_at": {
+          "symbol_name": {
             "anyOf": [
               {
-                "format": "date-time",
-                "type": "string"
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Attempted At"
-          },
-          "order_type": {
-            "$ref": "#/components/schemas/OrderType"
-          },
-          "price_krw": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Price Krw"
-          },
-          "quantity": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Quantity"
+            "title": "Symbol Name"
           },
           "symbol_code": {
             "anyOf": [
               {
-                "pattern": "^[0-9]{6}$",
-                "type": "string"
+                "type": "string",
+                "pattern": "^[0-9]{6}$"
               },
               {
                 "type": "null"
@@ -354,98 +756,126 @@
             ],
             "title": "Symbol Code"
           },
-          "symbol_name": {
+          "quantity": {
             "anyOf": [
               {
-                "maxLength": 80,
-                "minLength": 1,
-                "type": "string"
+                "type": "integer",
+                "exclusiveMinimum": 0.0
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Symbol Name"
+            "title": "Quantity"
+          },
+          "order_type": {
+            "$ref": "#/components/schemas/OrderType"
+          },
+          "price_krw": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Krw"
+          },
+          "attempted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempted At"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "action",
           "order_type",
           "attempted_at"
         ],
-        "title": "ConsultationConfirmation",
-        "type": "object"
+        "title": "ConsultationConfirmation"
       },
       "DeleteConsultationCardRequest": {
-        "additionalProperties": false,
         "properties": {
-          "client_request_id": {
-            "format": "uuid4",
-            "title": "Client Request Id",
-            "type": "string"
-          },
           "reference_number": {
+            "type": "string",
             "pattern": "^KBSOS-[A-Z2-7]{26}$",
-            "title": "Reference Number",
-            "type": "string"
+            "title": "Reference Number"
+          },
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid4",
+            "title": "Client Request Id"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "reference_number",
           "client_request_id"
         ],
-        "title": "DeleteConsultationCardRequest",
-        "type": "object"
+        "title": "DeleteConsultationCardRequest"
       },
       "DiscardReportRequest": {
-        "additionalProperties": false,
         "properties": {
           "analysis_id": {
+            "type": "string",
             "format": "uuid",
-            "title": "Analysis Id",
-            "type": "string"
+            "title": "Analysis Id"
           },
           "client_request_id": {
+            "type": "string",
             "format": "uuid4",
-            "title": "Client Request Id",
-            "type": "string"
+            "title": "Client Request Id"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "analysis_id",
           "client_request_id"
         ],
-        "title": "DiscardReportRequest",
-        "type": "object"
+        "title": "DiscardReportRequest"
       },
       "FieldStatus": {
+        "type": "string",
         "enum": [
           "CONFIRMED_FROM_TEXT",
           "NEEDS_CONFIRMATION",
           "UNKNOWN",
           "OUT_OF_SCOPE"
         ],
-        "title": "FieldStatus",
-        "type": "string"
+        "title": "FieldStatus"
       },
       "HealthResponse": {
         "properties": {
           "status": {
+            "type": "string",
             "enum": [
               "live",
               "ready"
             ],
-            "title": "Status",
-            "type": "string"
+            "title": "Status"
           }
         },
+        "type": "object",
         "required": [
           "status"
         ],
-        "title": "HealthResponse",
-        "type": "object"
+        "title": "HealthResponse"
       },
       "IssueType": {
+        "type": "string",
         "enum": [
           "ORDER_SUBMISSION_FAILURE",
           "LOGIN_ACCESS_FAILURE",
@@ -455,40 +885,39 @@
           "UNRELATED_OR_AMBIGUOUS",
           "UNKNOWN"
         ],
-        "title": "IssueType",
-        "type": "string"
+        "title": "IssueType"
       },
       "OrderAction": {
+        "type": "string",
         "enum": [
           "SELL",
           "UNKNOWN",
           "BUY"
         ],
-        "title": "OrderAction",
-        "type": "string"
+        "title": "OrderAction"
       },
       "OrderType": {
+        "type": "string",
         "enum": [
           "LIMIT",
           "MARKET",
           "UNKNOWN"
         ],
-        "title": "OrderType",
-        "type": "string"
+        "title": "OrderType"
       },
       "ProblemDetails": {
-        "additionalProperties": false,
         "properties": {
-          "code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Code"
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "type": "integer",
+            "title": "Status"
           },
           "detail": {
             "anyOf": [
@@ -500,6 +929,28 @@
               }
             ],
             "title": "Detail"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
           },
           "errors": {
             "anyOf": [
@@ -517,76 +968,58 @@
               }
             ],
             "title": "Errors"
-          },
-          "request_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Request Id"
-          },
-          "status": {
-            "title": "Status",
-            "type": "integer"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          },
-          "type": {
-            "title": "Type",
-            "type": "string"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "type",
           "title",
           "status"
         ],
-        "title": "ProblemDetails",
-        "type": "object"
+        "title": "ProblemDetails"
       },
       "ReportAnalysisCompleteResponse": {
-        "additionalProperties": false,
         "properties": {
           "analysis_id": {
+            "type": "string",
             "format": "uuid",
-            "title": "Analysis Id",
-            "type": "string"
+            "title": "Analysis Id"
           },
           "analysis_version": {
-            "title": "Analysis Version",
-            "type": "integer"
+            "type": "integer",
+            "title": "Analysis Version"
           },
           "status": {
+            "type": "string",
             "const": "complete",
-            "title": "Status",
-            "type": "string"
+            "title": "Status"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "analysis_id",
           "analysis_version",
           "status"
         ],
-        "title": "ReportAnalysisCompleteResponse",
-        "type": "object"
+        "title": "ReportAnalysisCompleteResponse"
       },
       "ReportAnalysisConfirmationResponse": {
-        "additionalProperties": false,
         "properties": {
           "analysis_id": {
+            "type": "string",
             "format": "uuid",
-            "title": "Analysis Id",
-            "type": "string"
+            "title": "Analysis Id"
           },
           "analysis_version": {
-            "title": "Analysis Version",
-            "type": "integer"
+            "type": "integer",
+            "title": "Analysis Version"
+          },
+          "status": {
+            "type": "string",
+            "const": "confirmation",
+            "title": "Status"
           },
           "attachment": {
             "anyOf": [
@@ -598,29 +1031,26 @@
               }
             ]
           },
-          "consultation": {
-            "$ref": "#/components/schemas/ConsultationCandidate"
+          "masked_text": {
+            "type": "string",
+            "title": "Masked Text"
           },
           "masked_items": {
             "items": {
               "type": "string"
             },
-            "title": "Masked Items",
-            "type": "array"
-          },
-          "masked_text": {
-            "title": "Masked Text",
-            "type": "string"
-          },
-          "status": {
-            "const": "confirmation",
-            "title": "Status",
-            "type": "string"
+            "type": "array",
+            "title": "Masked Items"
           },
           "technical": {
             "$ref": "#/components/schemas/TechnicalCandidate"
+          },
+          "consultation": {
+            "$ref": "#/components/schemas/ConsultationCandidate"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "analysis_id",
           "analysis_version",
@@ -631,75 +1061,65 @@
           "technical",
           "consultation"
         ],
-        "title": "ReportAnalysisConfirmationResponse",
-        "type": "object"
+        "title": "ReportAnalysisConfirmationResponse"
       },
       "ReportAnalysisFailedResponse": {
-        "additionalProperties": false,
         "properties": {
           "analysis_id": {
+            "type": "string",
             "format": "uuid",
-            "title": "Analysis Id",
-            "type": "string"
+            "title": "Analysis Id"
           },
           "analysis_version": {
-            "title": "Analysis Version",
-            "type": "integer"
+            "type": "integer",
+            "title": "Analysis Version"
+          },
+          "status": {
+            "type": "string",
+            "const": "failed",
+            "title": "Status"
           },
           "error": {
             "$ref": "#/components/schemas/SafeError"
-          },
-          "status": {
-            "const": "failed",
-            "title": "Status",
-            "type": "string"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "analysis_id",
           "analysis_version",
           "status",
           "error"
         ],
-        "title": "ReportAnalysisFailedResponse",
-        "type": "object"
+        "title": "ReportAnalysisFailedResponse"
       },
       "ReportAnalysisPendingResponse": {
-        "additionalProperties": false,
         "properties": {
           "analysis_id": {
+            "type": "string",
             "format": "uuid",
-            "title": "Analysis Id",
-            "type": "string"
+            "title": "Analysis Id"
           },
           "analysis_version": {
-            "title": "Analysis Version",
-            "type": "integer"
+            "type": "integer",
+            "title": "Analysis Version"
           },
           "status": {
+            "type": "string",
             "const": "pending",
-            "title": "Status",
-            "type": "string"
+            "title": "Status"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "analysis_id",
           "analysis_version",
           "status"
         ],
-        "title": "ReportAnalysisPendingResponse",
-        "type": "object"
+        "title": "ReportAnalysisPendingResponse"
       },
       "ReportAnalysisResponse": {
-        "discriminator": {
-          "mapping": {
-            "complete": "#/components/schemas/ReportAnalysisCompleteResponse",
-            "confirmation": "#/components/schemas/ReportAnalysisConfirmationResponse",
-            "failed": "#/components/schemas/ReportAnalysisFailedResponse",
-            "pending": "#/components/schemas/ReportAnalysisPendingResponse"
-          },
-          "propertyName": "status"
-        },
         "oneOf": [
           {
             "$ref": "#/components/schemas/ReportAnalysisPendingResponse"
@@ -714,26 +1134,34 @@
             "$ref": "#/components/schemas/ReportAnalysisCompleteResponse"
           }
         ],
-        "title": "ReportAnalysisResponse"
+        "title": "ReportAnalysisResponse",
+        "discriminator": {
+          "propertyName": "status",
+          "mapping": {
+            "complete": "#/components/schemas/ReportAnalysisCompleteResponse",
+            "confirmation": "#/components/schemas/ReportAnalysisConfirmationResponse",
+            "failed": "#/components/schemas/ReportAnalysisFailedResponse",
+            "pending": "#/components/schemas/ReportAnalysisPendingResponse"
+          }
+        }
       },
       "ReportConfirmationRequest": {
-        "additionalProperties": false,
         "properties": {
           "analysis_id": {
+            "type": "string",
             "format": "uuid",
-            "title": "Analysis Id",
-            "type": "string"
+            "title": "Analysis Id"
           },
           "analysis_version": {
+            "type": "integer",
             "minimum": 1.0,
-            "title": "Analysis Version",
-            "type": "integer"
+            "title": "Analysis Version"
           },
           "attachment_id": {
             "anyOf": [
               {
-                "format": "uuid",
-                "type": "string"
+                "type": "string",
+                "format": "uuid"
               },
               {
                 "type": "null"
@@ -741,24 +1169,26 @@
             ],
             "title": "Attachment Id"
           },
-          "client_request_id": {
-            "format": "uuid4",
-            "title": "Client Request Id",
-            "type": "string"
+          "masked_text": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Masked Text"
+          },
+          "technical": {
+            "$ref": "#/components/schemas/TechnicalConfirmation"
           },
           "consultation": {
             "$ref": "#/components/schemas/ConsultationConfirmation"
           },
-          "masked_text": {
-            "maxLength": 500,
-            "minLength": 1,
-            "title": "Masked Text",
-            "type": "string"
-          },
-          "technical": {
-            "$ref": "#/components/schemas/TechnicalConfirmation"
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid4",
+            "title": "Client Request Id"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "analysis_id",
           "analysis_version",
@@ -768,64 +1198,64 @@
           "consultation",
           "client_request_id"
         ],
-        "title": "ReportConfirmationRequest",
-        "type": "object"
+        "title": "ReportConfirmationRequest"
       },
       "ReportConfirmedResponse": {
-        "additionalProperties": false,
         "properties": {
           "consultation_card": {
             "$ref": "#/components/schemas/ConsultationCardIssued"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "consultation_card"
         ],
-        "title": "ReportConfirmedResponse",
-        "type": "object"
+        "title": "ReportConfirmedResponse"
       },
       "SafeError": {
-        "additionalProperties": false,
         "properties": {
           "code": {
-            "title": "Code",
-            "type": "string"
+            "type": "string",
+            "title": "Code"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "code"
         ],
-        "title": "SafeError",
-        "type": "object"
+        "title": "SafeError"
       },
       "SubmissionStatus": {
+        "type": "string",
         "enum": [
           "CUSTOMER_REPORTED_SUBMITTED",
           "CUSTOMER_REPORTED_NOT_SUBMITTED",
           "UNKNOWN"
         ],
-        "title": "SubmissionStatus",
-        "type": "string"
+        "title": "SubmissionStatus"
       },
       "TechnicalCandidate": {
-        "additionalProperties": false,
         "properties": {
-          "error_code": {
-            "$ref": "#/components/schemas/CandidateField_str_"
-          },
           "issue_type": {
             "$ref": "#/components/schemas/CandidateField_IssueType_"
           },
-          "reported_occurred_at": {
+          "symptom": {
             "$ref": "#/components/schemas/CandidateField_str_"
           },
           "submission_status": {
             "$ref": "#/components/schemas/CandidateField_SubmissionStatus_"
           },
-          "symptom": {
+          "error_code": {
+            "$ref": "#/components/schemas/CandidateField_str_"
+          },
+          "reported_occurred_at": {
             "$ref": "#/components/schemas/CandidateField_str_"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "issue_type",
           "symptom",
@@ -833,17 +1263,34 @@
           "error_code",
           "reported_occurred_at"
         ],
-        "title": "TechnicalCandidate",
-        "type": "object"
+        "title": "TechnicalCandidate"
       },
       "TechnicalConfirmation": {
-        "additionalProperties": false,
         "properties": {
+          "issue_type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "symptom": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symptom"
+          },
+          "submission_status": {
+            "$ref": "#/components/schemas/SubmissionStatus"
+          },
           "error_code": {
             "anyOf": [
               {
-                "pattern": "^[A-Za-z0-9._-]{1,64}$",
-                "type": "string"
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,64}$"
               },
               {
                 "type": "null"
@@ -851,480 +1298,33 @@
             ],
             "title": "Error Code"
           },
-          "issue_type": {
-            "$ref": "#/components/schemas/IssueType"
-          },
           "reported_occurred_at": {
             "anyOf": [
               {
-                "format": "date-time",
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Reported Occurred At"
-          },
-          "submission_status": {
-            "$ref": "#/components/schemas/SubmissionStatus"
-          },
-          "symptom": {
-            "anyOf": [
-              {
-                "maxLength": 500,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Symptom"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "issue_type",
           "submission_status",
           "reported_occurred_at"
         ],
-        "title": "TechnicalConfirmation",
-        "type": "object"
+        "title": "TechnicalConfirmation"
       }
     },
     "securitySchemes": {
       "HTTPBearer": {
-        "scheme": "bearer",
-        "type": "http"
-      }
-    }
-  },
-  "info": {
-    "title": "MTS SOS Desk API",
-    "version": "0.1.0"
-  },
-  "openapi": "3.1.0",
-  "paths": {
-    "/api/consultation-cards": {
-      "delete": {
-        "operationId": "delete_card_api_consultation_cards_delete",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeleteConsultationCardRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Invalid customer session"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Card not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "State or idempotency conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Invalid or sensitive input"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Required service data unavailable"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Delete Card",
-        "tags": [
-          "reports"
-        ]
-      }
-    },
-    "/api/reports": {
-      "delete": {
-        "operationId": "discard_api_reports_delete",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DiscardReportRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Invalid customer session"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Analysis not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "State or idempotency conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Invalid or sensitive input"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Required service data unavailable"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Discard",
-        "tags": [
-          "reports"
-        ]
-      },
-      "post": {
-        "operationId": "confirm_api_reports_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReportConfirmationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReportConfirmedResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Invalid customer session"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Analysis not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "State or idempotency conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Invalid or sensitive input"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Required service data unavailable"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Confirm",
-        "tags": [
-          "reports"
-        ]
-      }
-    },
-    "/api/reports/analyze": {
-      "post": {
-        "operationId": "analyze_api_reports_analyze_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": false,
-                "properties": {
-                  "client_request_id": {
-                    "format": "uuid4",
-                    "title": "Client Request Id",
-                    "type": "string"
-                  },
-                  "text": {
-                    "title": "Text",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "client_request_id",
-                  "text"
-                ],
-                "title": "ReportCreateRequest",
-                "type": "object"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "additionalProperties": false,
-                "properties": {
-                  "client_request_id": {
-                    "format": "uuid4",
-                    "type": "string"
-                  },
-                  "screenshot": {
-                    "description": "PNG, JPEG, or WebP; maximum 5 MiB",
-                    "format": "binary",
-                    "type": "string"
-                  },
-                  "text": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "text",
-                  "client_request_id",
-                  "screenshot"
-                ],
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReportAnalysisResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Invalid customer session"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "State or idempotency conflict"
-          },
-          "413": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Body too large"
-          },
-          "415": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Unsupported media type"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Invalid or sensitive input"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Required service data unavailable"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Analyze",
-        "tags": [
-          "reports"
-        ]
-      }
-    },
-    "/health/live": {
-      "get": {
-        "operationId": "live_health_live_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Live",
-        "tags": [
-          "health"
-        ]
-      }
-    },
-    "/health/ready": {
-      "get": {
-        "operationId": "ready_health_ready_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Ready",
-        "tags": [
-          "health"
-        ]
+        "type": "http",
+        "scheme": "bearer"
       }
     }
   }
