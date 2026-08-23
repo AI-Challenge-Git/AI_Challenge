@@ -2,7 +2,7 @@
 실제 LLM(NVIDIA Build)을 사용한 이중 구조화 구현.
 FakeDualExtractor를 대체하되, 동일한 DualExtractor 프로토콜을 따른다.
 
-버전: v5-final (2026-08-16)
+버전: v6 (2026-08-19)
 - 스키마 검증(AI-05: NEEDS_CONFIRMATION은 value=null, evidence는 선택)을
   코드에서 우회하지 않고, 위반 시 안전하게 FAILED로 처리 (AI-07)
 - FE-07: 날짜 없는 시각을 LLM이 임의의 날짜와 결합해 CONFIRMED로 만드는 경우 차단
@@ -11,6 +11,11 @@ FakeDualExtractor를 대체하되, 동일한 DualExtractor 프로토콜을 따�
   UNKNOWN으로 낮춘다 (LLM 재호출 없이). 원문에 실제 단서가 있는데
   잘못 분류했거나, evidence 자체를 조작한 경우는 fallback 대상이 아니며
   기존 correction retry로 넘어간다.
+- action(매수/매도): OrderAction에 BUY 추가 반영, 프롬프트에 매수/매도
+  분류 규칙 명시.
+- correction retry를 1회 -> 최대 2회로 확장 (evidence_quote 재조합처럼
+  모델이 확률적으로 실수하는 유형이 1회 재시도로는 복구가 안 되는
+  경우가 실사용에서 관찰되어, 재시도 여지를 늘림).
 """
 
 import json
@@ -344,7 +349,7 @@ class ExtractOutcome(NamedTuple):
     """
     extract_safe()의 반환 타입. result와 failure_reason 중 하나만 채워진다.
 
-    attempt_count: 실제 LLM 호출 횟수 (1 또는 2)
+    attempt_count: 실제 LLM 호출 횟수 (1~3)
     first_pass_valid: 1차 응답이 재요청(LLM 재호출) 없이 최종 성공했는지 여부.
         order_type deterministic fallback이 적용된 경우도 LLM은 1번만
         호출됐으므로 first_pass_valid=True로 취급한다
@@ -430,9 +435,7 @@ class RealDualExtractor:
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
-                messages=cast(
-                    "Iterable[ChatCompletionMessageParam]", messages
-                ),
+                messages=cast("Iterable[ChatCompletionMessageParam]", messages),
                 temperature=0.0,
                 max_tokens=1500,
             )
@@ -597,6 +600,47 @@ class RealDualExtractor:
 
         return result, None, None
 
+    def _build_correction_message(self, detail: str | None) -> dict[str, Any]:
+        """correction 재요청용 user 메시지를 만든다."""
+        return {
+            "role": "user",
+            "content": (
+                "이전 응답이 규칙을 위반했습니다. 오류 내용:\n"
+                f"{detail}\n\n"
+                "특히 status가 NEEDS_CONFIRMATION, UNKNOWN, OUT_OF_SCOPE인 "
+                "필드는 value가 반드시 null이어야 합니다. 또한 날짜 없는 시각만 "
+                "원문에 있으면 reported_occurred_at/attempted_at에 날짜를 생성하지 말고 "
+                "NEEDS_CONFIRMATION + value=null로 처리하세요.\n\n"
+                "필수 필드를 절대 생략하지 마세요. technical의 issue_type, symptom, "
+                "submission_status, error_code, reported_occurred_at과 consultation의 "
+                "action, symbol_name, symbol_code, quantity, order_type, price_krw, "
+                "attempted_at을 예외 없이 전부 포함하세요. 정보가 없는 필드도 "
+                '{"value": null, "status": "UNKNOWN", "evidence_quote": null} '
+                "형태로 반드시 포함해야 합니다. 특히 status가 \"UNKNOWN\"인데 "
+                'value 필드에 문자열 "UNKNOWN"을 넣는 것은 잘못된 형식입니다 '
+                "(status와 value는 다른 필드입니다). status=UNKNOWN이면 value는 "
+                "반드시 null(값 없음)이어야 합니다.\n\n"
+                "order_type은 원문에 정확히 \"지정가\" 또는 \"시장가\"라는 단어가 "
+                "있을 때만 채우세요. \"매도 주문을 넣었다\"는 표현만으로는 "
+                "LIMIT/MARKET을 추론할 근거가 없으므로 반드시 value=null, "
+                "status=UNKNOWN입니다. 원문에 없는 단어(예: \"지정가\")를 근거로 "
+                "지어내지 마세요.\n\n"
+                "★★★ evidence_quote 오류가 반복되고 있다면 특히 주의하세요: "
+                "evidence_quote는 원문을 요약하거나 의역하지 말고, 어미와 "
+                "조사까지 한 글자도 다르지 않게 정확히 그대로 복사(copy-paste)한 "
+                "부분 문자열이어야 합니다. 새로운 문장을 만들어내지 말고, "
+                "원문에서 관련된 부분을 그대로 오려붙이듯 사용하세요. ★★★\n\n"
+                "attempted_at은 주문 시도 시각에만 사용하고, 로그인 등 "
+                "다른 행동의 시각을 넣지 마세요. 로그인 관련 문의는 "
+                "issue_type=LOGIN_ACCESS_FAILURE로 분류하되 주문 관련 필드는 "
+                "전부 UNKNOWN으로 두세요.\n\n"
+                "반드시 JSON 객체만 반환하세요. 설명, 분석, 코드블록 표시(```), "
+                "JSON 앞뒤 문장을 절대 출력하지 마세요. 응답의 첫 문자는 { 이어야 "
+                "하고 마지막 문자는 } 이어야 합니다.\n\n"
+                "이 규칙을 모두 지켜서 동일한 제보에 대해 처음부터 다시 응답하세요."
+            ),
+        }
+
     def extract_safe(self, masked_text: str) -> ExtractOutcome:
         """
         AI-07 계약에 맞게, 실패 유형을 구분해서 안전하게 반환한다.
@@ -604,7 +648,14 @@ class RealDualExtractor:
         1차 응답이 스키마/evidence 검증에 실패하면, order_type 순수
         hallucination(원문에 단서 자체가 없는 경우)만 로컬에서 UNKNOWN으로
         낮추고 LLM을 다시 부르지 않는다. 그 외 실패는 위반 내용을 알려주는
-        correction 메시지와 함께 딱 1회만 재요청한다.
+        correction 메시지와 함께 최대 2회까지 재요청한다.
+
+        재시도를 2회로 늘린 이유: evidence_quote 재조합(원문을 어미까지
+        똑같이 복사하지 않고 요약/재구성)처럼 모델이 확률적으로 실수하는
+        유형은, 1회 재시도로는 복구가 안 되는 경우가 실사용에서 관찰되었다.
+        2회까지는 "같은 실수를 반복하는 모델을 계속 붙잡고 재시도"하는
+        비용이 합리적이라고 판단했다. 그 이상은 무한 재시도로 이어질 위험이
+        있어 2회로 제한한다.
         """
         if not masked_text:
             raise ValueError("masked_text cannot be empty")
@@ -631,77 +682,55 @@ class RealDualExtractor:
         first_failure_reason = failure_reason
         first_failure_detail = detail
 
-        # --- 1차 실패: 위반 내용을 포함해 1회만 correction 재요청 ---
-        correction_messages = base_messages + [
-            {"role": "assistant", "content": raw_content},
-            {
-                "role": "user",
-                "content": (
-                    "이전 응답이 규칙을 위반했습니다. 오류 내용:\n"
-                    f"{detail}\n\n"
-                    "특히 status가 NEEDS_CONFIRMATION, UNKNOWN, OUT_OF_SCOPE인 "
-                    "필드는 value가 반드시 null이어야 합니다. 또한 날짜 없는 시각만 "
-                    "원문에 있으면 reported_occurred_at/attempted_at에 날짜를 생성하지 말고 "
-                    "NEEDS_CONFIRMATION + value=null로 처리하세요.\n\n"
-                    "필수 필드를 절대 생략하지 마세요. technical의 issue_type, symptom, "
-                    "submission_status, error_code, reported_occurred_at과 consultation의 "
-                    "action, symbol_name, symbol_code, quantity, order_type, price_krw, "
-                    "attempted_at을 예외 없이 전부 포함하세요. 정보가 없는 필드도 "
-                    "{\"value\": null, \"status\": \"UNKNOWN\", \"evidence_quote\": null} "
-                    "형태로 반드시 포함해야 합니다. 특히 status가 \"UNKNOWN\"인데 "
-                    "value 필드에 문자열 \"UNKNOWN\"을 넣는 것은 잘못된 형식입니다 "
-                    "(status와 value는 다른 필드입니다). status=UNKNOWN이면 value는 "
-                    "반드시 null(값 없음)이어야 합니다.\n\n"
-                    "order_type은 원문에 정확히 \"지정가\" 또는 \"시장가\"라는 단어가 "
-                    "있을 때만 채우세요. \"매도 주문을 넣었다\"는 표현만으로는 "
-                    "LIMIT/MARKET을 추론할 근거가 없으므로 반드시 value=null, "
-                    "status=UNKNOWN입니다. 원문에 없는 단어(예: \"지정가\")를 근거로 "
-                    "지어내지 마세요. 모든 evidence_quote는 원문을 요약하거나 "
-                    "의역하지 말고 어미까지 한 글자도 다르지 않게 정확히 그대로 "
-                    "복사(copy-paste)해야 합니다. "
-                    "attempted_at은 주문 시도 시각에만 사용하고, 로그인 등 "
-                    "다른 행동의 시각을 넣지 마세요. 로그인 관련 문의는 "
-                    "issue_type=LOGIN_ACCESS_FAILURE로 분류하되 주문 관련 필드는 "
-                    "전부 UNKNOWN으로 두세요.\n\n"
-                    "반드시 JSON 객체만 반환하세요. 설명, 분석, 코드블록 표시(```), "
-                    "JSON 앞뒤 문장을 절대 출력하지 마세요. 응답의 첫 문자는 { 이어야 "
-                    "하고 마지막 문자는 } 이어야 합니다.\n\n"
-                    "이 규칙을 모두 지켜서 동일한 제보에 대해 처음부터 다시 응답하세요."
-                ),
-            },
-        ]
+        # --- 실패 시: 최대 2회까지 correction 재요청 ---
+        last_failure_reason = failure_reason
+        last_detail = detail
+        last_raw_content = raw_content
 
-        raw_content_2, failure_reason_2, detail_2 = self._call_llm(correction_messages)
-        if failure_reason_2 is not None:
-            return ExtractOutcome(
-                None,
-                failure_reason_2,
-                detail_2,
-                attempt_count=2,
-                first_failure_reason=first_failure_reason,
-                first_failure_detail=first_failure_detail,
-            )
-        assert raw_content_2 is not None  # failure_reason_2가 None이면 항상 값이 있다
+        max_retries = 2
+        for attempt in range(2, 2 + max_retries):
+            correction_messages = base_messages + [
+                {"role": "assistant", "content": last_raw_content},
+                self._build_correction_message(last_detail),
+            ]
 
-        result_2, failure_reason_2, detail_2 = self._parse_and_validate(
-            masked_text, raw_content_2
-        )
-        if result_2 is not None:
-            return ExtractOutcome(
-                result_2,
-                None,
-                None,
-                attempt_count=2,
-                first_pass_valid=False,
-                first_failure_reason=first_failure_reason,
-                first_failure_detail=first_failure_detail,
+            raw_content_n, failure_reason_n, detail_n = self._call_llm(
+                correction_messages
             )
+            if failure_reason_n is not None:
+                return ExtractOutcome(
+                    None,
+                    failure_reason_n,
+                    detail_n,
+                    attempt_count=attempt,
+                    first_failure_reason=first_failure_reason,
+                    first_failure_detail=first_failure_detail,
+                )
+            assert raw_content_n is not None
+
+            result_n, failure_reason_n, detail_n = self._parse_and_validate(
+                masked_text, raw_content_n
+            )
+            if result_n is not None:
+                return ExtractOutcome(
+                    result_n,
+                    None,
+                    None,
+                    attempt_count=attempt,
+                    first_pass_valid=False,
+                    first_failure_reason=first_failure_reason,
+                    first_failure_detail=first_failure_detail,
+                )
+
+            last_failure_reason = failure_reason_n
+            last_detail = detail_n
+            last_raw_content = raw_content_n
 
         return ExtractOutcome(
             None,
-            failure_reason_2,
-            detail_2,
-            attempt_count=2,
+            last_failure_reason,
+            last_detail,
+            attempt_count=2 + max_retries - 1,
             first_pass_valid=False,
             first_failure_reason=first_failure_reason,
             first_failure_detail=first_failure_detail,
