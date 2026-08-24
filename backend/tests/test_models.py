@@ -15,6 +15,9 @@ def test_core_metadata_contains_required_business_tables() -> None:
         "technical_symptoms",
         "consultation_cards",
         "attachments",
+        "idempotency_records",
+        "audit_logs",
+        "object_deletion_jobs",
     } <= Base.metadata.tables.keys()
 
 
@@ -25,6 +28,8 @@ def test_sensitive_and_technical_data_boundaries_are_structural() -> None:
     technical_columns = set(tables["technical_symptoms"].columns.keys())
     consultation_columns = set(tables["consultation_cards"].columns.keys())
     attachment_columns = set(tables["attachments"].columns.keys())
+    idempotency_columns = set(tables["idempotency_records"].columns.keys())
+    deletion_job_columns = set(tables["object_deletion_jobs"].columns.keys())
 
     assert {"raw_text", "original_text", "session_token", "reference_number"}.isdisjoint(
         all_columns
@@ -36,6 +41,25 @@ def test_sensitive_and_technical_data_boundaries_are_structural() -> None:
     assert {"symptom", "error_code", "issue_type"}.isdisjoint(consultation_columns)
     assert "content" not in attachment_columns
     assert {"object_key", "content_sha256", "byte_size"} <= attachment_columns
+    assert {
+        "principal_digest",
+        "operation",
+        "client_request_id",
+        "payload_sha256",
+        "safe_failure_code",
+        "processing_status",
+        "completed_at",
+        "purge_at",
+    } <= idempotency_columns
+    assert {
+        "raw_text",
+        "masked_text",
+        "attachment_url",
+        "object_key",
+        "token",
+        "reference_number",
+    }.isdisjoint(idempotency_columns)
+    assert {"object_key", "status", "attempt_count", "next_attempt_at"} <= deletion_job_columns
     assert not any(
         "vector" in str(column.type).lower()
         for table in tables.values()
@@ -60,6 +84,7 @@ def test_core_types_and_server_times_match_the_decision() -> None:
     for table_name, column_name in (
         ("reports", "received_at"),
         ("reports", "confirmed_at"),
+        ("reports", "purge_at"),
         ("technical_symptoms", "reported_occurred_at"),
         ("consultation_cards", "attempted_at"),
     ):
@@ -81,6 +106,8 @@ def test_constraints_and_indexes_have_deterministic_names() -> None:
     assert "uq_report_analyses_report_id" in names
     assert "ck_consultation_cards_market_order_without_price" in names
     assert "ix_reports_session_received" in names
+    assert "ix_reports_purge_at" in names
+    assert "ix_object_deletion_jobs_ready" in names
 
 
 def test_consultation_card_constraint_accepts_all_order_actions() -> None:

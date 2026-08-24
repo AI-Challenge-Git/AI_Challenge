@@ -24,6 +24,7 @@ from app.models import (
     AuditLog,
     ConsultationCard,
     IdempotencyRecord,
+    ObjectDeletionJob,
     Report,
     ReportAnalysis,
     TechnicalSymptom,
@@ -100,11 +101,24 @@ class FailingAttachmentStore(LocalAttachmentStore):
         raise AttachmentStorageError("synthetic storage failure")
 
 
+class FailingDeleteOnceAttachmentStore(LocalAttachmentStore):
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
+        self.delete_calls = 0
+
+    async def delete(self, object_key: str) -> None:
+        self.delete_calls += 1
+        if self.delete_calls == 1:
+            raise AttachmentStorageError("synthetic deletion failure")
+        await super().delete(object_key)
+
+
 async def _clean_business_data() -> None:
     async with session_factory() as session, session.begin():
         await session.execute(delete(Report))
         await session.execute(delete(IdempotencyRecord))
         await session.execute(delete(AuditLog))
+        await session.execute(delete(ObjectDeletionJob))
 
 
 @pytest.fixture(autouse=True)
@@ -396,7 +410,7 @@ async def test_concurrent_analyze_retries_create_one_report() -> None:
         assert await session.scalar(select(func.count()).select_from(Report)) == 1
 
 
-async def test_failed_analysis_is_stored_and_not_reinvoked() -> None:
+async def test_failed_analysis_is_purged_and_not_reinvoked() -> None:
     transport = ASGITransport(app=app)
     extractor = TimeoutExtractor()
     app.dependency_overrides[get_dual_extractor] = lambda: extractor
@@ -409,6 +423,19 @@ async def test_failed_analysis_is_stored_and_not_reinvoked() -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             failed = await client.post("/api/reports/analyze", headers=_headers(), json=payload)
             replay = await client.post("/api/reports/analyze", headers=_headers(), json=payload)
+            conflict = await client.post(
+                "/api/reports/analyze",
+                headers=_headers(),
+                json={
+                    "text": "동일한 요청 ID에 다른 payload를 사용한 합성 제보입니다.",
+                    "client_request_id": request_id,
+                },
+            )
+            new_request = await client.post(
+                "/api/reports/analyze",
+                headers=_headers(),
+                json={**payload, "client_request_id": str(uuid4())},
+            )
     finally:
         app.dependency_overrides.pop(get_dual_extractor, None)
 
@@ -416,46 +443,19 @@ async def test_failed_analysis_is_stored_and_not_reinvoked() -> None:
     assert failed.json() == replay.json()
     assert failed.json()["status"] == "failed"
     assert failed.json()["error"] == {"code": "TIMEOUT"}
-    assert extractor.calls == 1
+    assert conflict.status_code == 409
+    assert new_request.status_code == 200
+    assert new_request.json()["status"] == "failed"
+    assert extractor.calls == 2
     async with session_factory() as session:
         analysis = await session.scalar(select(ReportAnalysis))
         report = await session.scalar(select(Report))
-        assert analysis is not None
-        assert report is not None
-        assert analysis.status == AnalysisStatus.FAILED.value
-        assert analysis.technical_candidate is None
-        assert analysis.consultation_candidate is None
-
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        confirmation = await client.post(
-            "/api/reports",
-            headers=_headers(),
-            json={
-                "analysis_id": str(analysis.id),
-                "analysis_version": analysis.version,
-                "attachment_id": None,
-                "masked_text": report.masked_text,
-                "technical": {
-                    "issue_type": "UNKNOWN",
-                    "symptom": None,
-                    "submission_status": "UNKNOWN",
-                    "error_code": None,
-                    "reported_occurred_at": None,
-                },
-                "consultation": {
-                    "action": "UNKNOWN",
-                    "symbol_name": None,
-                    "symbol_code": None,
-                    "quantity": None,
-                    "order_type": "UNKNOWN",
-                    "price_krw": None,
-                    "attempted_at": None,
-                },
-                "client_request_id": str(uuid4()),
-            },
-        )
-        assert confirmation.status_code == 409
-        assert confirmation.json()["code"] == "ANALYSIS_NOT_READY"
+        idempotency = await session.scalar(select(IdempotencyRecord))
+        assert analysis is None
+        assert report is None
+        assert idempotency is not None
+        assert idempotency.safe_failure_code == "TIMEOUT"
+        assert not hasattr(idempotency, "attachment_object_key")
 
 
 async def test_backend_timeout_covers_the_complete_adapter_call() -> None:
@@ -519,9 +519,10 @@ async def test_analysis_adapter_failures_use_safe_persisted_codes(
 
     async with session_factory() as session:
         analysis = await session.scalar(select(ReportAnalysis))
-        assert analysis is not None
-        assert analysis.status == AnalysisStatus.FAILED.value
-        assert analysis.safe_error_code == expected_code
+        idempotency = await session.scalar(select(IdempotencyRecord))
+        assert analysis is None
+        assert idempotency is not None
+        assert idempotency.safe_failure_code == expected_code
 
 
 async def test_only_latest_succeeded_analysis_can_be_confirmed() -> None:
@@ -750,6 +751,65 @@ async def test_screenshot_storage_failure_is_safe_and_rolls_back_report(tmp_path
     async with session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(Report)) == 0
         assert await session.scalar(select(func.count()).select_from(Attachment)) == 0
+
+
+async def test_ai_failure_removes_image_metadata_and_keeps_safe_deletion_retry(
+    tmp_path: Path,
+) -> None:
+    store = FailingDeleteOnceAttachmentStore(tmp_path / "retry-attachments")
+    extractor = FailingExtractor(RuntimeError("provider unavailable with internal details"))
+    app.dependency_overrides[get_attachment_store] = lambda: store
+    app.dependency_overrides[get_dual_extractor] = lambda: extractor
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            failed = await client.post(
+                "/api/reports/analyze",
+                headers=_headers(),
+                data={
+                    "text": "주문 화면 오류이며 연락처 010-1234-5678은 저장하면 안 됩니다.",
+                    "client_request_id": str(uuid4()),
+                    "screenshot_redacted_confirmed": "true",
+                },
+                files={
+                    "screenshot": ("secret-original-name.png", _screenshot_bytes(), "image/png")
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_attachment_store, None)
+        app.dependency_overrides.pop(get_dual_extractor, None)
+
+    assert failed.status_code == 200
+    assert failed.json()["error"] == {"code": "PROVIDER_UNAVAILABLE"}
+    assert "010-1234-5678" not in failed.text
+    assert "secret-original-name.png" not in failed.text
+    assert "internal details" not in failed.text
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Report)) == 0
+        assert await session.scalar(select(func.count()).select_from(ReportAnalysis)) == 0
+        assert await session.scalar(select(func.count()).select_from(Attachment)) == 0
+        job = await session.scalar(select(ObjectDeletionJob))
+        assert job is not None
+        assert job.status == "RETRY_PENDING"
+        assert job.safe_error_code == "STORAGE_UNAVAILABLE"
+        assert (store.root / job.object_key).exists()
+        assert job.next_attempt_at is not None
+        retry_at = job.next_attempt_at
+        job_id = job.id
+        object_key = job.object_key
+        await session.rollback()
+
+        from app.services.lifecycle import process_object_deletion_jobs
+
+        retry = await process_object_deletion_jobs(
+            session,
+            store,
+            now=retry_at,
+            batch_size=1,
+            job_ids=(job_id,),
+        )
+        assert retry.succeeded == 1
+        assert not (store.root / object_key).exists()
 
 
 @pytest.mark.parametrize("confirmation", [None, "false", "yes", "1", "TRUE"])

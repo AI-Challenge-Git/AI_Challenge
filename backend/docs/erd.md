@@ -50,6 +50,7 @@ erDiagram
         char request_payload_sha256
         varchar status
         timestamptz received_at
+        timestamptz purge_at
         timestamptz confirmed_at
         timestamptz updated_at
     }
@@ -121,8 +122,11 @@ erDiagram
         uuid client_request_id
         char payload_sha256
         int response_status
-        varchar attachment_object_key
+        varchar safe_failure_code
+        varchar processing_status
         timestamptz created_at
+        timestamptz completed_at
+        timestamptz purge_at
     }
 
     audit_logs {
@@ -131,6 +135,19 @@ erDiagram
         varchar action
         char resource_fingerprint
         timestamptz created_at
+    }
+
+    object_deletion_jobs {
+        uuid id PK
+        varchar object_key UK
+        varchar status
+        int attempt_count
+        varchar safe_error_code
+        timestamptz next_attempt_at
+        timestamptz created_at
+        timestamptz updated_at
+        timestamptz completed_at
+        timestamptz purge_at
     }
 ```
 
@@ -147,5 +164,14 @@ erDiagram
   물리 분리한다.
 - `technical_symptoms`에는 종목·수량·가격·매매 방향 컬럼이 없다.
 - 참조번호 digest·TTL·삭제 멱등 기록·비식별 삭제 감사는 구현되어 있다.
+- `reports.purge_at`은 서버 `received_at + 72시간`이며 `consultation_cards.expires_at`의 2시간
+  접근 TTL과 별도다.
+- `object_deletion_jobs`는 report·attachment row와 독립적이며 무작위 object key와 안전한
+  재시도 상태만 보존한다. 사용자 입력·원본 파일명·참조번호는 저장하지 않는다.
 - `consultation_cards.action`은 DB CHECK로 `BUY`, `SELL`, `UNKNOWN`만 허용한다.
 - vector·군집·상담원 역할과 조회 감사는 후속 migration에서 추가한다.
+
+향후 `technical_embeddings`, `signal_members`와 cluster 재계산, `agent_verifications`, agent
+session, 운영 Object Storage가 추가되면 해당 기능의 최초 migration과 service에 purge 계약과
+경계·동시성 테스트를 함께 등록한다. 현재 존재하지 않는 이 테이블은 retention 구현만을 위해
+미리 만들지 않는다.

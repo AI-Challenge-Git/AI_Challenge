@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -21,7 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.codes import AnalysisStatus, ReportStatus
+from app.codes import AnalysisStatus, IdempotencyStatus, ObjectDeletionStatus, ReportStatus
 from app.db import Base
 
 
@@ -87,6 +87,11 @@ class Report(Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    purge_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC) + timedelta(hours=72),
+        nullable=False,
+    )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -109,6 +114,7 @@ class Report(Base):
 
 Index("ix_reports_received_at", Report.received_at.desc())
 Index("ix_reports_session_received", Report.session_digest, Report.received_at.desc())
+Index("ix_reports_purge_at", Report.purge_at)
 
 
 class ReportAnalysis(Base):
@@ -332,10 +338,13 @@ class IdempotencyRecord(Base):
             name="payload_sha256_lower_hex",
         ),
         CheckConstraint("response_status BETWEEN 200 AND 599", name="response_status_range"),
+        CheckConstraint("processing_status = 'COMPLETED'", name="processing_status_value"),
         CheckConstraint(
-            "attachment_object_key IS NULL OR attachment_object_key ~ '^[A-Za-z0-9_-]{43}$'",
-            name="attachment_object_key_format",
+            "safe_failure_code IS NULL OR safe_failure_code IN "
+            "('TIMEOUT', 'INVALID_SCHEMA', 'PROVIDER_UNAVAILABLE')",
+            name="safe_failure_code_value",
         ),
+        Index("ix_idempotency_records_purge_at", "purge_at"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -344,9 +353,20 @@ class IdempotencyRecord(Base):
     client_request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     payload_sha256: Mapped[str] = mapped_column(CHAR(64), nullable=False)
     response_status: Mapped[int] = mapped_column(Integer, nullable=False)
-    attachment_object_key: Mapped[str | None] = mapped_column(String(43))
+    safe_failure_code: Mapped[str | None] = mapped_column(String(64))
+    processing_status: Mapped[str] = mapped_column(
+        String(16), default=IdempotencyStatus.COMPLETED.value, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    completed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    purge_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC) + timedelta(hours=72),
+        nullable=False,
     )
 
 
@@ -357,6 +377,7 @@ class AuditLog(Base):
             "resource_fingerprint ~ '^[0-9a-f]{64}$'",
             name="resource_fingerprint_lower_hex",
         ),
+        Index("ix_audit_logs_created_at", "created_at"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -366,3 +387,52 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class ObjectDeletionJob(Base):
+    __tablename__ = "object_deletion_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "object_key ~ '^[A-Za-z0-9_-]{43}$'",
+            name="object_key_format",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'PROCESSING', 'RETRY_PENDING', 'COMPLETED')",
+            name="status_value",
+        ),
+        CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
+        CheckConstraint(
+            "safe_error_code IS NULL OR safe_error_code = 'STORAGE_UNAVAILABLE'",
+            name="safe_error_code_value",
+        ),
+        CheckConstraint(
+            "((status = 'PENDING' AND attempt_count = 0 AND safe_error_code IS NULL "
+            "AND next_attempt_at IS NOT NULL AND completed_at IS NULL AND purge_at IS NULL) OR "
+            "(status = 'PROCESSING' AND attempt_count > 0 AND safe_error_code IS NULL "
+            "AND next_attempt_at IS NOT NULL AND completed_at IS NULL AND purge_at IS NULL) OR "
+            "(status = 'RETRY_PENDING' AND attempt_count > 0 AND safe_error_code IS NOT NULL "
+            "AND next_attempt_at IS NOT NULL AND completed_at IS NULL AND purge_at IS NULL) OR "
+            "(status = 'COMPLETED' AND attempt_count > 0 AND safe_error_code IS NULL "
+            "AND next_attempt_at IS NULL AND completed_at IS NOT NULL AND purge_at IS NOT NULL))",
+            name="state_metadata",
+        ),
+        Index("ix_object_deletion_jobs_ready", "status", "next_attempt_at"),
+        Index("ix_object_deletion_jobs_purge_at", "purge_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    object_key: Mapped[str] = mapped_column(String(43), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=ObjectDeletionStatus.PENDING.value, nullable=False
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    safe_error_code: Mapped[str | None] = mapped_column(String(64))
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purge_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -34,6 +34,22 @@ deterministic Fake이며 `AI_ADAPTER=nvidia`일 때 실제 provider adapter를 �
 스크린샷 multipart 요청은 `screenshot_redacted_confirmed=true`가 필수입니다. 이미지가 없는
 기존 JSON 요청에는 이 필드를 보내지 않습니다.
 
+## 72시간 보존 정리
+
+상담카드 상세 접근 TTL은 발급 후 2시간이고, report root와 관련 업무 데이터의 물리
+보존기간은 서버 `received_at`부터 72시간입니다. 기본 명령은 대상 개수만 확인하는 dry-run이며
+실제 삭제에는 `--execute`가 필요합니다.
+
+```powershell
+cd backend
+uv run python -m scripts.purge_data
+uv run python -m scripts.purge_data --execute --batch-size 100
+```
+
+출력은 report·독립 기록·object 처리 개수만 포함하며 참조번호, 입력값, object key는 출력하지
+않습니다. 운영에서는 Railway scheduler가 위 `--execute` 명령을 단일 작업으로 주기 실행하게
+연결해야 합니다. scheduler와 운영 Object Storage 연결 자체는 아직 구현하지 않았습니다.
+
 로컬 Compose는 API 시작 전에 `alembic upgrade head`를 실행합니다. 운영 이미지의 기본
 명령은 API만 시작하며 migration은 단일 pre-deploy 단계에서 별도로 실행해야 합니다.
 

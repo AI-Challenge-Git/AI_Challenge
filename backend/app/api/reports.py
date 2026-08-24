@@ -9,7 +9,6 @@ from app.ai import DualExtractor, get_dual_extractor
 from app.api.dependencies import customer_principal
 from app.attachments import (
     MAX_ATTACHMENT_BYTES,
-    AttachmentStorageError,
     InvalidAttachmentError,
     LocalAttachmentStore,
     PreparedAttachment,
@@ -28,6 +27,7 @@ from app.schemas import (
     ReportConfirmedResponse,
     ReportCreateRequest,
 )
+from app.services.lifecycle import process_object_deletion_jobs
 from app.services.reports import (
     analyze_report,
     confirm_report,
@@ -146,19 +146,6 @@ async def _parse_analyze_request(
         raise ServiceError(422, "INVALID_ATTACHMENT", "이미지 파일을 확인해 주세요.") from exc
 
 
-async def _delete_attachment_object(
-    attachment_store: LocalAttachmentStore, object_key: str | None
-) -> None:
-    if object_key is None:
-        return
-    try:
-        await attachment_store.delete(object_key)
-    except AttachmentStorageError as exc:
-        raise ServiceError(
-            503, "ATTACHMENT_STORAGE_UNAVAILABLE", "이미지를 삭제하지 못했습니다."
-        ) from exc
-
-
 @router.post(
     "/reports/analyze",
     response_model=ReportAnalysisResponse,
@@ -225,8 +212,13 @@ async def discard(
     session: Annotated[AsyncSession, Depends(get_session)],
     attachment_store: Annotated[LocalAttachmentStore, Depends(get_attachment_store)],
 ) -> Response:
-    object_key = await discard_report(session, principal, request)
-    await _delete_attachment_object(attachment_store, object_key)
+    job_id = await discard_report(session, principal, request)
+    await process_object_deletion_jobs(
+        session,
+        attachment_store,
+        batch_size=1,
+        job_ids=(job_id,) if job_id is not None else None,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"Cache-Control": "no-store"})
 
 
@@ -242,6 +234,11 @@ async def delete_card(
     settings: Annotated[Settings, Depends(get_settings)],
     attachment_store: Annotated[LocalAttachmentStore, Depends(get_attachment_store)],
 ) -> Response:
-    object_key = await delete_report(session, principal, request, settings)
-    await _delete_attachment_object(attachment_store, object_key)
+    job_id = await delete_report(session, principal, request, settings)
+    await process_object_deletion_jobs(
+        session,
+        attachment_store,
+        batch_size=1,
+        job_ids=(job_id,) if job_id is not None else None,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"Cache-Control": "no-store"})
