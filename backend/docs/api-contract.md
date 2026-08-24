@@ -37,9 +37,9 @@ principal·작업·요청 ID의 재시도는 기존 결과를 반환하고 paylo
 현재 attachment는 private local volume에 정제·재인코딩해 저장하며 응답에는 data URL
 preview를 반환한다. Private Object Storage와 signed URL은 아직 구현하지 않았다.
 
-AI adapter 전체 호출 제한은 10초이며 NVIDIA adapter의 동기 provider 호출은 최대 4개로
-제한한다. `asyncio.to_thread()` timeout은 이미 실행 중인 provider thread를 중단하지 않으므로,
-timeout 뒤에도 thread가 끝날 때까지 concurrency permit을 유지한다.
+백엔드 service의 AI 전체 호출 제한은 10초이며 동시 AI 호출은 최대 4개로 제한한다.
+`asyncio.to_thread()` timeout은 이미 실행 중인 provider thread를 중단하지 않으므로,
+timeout 뒤에도 adapter task가 끝날 때까지 concurrency permit을 유지한다.
 
 고객 확인은 `analysis_id`, 최신 `analysis_version`, 서버의 `masked_text`, 전체 `technical`과
 `consultation`을 전송한다. 최신 `SUCCEEDED` 분석만 확정할 수 있으며 지정가는 양의 정수
