@@ -27,6 +27,12 @@ principal·작업·요청 ID의 재시도는 기존 결과를 반환하고 paylo
 상태는 `pending`, `confirmation`, `failed`, `complete` 중 하나다. 실패 code는 `TIMEOUT`,
 `INVALID_SCHEMA`, `PROVIDER_UNAVAILABLE`만 외부에 노출한다.
 
+AI timeout·schema 오류·provider 오류가 나면 미완성 report, analysis, attachment metadata와
+저장된 이미지는 즉시 삭제한다. 같은 principal·요청 ID·payload의 재전송에는 독립된 안전한
+실패 멱등 기록으로 최초 `failed` 응답을 재생해 AI를 다시 호출하지 않는다. 실패 응답의
+`analysis_id`는 프론트 호환을 위한 결정론적 opaque 값이며 저장된 분석 resource를 뜻하지
+않는다. 다른 payload는 `409`, 재분석은 새 UUID v4 요청 ID가 필요하다.
+
 제보문의 `[전화번호]`, `[계좌번호]`, `[이메일]`은 서버가 각각 `[PHONE]`, `[ACCOUNT]`,
 `[EMAIL]`로 정규화한다. 저장값, AI 입력, API 응답과 `masked_items`에는 영문 placeholder만
 사용한다. 실제 개인정보 재탐지·마스킹과 고위험 민감정보 거부도 계속 적용한다.
@@ -53,7 +59,12 @@ timeout 뒤에도 adapter task가 끝날 때까지 concurrency permit을 유지�
 
 삭제 요청은 body에 `reference_number`와 `client_request_id`를 넣는다. 성공 시 `204`이며
 report, analysis, 기술 증상, 상담카드를 cascade 삭제하고 비식별 audit와 삭제 멱등 기록만
-남긴다.
+남긴다. attachment object 삭제가 실패해도 object key는 API에 노출하지 않고 독립 deletion
+job으로 재시도한다.
+
+상담카드 상세 접근 가능 시간은 발급 후 2시간이며 만료시각부터 조회할 수 없다. report와 현재
+관련 업무 데이터는 서버 `received_at + 72시간`에 물리 삭제 대상이 된다. 접근 TTL과 물리
+보존기간은 서로 독립적이다. purge는 backend CLI로 수행하며 기본은 dry-run이다.
 
 실제 provider 사용 여부는 `AI_ADAPTER` 설정으로 선택하며 기본값은 deterministic Fake다.
 NVIDIA 내부 client timeout은 AI 담당 파일의 별도 정합화가 필요하다.

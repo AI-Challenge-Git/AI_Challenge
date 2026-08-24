@@ -14,6 +14,17 @@ class AnalysisStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class IdempotencyStatus(StrEnum):
+    COMPLETED = "COMPLETED"
+
+
+class ObjectDeletionStatus(StrEnum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    RETRY_PENDING = "RETRY_PENDING"
+    COMPLETED = "COMPLETED"
+
+
 class FieldStatus(StrEnum):
     CONFIRMED_FROM_TEXT = "CONFIRMED_FROM_TEXT"
     NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"

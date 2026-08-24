@@ -22,12 +22,18 @@
 `consultation_cards.action` CHECK를 확장한다. 기존 `SELL`, `UNKNOWN` row는 변환 없이
 호환된다. API enum과 ORM metadata도 같은 세 값만 허용한다.
 
-72시간 purge는 이번 변경에 포함하지 않는다. 따라서 현재 DB row가 자동 삭제된다고 간주하면
-안 되며, 별도 lifecycle vertical slice에서 attachment·멱등 기록·감사로그까지 함께 구현한다.
+후속 lifecycle revision은 `reports.purge_at`을 nullable로 추가하고 기존 `received_at + 72시간`을
+backfill·검증한 뒤 NOT NULL과 조회 index를 적용한다. 실패 멱등 기록에는 안전한 상태·code와
+시각만 남기고, attachment object key는 report와 독립된 deletion job으로 이관한다. 자동 purge는
+bounded batch와 PostgreSQL row lock·`SKIP LOCKED`를 사용하며 실제 object I/O는 DB transaction
+밖에서 처리한다.
 
 ## rollback
 
 애플리케이션을 이전 계약으로 되돌리기 전에 `BUY` row를 업무 절차에 따라 제거하거나 이관해야
 한다. migration downgrade는 `BUY` row가 하나라도 있으면 명시적으로 실패해 데이터 손실을
-막고, 없을 때만 기존 `SELL`, `UNKNOWN` CHECK를 복구한다. 72시간 보존 기준은 purge 구현 전
-문서·운영 기준 변경만 되돌릴 수 있으며 데이터 복원은 보장하지 않는다.
+막고, 없을 때만 기존 `SELL`, `UNKNOWN` CHECK를 복구한다. lifecycle revision downgrade는
+미완료 object deletion job이 하나라도 있으면 거부한다. 먼저 purge CLI를 반복 실행해
+`retry_waiting=0`을 확인해야 한다. 이미 물리 삭제된 report·분석·상담카드·감사·멱등 데이터와
+object는 schema downgrade로 복원되지 않으므로, rollback이 필요한 운영 환경은 삭제 실행 전
+별도 backup·restore 절차를 준비해야 한다.
