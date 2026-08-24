@@ -22,6 +22,7 @@ from app.codes import (
     ReportStatus,
     SubmissionStatus,
 )
+from app.security import normalize_placeholders
 
 # FE-07 / AI-05: 원문에 날짜 없이 시각만 있으면(예: "09:03") CONFIRMED_FROM_TEXT로
 # 확정할 수 없다. 날짜+시각+UTC offset이 모두 있는 완전한 형식일 때만 허용한다.
@@ -31,12 +32,8 @@ from app.codes import (
 _FULL_DATETIME_WITH_OFFSET = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
 )
-_KOREAN_FULL_DATE_PATTERN = re.compile(
-    r"\d{4}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일"
-)
-_KOREAN_TIME_PATTERN = re.compile(
-    r"(?:(?:오전|오후)\s*)?\d{1,2}\s*시(?:\s*\d{1,2}\s*분)?"
-)
+_KOREAN_FULL_DATE_PATTERN = re.compile(r"\d{4}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일")
+_KOREAN_TIME_PATTERN = re.compile(r"(?:(?:오전|오후)\s*)?\d{1,2}\s*시(?:\s*\d{1,2}\s*분)?")
 
 
 def _evidence_contains_explicit_date_and_time(evidence: str | None) -> bool:
@@ -44,8 +41,7 @@ def _evidence_contains_explicit_date_and_time(evidence: str | None) -> bool:
     if not evidence:
         return False
     return bool(
-        _KOREAN_FULL_DATE_PATTERN.search(evidence)
-        and _KOREAN_TIME_PATTERN.search(evidence)
+        _KOREAN_FULL_DATE_PATTERN.search(evidence) and _KOREAN_TIME_PATTERN.search(evidence)
     )
 
 
@@ -66,6 +62,11 @@ class CandidateField[T](StrictAiModel):
     status: FieldStatus
     evidence_quote: str | None
 
+    @field_validator("value", "evidence_quote", mode="before")
+    @classmethod
+    def normalize_placeholder_aliases(cls, value: object) -> object:
+        return normalize_placeholders(value) if isinstance(value, str) else value
+
     @model_validator(mode="after")
     def validate_field_state(self) -> "CandidateField[T]":
         # AI-05: 근거 없는 값은 AI가 임의로 확정하지 않는다.
@@ -77,19 +78,13 @@ class CandidateField[T](StrictAiModel):
         #   UNKNOWN, OUT_OF_SCOPE -> value=null 필수, evidence_quote=null 필수
         if self.status is FieldStatus.CONFIRMED_FROM_TEXT:
             if self.value is None or not self.evidence_quote:
-                raise ValueError(
-                    "CONFIRMED_FROM_TEXT fields require a value and evidence"
-                )
+                raise ValueError("CONFIRMED_FROM_TEXT fields require a value and evidence")
         elif self.status is FieldStatus.NEEDS_CONFIRMATION:
             if self.value is not None:
-                raise ValueError(
-                    "NEEDS_CONFIRMATION fields cannot contain a confirmed value"
-                )
+                raise ValueError("NEEDS_CONFIRMATION fields cannot contain a confirmed value")
         else:  # UNKNOWN, OUT_OF_SCOPE
             if self.value is not None or self.evidence_quote is not None:
-                raise ValueError(
-                    f"{self.status.value} fields cannot contain a value or evidence"
-                )
+                raise ValueError(f"{self.status.value} fields cannot contain a value or evidence")
         return self
 
 
@@ -110,8 +105,8 @@ class TechnicalCandidate(StrictAiModel):
                 field.value is not None
                 and _FULL_DATETIME_WITH_OFFSET.fullmatch(field.value) is not None
             )
-            evidence_has_explicit_date_and_time = (
-                _evidence_contains_explicit_date_and_time(field.evidence_quote)
+            evidence_has_explicit_date_and_time = _evidence_contains_explicit_date_and_time(
+                field.evidence_quote
             )
             if not value_is_full_datetime or not evidence_has_explicit_date_and_time:
                 raise ValueError(
@@ -140,8 +135,8 @@ class ConsultationCandidate(StrictAiModel):
                 field.value is not None
                 and _FULL_DATETIME_WITH_OFFSET.fullmatch(field.value) is not None
             )
-            evidence_has_explicit_date_and_time = (
-                _evidence_contains_explicit_date_and_time(field.evidence_quote)
+            evidence_has_explicit_date_and_time = _evidence_contains_explicit_date_and_time(
+                field.evidence_quote
             )
             if not value_is_full_datetime or not evidence_has_explicit_date_and_time:
                 raise ValueError(
@@ -166,6 +161,11 @@ class ReportCreateRequest(ApiModel):
     client_request_id: UUID4
     text: str
 
+    @field_validator("text", mode="before")
+    @classmethod
+    def normalize_placeholder_aliases(cls, value: object) -> object:
+        return normalize_placeholders(value) if isinstance(value, str) else value
+
 
 class TechnicalConfirmation(ApiModel):
     issue_type: IssueType
@@ -173,6 +173,11 @@ class TechnicalConfirmation(ApiModel):
     submission_status: SubmissionStatus
     error_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
     reported_occurred_at: datetime | None
+
+    @field_validator("symptom", "error_code", mode="before")
+    @classmethod
+    def normalize_placeholder_aliases(cls, value: object) -> object:
+        return normalize_placeholders(value) if isinstance(value, str) else value
 
     @field_validator("reported_occurred_at")
     @classmethod
@@ -190,6 +195,11 @@ class ConsultationConfirmation(ApiModel):
     order_type: OrderType
     price_krw: StrictInt | None = Field(default=None, gt=0)
     attempted_at: datetime | None
+
+    @field_validator("symbol_name", "symbol_code", mode="before")
+    @classmethod
+    def normalize_placeholder_aliases(cls, value: object) -> object:
+        return normalize_placeholders(value) if isinstance(value, str) else value
 
     @field_validator("attempted_at")
     @classmethod
@@ -215,6 +225,11 @@ class ReportConfirmationRequest(ApiModel):
     technical: TechnicalConfirmation
     consultation: ConsultationConfirmation
     client_request_id: UUID4
+
+    @field_validator("masked_text", mode="before")
+    @classmethod
+    def normalize_placeholder_aliases(cls, value: object) -> object:
+        return normalize_placeholders(value) if isinstance(value, str) else value
 
 
 class AnalysisResponse(ApiModel):

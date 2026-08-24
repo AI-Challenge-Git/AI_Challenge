@@ -26,6 +26,7 @@ erDiagram
 erDiagram
     policy_snapshots ||--o{ reports : governs
     reports ||--o{ report_analyses : has_versions
+    reports ||--o| attachments : has
     reports ||--o| technical_symptoms : confirms
     reports ||--o| consultation_cards : creates
 
@@ -69,6 +70,18 @@ erDiagram
         timestamptz completed_at
     }
 
+    attachments {
+        uuid id PK
+        uuid report_id FK,UK
+        varchar object_key UK
+        varchar content_type
+        int byte_size
+        int width
+        int height
+        char content_sha256
+        timestamptz created_at
+    }
+
     technical_symptoms {
         uuid id PK
         uuid report_id FK,UK
@@ -108,6 +121,7 @@ erDiagram
         uuid client_request_id
         char payload_sha256
         int response_status
+        varchar attachment_object_key
         timestamptz created_at
     }
 
@@ -126,9 +140,12 @@ erDiagram
 ## 데이터 경계
 
 - `reports`에는 마스킹된 텍스트와 HMAC session digest만 저장한다.
+- `attachments`에는 정제된 private object의 무작위 key·hash·이미지 metadata만 저장하며
+  이미지 본문은 DB에 저장하지 않는다.
 - 검증된 AI 후보는 versioned `report_analyses`에만 JSONB로 저장한다.
 - 확정 기술정보와 주문상담정보는 각각 `technical_symptoms`, `consultation_cards`로
   물리 분리한다.
 - `technical_symptoms`에는 종목·수량·가격·매매 방향 컬럼이 없다.
 - 참조번호 digest·TTL·삭제 멱등 기록·비식별 삭제 감사는 구현되어 있다.
+- `consultation_cards.action`은 DB CHECK로 `BUY`, `SELL`, `UNKNOWN`만 허용한다.
 - vector·군집·상담원 역할과 조회 감사는 후속 migration에서 추가한다.

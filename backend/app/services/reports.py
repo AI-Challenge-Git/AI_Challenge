@@ -3,7 +3,9 @@ import hashlib
 import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from uuid import UUID
+from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
@@ -36,6 +38,7 @@ from app.schemas import (
     ConsultationCardIssued,
     DeleteConsultationCardRequest,
     DiscardReportRequest,
+    ExtractionResult,
     ReportAnalysisCompleteResponse,
     ReportAnalysisConfirmationResponse,
     ReportAnalysisFailedResponse,
@@ -60,6 +63,41 @@ from app.security import (
 )
 
 CARD_TTL = timedelta(hours=2)
+_AI_CALL_SLOTS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[int, asyncio.Semaphore]] = (
+    WeakKeyDictionary()
+)
+
+
+def _ai_call_slots(max_concurrency: int) -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    loop_slots = _AI_CALL_SLOTS.setdefault(loop, {})
+    return loop_slots.setdefault(max_concurrency, asyncio.Semaphore(max_concurrency))
+
+
+def _release_ai_call_slot(
+    slots: asyncio.Semaphore,
+    completed: asyncio.Future[object],
+) -> None:
+    slots.release()
+    if not completed.cancelled():
+        completed.exception()
+
+
+async def _extract_with_runtime_limits(
+    extractor: DualExtractor,
+    masked_text: str,
+    settings: Settings,
+) -> ExtractionResult:
+    slots = _ai_call_slots(settings.ai_max_concurrency)
+    async with asyncio.timeout(settings.ai_timeout_seconds):
+        await slots.acquire()
+        try:
+            provider_call = asyncio.create_task(extractor.extract(masked_text))
+        except BaseException:
+            slots.release()
+            raise
+        provider_call.add_done_callback(partial(_release_ai_call_slot, slots))
+        return await asyncio.shield(provider_call)
 
 
 def _payload_sha256(payload: BaseModel) -> str:
@@ -236,8 +274,7 @@ async def analyze_report(
             ) from exc
 
     try:
-        async with asyncio.timeout(settings.ai_timeout_seconds):
-            extraction = await extractor.extract(scan.masked_text)
+        extraction = await _extract_with_runtime_limits(extractor, scan.masked_text, settings)
         validate_evidence_quotes(extraction, scan.masked_text)
     except Exception as exc:
         if isinstance(exc, TimeoutError):

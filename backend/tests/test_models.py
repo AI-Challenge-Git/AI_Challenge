@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from sqlalchemy import CHAR, BigInteger, DateTime, LargeBinary
+from sqlalchemy import CHAR, BigInteger, CheckConstraint, DateTime, LargeBinary
 
 from app.db import Base
 from app.models import PolicySnapshot
@@ -81,6 +81,18 @@ def test_constraints_and_indexes_have_deterministic_names() -> None:
     assert "uq_report_analyses_report_id" in names
     assert "ck_consultation_cards_market_order_without_price" in names
     assert "ix_reports_session_received" in names
+
+
+def test_consultation_card_constraint_accepts_all_order_actions() -> None:
+    constraint = next(
+        item
+        for item in Base.metadata.tables["consultation_cards"].constraints
+        if item.name == "ck_consultation_cards_action_value"
+    )
+    assert isinstance(constraint, CheckConstraint)
+
+    sql = str(constraint.sqltext)
+    assert all(f"'{action}'" in sql for action in ("BUY", "SELL", "UNKNOWN"))
 
 
 def test_core_migration_follows_0001_and_excludes_future_tables() -> None:

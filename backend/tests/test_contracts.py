@@ -6,8 +6,13 @@ import pytest
 from pydantic import ValidationError
 
 from app.ai import FakeDualExtractor
-from app.codes import IssueType, OrderAction, OrderType, SubmissionStatus
-from app.schemas import ConsultationConfirmation, ReportCreateRequest, TechnicalConfirmation
+from app.codes import FieldStatus, IssueType, OrderAction, OrderType, SubmissionStatus
+from app.schemas import (
+    CandidateField,
+    ConsultationConfirmation,
+    ReportCreateRequest,
+    TechnicalConfirmation,
+)
 from app.security import (
     InvalidReportTextError,
     InvalidSessionTokenError,
@@ -42,6 +47,35 @@ def test_report_text_is_trimmed_and_nfc_normalized() -> None:
 
     assert normalized == unicodedata.normalize("NFC", decomposed)
     assert len(normalized) == 20
+
+
+def test_localized_placeholders_are_normalized_to_canonical_values() -> None:
+    normalized = normalize_report_text(
+        "주문 오류 제보이며 [전화번호], [계좌번호], [이메일]은 사용자가 가렸습니다."
+    )
+
+    assert normalized == ("주문 오류 제보이며 [PHONE], [ACCOUNT], [EMAIL]은 사용자가 가렸습니다.")
+    assert "[전화번호]" not in normalized
+    assert "[계좌번호]" not in normalized
+    assert "[이메일]" not in normalized
+
+
+def test_api_and_ai_dtos_canonicalize_placeholder_aliases() -> None:
+    request = ReportCreateRequest.model_validate(
+        {
+            "client_request_id": "58e06f0a-1220-46a0-b30f-e840716846be",
+            "text": "주문 오류 제보이며 [전화번호]는 직접 가린 합성 값입니다.",
+        }
+    )
+    candidate = CandidateField[str](
+        value="[계좌번호]가 표시된 화면",
+        status=FieldStatus.CONFIRMED_FROM_TEXT,
+        evidence_quote="[계좌번호]",
+    )
+
+    assert request.text == "주문 오류 제보이며 [PHONE]는 직접 가린 합성 값입니다."
+    assert candidate.value == "[ACCOUNT]가 표시된 화면"
+    assert candidate.evidence_quote == "[ACCOUNT]"
 
 
 def test_pii_filter_masks_allowed_types_without_returning_values() -> None:
@@ -157,6 +191,21 @@ def test_confirmation_schema_rejects_invalid_financial_values() -> None:
             price_krw=70_000,
             attempted_at=None,
         )
+
+
+@pytest.mark.parametrize("action", list(OrderAction))
+def test_confirmation_schema_accepts_all_order_actions(action: OrderAction) -> None:
+    confirmation = ConsultationConfirmation(
+        action=action,
+        symbol_name=None,
+        symbol_code=None,
+        quantity=None,
+        order_type=OrderType.UNKNOWN,
+        price_krw=None,
+        attempted_at=None,
+    )
+
+    assert confirmation.action is action
 
 
 @pytest.mark.parametrize(
