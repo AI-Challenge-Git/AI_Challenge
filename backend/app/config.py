@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     pii_policy_version: str = "pii-mask.v1"
     ai_adapter: Literal["fake", "nvidia"] = "fake"
     ai_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+    ai_max_concurrency: int = Field(default=4, ge=1, le=32)
     nvidia_api_key: SecretStr | None = None
     attachment_storage_backend: Literal["local"] = "local"
     attachment_storage_dir: Path = DEFAULT_ATTACHMENT_STORAGE_DIR

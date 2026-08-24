@@ -16,6 +16,7 @@ from sqlalchemy import delete, func, select
 from app.ai import FakeDualExtractor, get_dual_extractor
 from app.attachments import AttachmentStorageError, LocalAttachmentStore, get_attachment_store
 from app.codes import AnalysisStatus
+from app.config import Settings, get_settings
 from app.db import engine, session_factory
 from app.main import app
 from app.models import (
@@ -65,6 +66,16 @@ class TimeoutExtractor(FakeDualExtractor):
         raise TimeoutError
 
 
+class SlowExtractor(FakeDualExtractor):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def extract(self, masked_text: str) -> ExtractionResult:
+        self.calls += 1
+        await asyncio.sleep(1)
+        return await super().extract(masked_text)
+
+
 class FailingExtractor(FakeDualExtractor):
     def __init__(self, error: Exception) -> None:
         self.error = error
@@ -73,6 +84,15 @@ class FailingExtractor(FakeDualExtractor):
     async def extract(self, masked_text: str) -> ExtractionResult:
         self.calls += 1
         raise self.error
+
+
+class CapturingExtractor(FakeDualExtractor):
+    def __init__(self) -> None:
+        self.inputs: list[str] = []
+
+    async def extract(self, masked_text: str) -> ExtractionResult:
+        self.inputs.append(masked_text)
+        return await super().extract(masked_text)
 
 
 class FailingAttachmentStore(LocalAttachmentStore):
@@ -223,6 +243,87 @@ async def test_customer_report_lifecycle_is_persisted_idempotent_and_deletable()
         assert await session.scalar(select(func.count()).select_from(AuditLog)) == 1
 
 
+async def test_localized_placeholders_are_canonical_in_db_ai_and_response() -> None:
+    extractor = CapturingExtractor()
+    app.dependency_overrides[get_dual_extractor] = lambda: extractor
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            analyzed = await client.post(
+                "/api/reports/analyze",
+                headers=_headers(),
+                json={
+                    "text": (
+                        "주문 오류 제보이며 [전화번호], [계좌번호], [이메일]은 직접 가렸습니다."
+                    ),
+                    "client_request_id": str(uuid4()),
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_dual_extractor, None)
+
+    assert analyzed.status_code == 200
+    payload = analyzed.json()
+    canonical = "주문 오류 제보이며 [PHONE], [ACCOUNT], [EMAIL]은 직접 가렸습니다."
+    assert payload["masked_text"] == canonical
+    assert payload["masked_items"] == ["PHONE", "ACCOUNT", "EMAIL"]
+    assert extractor.inputs == [canonical]
+    assert all(value not in analyzed.text for value in ("[전화번호]", "[계좌번호]", "[이메일]"))
+    async with session_factory() as session:
+        stored = await session.scalar(select(Report))
+        assert stored is not None
+        assert stored.masked_text == canonical
+
+
+@pytest.mark.parametrize("action", ["BUY", "SELL", "UNKNOWN"])
+async def test_all_order_actions_are_saved_through_the_api(action: str) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        analyzed = await client.post(
+            "/api/reports/analyze",
+            headers=_headers(),
+            json={
+                "text": "주문 버튼 이후 계속 로딩되어 결과를 확인하지 못한 합성 제보입니다.",
+                "client_request_id": str(uuid4()),
+            },
+        )
+        analysis = analyzed.json()
+        confirmed = await client.post(
+            "/api/reports",
+            headers=_headers(),
+            json={
+                "analysis_id": analysis["analysis_id"],
+                "analysis_version": analysis["analysis_version"],
+                "attachment_id": None,
+                "masked_text": analysis["masked_text"],
+                "technical": {
+                    "issue_type": "UNKNOWN",
+                    "symptom": None,
+                    "submission_status": "UNKNOWN",
+                    "error_code": None,
+                    "reported_occurred_at": None,
+                },
+                "consultation": {
+                    "action": action,
+                    "symbol_name": None,
+                    "symbol_code": None,
+                    "quantity": None,
+                    "order_type": "UNKNOWN",
+                    "price_krw": None,
+                    "attempted_at": None,
+                },
+                "client_request_id": str(uuid4()),
+            },
+        )
+
+    assert analyzed.status_code == 200
+    assert confirmed.status_code == 200
+    async with session_factory() as session:
+        card = await session.scalar(select(ConsultationCard))
+        assert card is not None
+        assert card.action == action
+
+
 async def test_owner_and_sensitive_input_boundaries_do_not_leak_values() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -355,6 +456,31 @@ async def test_failed_analysis_is_stored_and_not_reinvoked() -> None:
         )
         assert confirmation.status_code == 409
         assert confirmation.json()["code"] == "ANALYSIS_NOT_READY"
+
+
+async def test_backend_timeout_covers_the_complete_adapter_call() -> None:
+    extractor = SlowExtractor()
+    app.dependency_overrides[get_dual_extractor] = lambda: extractor
+    app.dependency_overrides[get_settings] = lambda: Settings(ai_timeout_seconds=0.01)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            failed = await client.post(
+                "/api/reports/analyze",
+                headers=_headers(),
+                json={
+                    "text": "AI 전체 호출 제한을 확인하기 위한 합성 제보 문장입니다.",
+                    "client_request_id": str(uuid4()),
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_dual_extractor, None)
+        app.dependency_overrides.pop(get_settings, None)
+
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "failed"
+    assert failed.json()["error"] == {"code": "TIMEOUT"}
+    assert extractor.calls == 1
 
 
 @pytest.mark.parametrize(
@@ -518,6 +644,7 @@ async def test_screenshot_is_sanitized_confirmed_and_deleted(tmp_path: Path) -> 
             data={
                 "text": "주문 화면에서 버튼을 누른 뒤 계속 로딩되는 오류 상황입니다.",
                 "client_request_id": str(uuid4()),
+                "screenshot_redacted_confirmed": "true",
             },
             files={"screenshot": ("error.png", _screenshot_bytes(), "image/png")},
         )
@@ -591,6 +718,7 @@ async def test_screenshot_endpoint_rejects_invalid_file_without_leaking_it() -> 
             data={
                 "text": "주문 화면에서 버튼을 누른 뒤 계속 로딩되는 오류 상황입니다.",
                 "client_request_id": str(uuid4()),
+                "screenshot_redacted_confirmed": "true",
             },
             files={"screenshot": ("error.png", secret, "image/png")},
         )
@@ -612,12 +740,46 @@ async def test_screenshot_storage_failure_is_safe_and_rolls_back_report(tmp_path
             data={
                 "text": "주문 화면에서 버튼을 누른 뒤 계속 로딩되는 오류 상황입니다.",
                 "client_request_id": str(uuid4()),
+                "screenshot_redacted_confirmed": "true",
             },
             files={"screenshot": ("error.png", _screenshot_bytes(), "image/png")},
         )
 
     assert failed.status_code == 503
     assert failed.json()["code"] == "ATTACHMENT_STORAGE_UNAVAILABLE"
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Report)) == 0
+        assert await session.scalar(select(func.count()).select_from(Attachment)) == 0
+
+
+@pytest.mark.parametrize("confirmation", [None, "false", "yes", "1", "TRUE"])
+async def test_screenshot_requires_explicit_redaction_confirmation(
+    confirmation: str | None,
+) -> None:
+    extractor = CapturingExtractor()
+    app.dependency_overrides[get_dual_extractor] = lambda: extractor
+    data = {
+        "text": "주문 화면에서 버튼을 누른 뒤 계속 로딩되는 오류 상황입니다.",
+        "client_request_id": str(uuid4()),
+    }
+    if confirmation is not None:
+        data["screenshot_redacted_confirmed"] = confirmation
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            rejected = await client.post(
+                "/api/reports/analyze",
+                headers=_headers(),
+                data=data,
+                files={"screenshot": ("error.png", _screenshot_bytes(), "image/png")},
+            )
+    finally:
+        app.dependency_overrides.pop(get_dual_extractor, None)
+
+    assert rejected.status_code == 422
+    assert rejected.headers["content-type"].startswith("application/problem+json")
+    assert rejected.json()["code"] == "SCREENSHOT_REDACTION_REQUIRED"
+    assert extractor.inputs == []
     async with session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(Report)) == 0
         assert await session.scalar(select(func.count()).select_from(Attachment)) == 0

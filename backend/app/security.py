@@ -62,11 +62,22 @@ _MASK_PATTERNS = {
     ),
     "ACCOUNT": re.compile(r"(?<!\d)(?:\d{10,14}|\d{2,6}\s*[- ]\s*\d{2,6}\s*[- ]\s*\d{2,8})(?!\d)"),
 }
+_PLACEHOLDER_ALIASES = {
+    "[전화번호]": "[PHONE]",
+    "[계좌번호]": "[ACCOUNT]",
+    "[이메일]": "[EMAIL]",
+}
 _SESSION_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
+def normalize_placeholders(text: str) -> str:
+    for localized, canonical in _PLACEHOLDER_ALIASES.items():
+        text = text.replace(localized, canonical)
+    return text
+
+
 def normalize_report_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFC", text.strip())
+    normalized = normalize_placeholders(unicodedata.normalize("NFC", text.strip()))
     if not 20 <= len(normalized) <= 500:
         raise InvalidReportTextError("report text must contain 20 to 500 Unicode code points")
     return normalized

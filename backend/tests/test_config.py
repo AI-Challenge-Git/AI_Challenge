@@ -1,10 +1,13 @@
+import asyncio
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr, ValidationError
 
-from app.ai import FakeDualExtractor, get_dual_extractor
+from app.ai import FakeDualExtractor, NvidiaDualExtractorAdapter, get_dual_extractor
 from app.config import Settings, get_settings
 from app.main import create_app
 
@@ -31,7 +34,58 @@ def test_settings_load_environment_variables(
 
 
 def test_fake_ai_adapter_is_the_safe_default() -> None:
-    assert Settings().ai_adapter == "fake"
+    settings = Settings()
+
+    assert settings.ai_adapter == "fake"
+    assert settings.ai_timeout_seconds == 10
+    assert settings.ai_max_concurrency == 4
+
+
+async def test_nvidia_adapter_keeps_timed_out_provider_calls_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extraction = await FakeDualExtractor().extract(
+        "주문 버튼을 누른 뒤 계속 로딩되고 결과를 확인하지 못했습니다."
+    )
+
+    class BlockingProvider:
+        def __init__(self) -> None:
+            self.release = threading.Event()
+            self.first_started = threading.Event()
+            self.lock = threading.Lock()
+            self.active = 0
+            self.started = 0
+            self.max_active = 0
+
+        def extract_safe(self, _: str) -> object:
+            with self.lock:
+                self.active += 1
+                self.started += 1
+                self.max_active = max(self.max_active, self.active)
+                self.first_started.set()
+            self.release.wait(timeout=2)
+            with self.lock:
+                self.active -= 1
+            return SimpleNamespace(result=extraction, failure_reason=None, detail=None)
+
+    provider = BlockingProvider()
+    monkeypatch.setattr("app.ai.RealDualExtractor", lambda: provider)
+    adapter = NvidiaDualExtractorAdapter(max_concurrency=1)
+
+    timed_out = asyncio.create_task(adapter.extract("첫 번째 합성 요청입니다."))
+    assert await asyncio.to_thread(provider.first_started.wait, 1)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(timed_out, timeout=0.01)
+
+    queued = asyncio.create_task(adapter.extract("두 번째 합성 요청입니다."))
+    await asyncio.sleep(0.05)
+    assert provider.started == 1
+    assert provider.max_active == 1
+
+    provider.release.set()
+    assert await asyncio.wait_for(queued, timeout=1) == extraction
+    assert provider.started == 2
+    assert provider.max_active == 1
 
 
 def test_nvidia_adapter_requires_a_masked_api_key() -> None:

@@ -63,19 +63,12 @@ class FakeDualExtractor:
 
 
 class NvidiaDualExtractorAdapter:
-    """
-    DualExtractor Protocol에 RealDualExtractor(NVIDIA Build, 8B)를 연결하는 어댑터.
+    """Expose the blocking NVIDIA extractor through the async backend boundary.
 
-    - Protocol이 요구하는 클래스 속성(schema_version 등)을 노출한다.
-    - extract_safe()의 ExtractOutcome(반환값 기반 성공/실패 표현)을
-      analyze_report()가 기대하는 "성공 시 반환값, 실패 시 예외" 방식으로 변환한다.
-    - extract_safe()는 동기(blocking) 함수이므로 asyncio.to_thread로 감싸서
-      FastAPI 이벤트 루프를 막지 않게 한다.
-
-    주의: settings.ai_timeout_seconds(기본 10초)가 RealDualExtractor 내부
-    NVIDIA 클라이언트 timeout(90초)보다 짧다. correction retry가 발생하면
-    10초를 넘길 수 있으므로, 배포 전 settings.ai_timeout_seconds 값을
-    백엔드 담당자와 조정해야 한다.
+    The application service limits the complete adapter call to ``ai_timeout_seconds``.
+    Cancelling ``asyncio.to_thread`` cannot stop a provider thread already in progress, so a
+    permit remains occupied until that thread really exits. This bounds lingering provider calls
+    instead of allowing timed-out requests to create an unlimited number of worker threads.
     """
 
     schema_version = "dual-extraction.v1"
@@ -83,11 +76,29 @@ class NvidiaDualExtractorAdapter:
     adapter_name = "nvidia-build"
     model_id: str | None = "meta/llama-3.1-8b-instruct"
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_concurrency: int | None = None) -> None:
+        settings = get_settings()
         self._inner = RealDualExtractor()
+        self._provider_slots = asyncio.Semaphore(
+            max_concurrency if max_concurrency is not None else settings.ai_max_concurrency
+        )
+
+    def _provider_call_finished(self, completed: object) -> None:
+        self._provider_slots.release()
+        if isinstance(completed, asyncio.Task) and not completed.cancelled():
+            completed.exception()
 
     async def extract(self, masked_text: str) -> ExtractionResult:
-        outcome = await asyncio.to_thread(self._inner.extract_safe, masked_text)
+        await self._provider_slots.acquire()
+        try:
+            provider_call = asyncio.create_task(
+                asyncio.to_thread(self._inner.extract_safe, masked_text)
+            )
+        except BaseException:
+            self._provider_slots.release()
+            raise
+        provider_call.add_done_callback(self._provider_call_finished)
+        outcome = await asyncio.shield(provider_call)
 
         if outcome.result is None:
             if outcome.failure_reason == ExtractFailureReason.TIMEOUT:

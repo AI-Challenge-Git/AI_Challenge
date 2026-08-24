@@ -92,6 +92,11 @@
                     "type": "string",
                     "format": "binary",
                     "description": "PNG, JPEG, or WebP; maximum 5 MiB"
+                  },
+                  "screenshot_redacted_confirmed": {
+                    "type": "boolean",
+                    "const": true,
+                    "description": "The user confirms that sensitive image content was redacted."
                   }
                 },
                 "additionalProperties": false,
@@ -99,7 +104,8 @@
                 "required": [
                   "text",
                   "client_request_id",
-                  "screenshot"
+                  "screenshot",
+                  "screenshot_redacted_confirmed"
                 ]
               }
             }
@@ -890,9 +896,9 @@
       "OrderAction": {
         "type": "string",
         "enum": [
+          "BUY",
           "SELL",
-          "UNKNOWN",
-          "BUY"
+          "UNKNOWN"
         ],
         "title": "OrderAction"
       },

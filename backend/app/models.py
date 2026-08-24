@@ -257,7 +257,7 @@ class TechnicalSymptom(Base):
 class ConsultationCard(Base):
     __tablename__ = "consultation_cards"
     __table_args__ = (
-        CheckConstraint("action IN ('SELL', 'UNKNOWN')", name="action_value"),
+        CheckConstraint("action IN ('BUY', 'SELL', 'UNKNOWN')", name="action_value"),
         CheckConstraint(
             "symbol_code IS NULL OR symbol_code ~ '^[0-9]{6}$'",
             name="symbol_code_format",
