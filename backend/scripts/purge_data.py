@@ -34,6 +34,8 @@ async def run(*, execute: bool, batch_size: int) -> None:
                     preview.idempotency_records
                     + preview.audit_logs
                     + preview.completed_deletion_jobs
+                    + preview.expired_agent_tokens
+                    + preview.expired_rate_limit_buckets
                 )
                 object_candidates = preview.attachment_objects + preview.retry_ready_objects
                 print(
@@ -54,6 +56,8 @@ async def run(*, execute: bool, batch_size: int) -> None:
                 result.idempotency_deleted
                 + result.audit_logs_deleted
                 + result.deletion_jobs_deleted
+                + result.agent_tokens_deleted
+                + result.rate_limit_buckets_deleted
             )
             print(
                 "mode=execute "

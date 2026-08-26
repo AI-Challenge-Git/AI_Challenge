@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     CHAR,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -21,7 +22,16 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.codes import AnalysisStatus, IdempotencyStatus, ObjectDeletionStatus, ReportStatus
+from app.codes import (
+    AgentRole,
+    AnalysisStatus,
+    AuditOutcome,
+    IdempotencyStatus,
+    ObjectDeletionStatus,
+    RateLimitScope,
+    ReportStatus,
+    VerificationStatus,
+)
 from app.db import Base
 
 
@@ -326,6 +336,173 @@ class ConsultationCard(Base):
     )
 
     report: Mapped[Report] = relationship(back_populates="consultation_card")
+    verifications: Mapped[list["AgentVerification"]] = relationship(
+        back_populates="card", cascade="all, delete-orphan"
+    )
+
+
+class AgentAccount(Base):
+    __tablename__ = "agent_accounts"
+    __table_args__ = (
+        CheckConstraint(
+            "employee_id ~ '^[A-Z0-9_-]{4,32}$'",
+            name="employee_id_format",
+        ),
+        CheckConstraint(
+            "char_length(btrim(agent_label)) BETWEEN 1 AND 80",
+            name="agent_label_length",
+        ),
+        CheckConstraint(
+            "role IN ('AGENT', 'OPERATOR')",
+            name="role_value",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    employee_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    agent_label: Mapped[str] = mapped_column(String(80), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), default=AgentRole.AGENT.value, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    access_tokens: Mapped[list["AgentAccessToken"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    verifications: Mapped[list["AgentVerification"]] = relationship(back_populates="agent")
+    audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="actor")
+
+
+class AgentAccessToken(Base):
+    __tablename__ = "agent_access_tokens"
+    __table_args__ = (
+        CheckConstraint("octet_length(token_digest) = 32", name="token_digest_length"),
+        CheckConstraint("expires_at > created_at", name="expiry_after_creation"),
+        Index("ix_agent_access_tokens_agent_id", "agent_id"),
+        Index("ix_agent_access_tokens_expires_at", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    agent_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("agent_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_digest: Mapped[bytes] = mapped_column(LargeBinary(32), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    agent: Mapped[AgentAccount] = relationship(back_populates="access_tokens")
+
+
+class AgentVerification(Base):
+    __tablename__ = "agent_verifications"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "client_request_id"),
+        CheckConstraint("action IN ('BUY', 'SELL', 'UNKNOWN')", name="action_value"),
+        CheckConstraint(
+            "symbol_code IS NULL OR symbol_code ~ '^[0-9]{6}$'",
+            name="symbol_code_format",
+        ),
+        CheckConstraint("quantity IS NULL OR quantity > 0", name="quantity_positive"),
+        CheckConstraint(
+            "order_type IN ('LIMIT', 'MARKET', 'UNKNOWN')",
+            name="order_type_value",
+        ),
+        CheckConstraint("price_krw IS NULL OR price_krw > 0", name="price_krw_positive"),
+        CheckConstraint(
+            "order_type <> 'MARKET' OR price_krw IS NULL",
+            name="market_order_without_price",
+        ),
+        CheckConstraint(
+            "order_type <> 'LIMIT' OR price_krw IS NOT NULL",
+            name="limit_order_requires_price",
+        ),
+        CheckConstraint(
+            "submission_status IN ('CUSTOMER_REPORTED_SUBMITTED', "
+            "'CUSTOMER_REPORTED_NOT_SUBMITTED', 'UNKNOWN')",
+            name="submission_status_value",
+        ),
+        CheckConstraint(
+            "overall_status IN ('MATCHED', 'NEEDS_CONFIRMATION', 'IMPORTANT')",
+            name="overall_status_value",
+        ),
+        Index("ix_agent_verifications_card_id", "card_id"),
+        Index("ix_agent_verifications_agent_id", "agent_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    card_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("consultation_cards.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    agent_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("agent_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    client_request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    symbol_name: Mapped[str | None] = mapped_column(String(80))
+    symbol_code: Mapped[str | None] = mapped_column(String(6))
+    quantity: Mapped[int | None] = mapped_column(BigInteger)
+    order_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    price_krw: Mapped[int | None] = mapped_column(BigInteger)
+    submission_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    order_history_checked: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    overall_status: Mapped[str] = mapped_column(
+        String(24), default=VerificationStatus.MATCHED.value, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    card: Mapped[ConsultationCard] = relationship(back_populates="verifications")
+    agent: Mapped[AgentAccount] = relationship(back_populates="verifications")
+
+
+class RateLimitBucket(Base):
+    __tablename__ = "rate_limit_buckets"
+    __table_args__ = (
+        UniqueConstraint("scope", "principal_fingerprint", "client_fingerprint"),
+        CheckConstraint(
+            "scope IN ('AGENT_LOGIN_FAILURE', 'AGENT_CARD_LOOKUP')",
+            name="scope_value",
+        ),
+        CheckConstraint(
+            "octet_length(principal_fingerprint) = 32",
+            name="principal_fingerprint_length",
+        ),
+        CheckConstraint(
+            "octet_length(client_fingerprint) = 32",
+            name="client_fingerprint_length",
+        ),
+        CheckConstraint("request_count > 0", name="request_count_positive"),
+        CheckConstraint("expires_at > window_started_at", name="expiry_after_window_start"),
+        Index("ix_rate_limit_buckets_expires_at", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    scope: Mapped[str] = mapped_column(
+        String(32), default=RateLimitScope.AGENT_LOGIN_FAILURE.value, nullable=False
+    )
+    principal_fingerprint: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    client_fingerprint: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class IdempotencyRecord(Base):
@@ -377,16 +554,30 @@ class AuditLog(Base):
             "resource_fingerprint ~ '^[0-9a-f]{64}$'",
             name="resource_fingerprint_lower_hex",
         ),
+        CheckConstraint(
+            "outcome IN ('SUCCESS', 'FAILURE', 'RATE_LIMITED', 'REPLAY', 'CONFLICT')",
+            name="outcome_value",
+        ),
+        Index("ix_audit_logs_actor_id", "actor_id"),
         Index("ix_audit_logs_created_at", "created_at"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    actor_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("agent_accounts.id", ondelete="RESTRICT"),
+    )
     actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(
+        String(16), default=AuditOutcome.SUCCESS.value, server_default="SUCCESS", nullable=False
+    )
     resource_fingerprint: Mapped[str] = mapped_column(CHAR(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    actor: Mapped[AgentAccount | None] = relationship(back_populates="audit_logs")
 
 
 class ObjectDeletionJob(Base):

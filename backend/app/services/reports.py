@@ -7,7 +7,7 @@ from functools import partial
 from uuid import UUID
 from weakref import WeakKeyDictionary
 
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -61,9 +61,17 @@ from app.security import (
     reference_digest,
     scan_and_mask,
 )
+from app.services.idempotency import (
+    completed_idempotency_record as _completed_idempotency_record,
+)
+from app.services.idempotency import (
+    lock_idempotency_key as _lock_idempotency_key,
+)
+from app.services.idempotency import (
+    payload_sha256 as _payload_sha256,
+)
 from app.services.lifecycle import (
     CARD_ACCESS_TTL,
-    RETENTION_PERIOD,
     process_object_deletion_jobs,
     queue_object_deletion,
     retention_deadline,
@@ -107,10 +115,6 @@ async def _extract_with_runtime_limits(
         return await asyncio.shield(provider_call)
 
 
-def _payload_sha256(payload: BaseModel) -> str:
-    return canonical_json_sha256(payload.model_dump(mode="json"))
-
-
 def _analyze_payload_sha256(
     payload: ReportCreateRequest, attachment: PreparedAttachment | None
 ) -> str:
@@ -136,43 +140,6 @@ def _failed_analysis_response(
             error=SafeError(code=safe_error_code),
         )
     )
-
-
-def _completed_idempotency_record(
-    *,
-    principal_digest: bytes,
-    operation: str,
-    client_request_id: UUID,
-    payload_sha256: str,
-    response_status: int,
-    now: datetime,
-    safe_failure_code: str | None = None,
-) -> IdempotencyRecord:
-    return IdempotencyRecord(
-        principal_digest=principal_digest,
-        operation=operation,
-        client_request_id=client_request_id,
-        payload_sha256=payload_sha256,
-        response_status=response_status,
-        safe_failure_code=safe_failure_code,
-        processing_status="COMPLETED",
-        created_at=now,
-        completed_at=now,
-        purge_at=now + RETENTION_PERIOD,
-    )
-
-
-async def _lock_idempotency_key(
-    session: AsyncSession,
-    principal_digest: bytes,
-    operation: str,
-    client_request_id: UUID,
-) -> None:
-    digest = hashlib.sha256(
-        principal_digest + operation.encode() + client_request_id.bytes
-    ).digest()
-    lock_key = int.from_bytes(digest[:8], byteorder="big", signed=True)
-    await session.execute(select(func.pg_advisory_xact_lock(lock_key)))
 
 
 def _analysis_response(report: Report, analysis: ReportAnalysis) -> ReportAnalysisResponse:

@@ -4,10 +4,14 @@ import hashlib
 import hmac
 import json
 import re
+import secrets
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
+
+from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
 
 
 class PiiDecision(StrEnum):
@@ -68,6 +72,8 @@ _PLACEHOLDER_ALIASES = {
     "[이메일]": "[EMAIL]",
 }
 _SESSION_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_PASSWORD_HASH = PasswordHash.recommended()
+_DUMMY_PASSWORD_HASH = _PASSWORD_HASH.hash(secrets.token_urlsafe(32))
 
 
 def normalize_placeholders(text: str) -> str:
@@ -169,3 +175,32 @@ def canonical_json_sha256(value: dict[str, Any]) -> str:
         separators=(",", ":"),
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def hash_password(password: str) -> str:
+    return _PASSWORD_HASH.hash(password)
+
+
+def verify_password(password: str, password_hash: str | None) -> bool:
+    candidate_hash = password_hash or _DUMMY_PASSWORD_HASH
+    try:
+        return _PASSWORD_HASH.verify(password, candidate_hash) and password_hash is not None
+    except UnknownHashError:
+        return False
+
+
+def make_opaque_token() -> str:
+    return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+
+
+def opaque_token_digest(token: str, hmac_key: bytes) -> bytes:
+    if len(hmac_key) < 32:
+        raise ValueError("agent token HMAC key must contain at least 32 bytes")
+    return hmac.digest(hmac_key, decode_session_token(token), "sha256")
+
+
+def keyed_fingerprint(value: str, namespace: str, hmac_key: bytes) -> bytes:
+    if len(hmac_key) < 32:
+        raise ValueError("rate limit HMAC key must contain at least 32 bytes")
+    normalized = unicodedata.normalize("NFC", value.strip())
+    return hmac.digest(hmac_key, f"{namespace}\0{normalized}".encode(), "sha256")

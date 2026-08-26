@@ -20,6 +20,10 @@
 | POST | `/api/reports` | 고객 전체 확인, 기술 증상·상담정보 분리 저장, 상담카드 발급 |
 | DELETE | `/api/reports` | 저장 전 이탈한 미확정 제보 폐기 |
 | DELETE | `/api/consultation-cards` | 소유권 확인 후 report root 전체 삭제 |
+| POST | `/api/auth/login` | 데모 상담원 계정 로그인과 opaque access token 발급 |
+| GET | `/api/agent/consultation-cards` | 72시간 내 상담카드 목록 조회 |
+| POST | `/api/consultation-cards/lookup` | 참조번호 또는 card ID로 활성 카드 상세 조회 |
+| POST | `/api/consultation-cards/verifications` | 상담원 재확인값 비교·저장 |
 
 분석 요청은 16 KiB 이하 JSON이며 제보문은 NFC 정규화 후 20~500자로 제한한다. 같은
 principal·작업·요청 ID의 재시도는 기존 결과를 반환하고 payload가 다르면 `409`다.
@@ -68,3 +72,37 @@ job으로 재시도한다.
 
 실제 provider 사용 여부는 `AI_ADAPTER` 설정으로 선택하며 기본값은 deterministic Fake다.
 NVIDIA 내부 client timeout은 AI 담당 파일의 별도 정합화가 필요하다.
+
+## 상담원 인증과 카드 조회
+
+`POST /api/auth/login`은 `employee_id`, `password`를 받고 256-bit opaque `access_token`,
+`token_type=bearer`, `expires_at`, `agent_label`, `role`을 반환한다. 기본 만료는 30분이며 환경변수로
+조정한다. password는 Argon2 hash로만, token은 전용 HMAC digest로만 DB에 저장한다. 존재하지 않는
+ID, 잘못된 password, disabled account는 같은 `401` 외부 오류를 사용한다.
+
+`GET /api/agent/consultation-cards`는 기본 50개, 최대 100개를 `limit`·`offset`으로 조회한다.
+`reports.purge_at`이 지나지 않은 카드만 최신 접수 순으로 반환하며 2시간 TTL이 지난 카드도
+`expired=true`, `can_open=false`로 목록에 남는다. 목록 식별자는 참조번호가 아니라 opaque
+`card_id`다. 목록에는 주문 상세, 고객 session, masked text, 참조번호·digest와 attachment 내부값이
+없다.
+
+`POST /api/consultation-cards/lookup`은 body에 `reference_number` 또는 `card_id` 중 정확히 하나를
+받는다. 유효한 `AGENT` token, report 보존기간과 카드 TTL을 모두 검증한다. 없는·삭제된·만료된
+카드는 동일한 `404`를 반환한다. 응답에는 비식별 기술 증상, 고객 확정 consultation 값,
+verification 상태, 안전 안내문과 `has_attachment`만 포함한다. 운영 signed URL과 장애 신호가 아직
+없으므로 attachment URL은 반환하지 않고 `related_signals`는 빈 배열이다.
+
+`POST /api/consultation-cards/verifications`도 `reference_number | card_id` 중 하나와 UUID v4
+`client_request_id`를 받는다. `action`, 종목, 수량, 주문 방식, `price_krw`, 고객 진술 제출 상태와
+`order_history_checked`를 저장한다. 지정가는 양의 가격 필수, 시장가 가격은 `null`이며 BUY·SELL을
+모두 지원한다. 실제 주문 성공·체결 결과 필드는 허용하지 않는다.
+
+비교는 AI 없이 구조화 값으로 수행한다. 구체 값 불일치는 `IMPORTANT`, 한쪽이 null·UNKNOWN이면
+`NEEDS_CONFIRMATION`, 일치하면 `MATCHED`다. 주문내역 확인을 수행하지 않았으면 전체 결과가 최소
+`NEEDS_CONFIRMATION`이다. 같은 agent·operation·요청 ID와 같은 payload는 최초 verification을
+재생하고 다른 payload는 `409`다.
+
+로그인 실패 제한은 employee/client HMAC fingerprint 기준 기본 5회/5분, lookup은 agent/client
+fingerprint 기준 기본 10회/60초다. bucket은 PostgreSQL 원자적 upsert로 공유되며 제한 시 `429`와
+`Retry-After`를 반환한다. raw IP와 employee ID는 rate-limit·audit에 저장하지 않는다. lookup의
+성공·실패·만료·제한과 로그인·verification 보안 event는 주문 상세 없이 audit한다.

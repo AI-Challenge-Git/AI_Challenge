@@ -20,3 +20,20 @@ def test_multipart_contract_requires_redaction_confirmation() -> None:
         "const": True,
         "description": "The user confirms that sensitive image content was redacted.",
     }
+
+
+def test_agent_vertical_slice_is_present_in_openapi() -> None:
+    schema = app.openapi()
+    paths = schema["paths"]
+
+    assert "/api/auth/login" in paths
+    assert "/api/agent/consultation-cards" in paths
+    assert "/api/consultation-cards/lookup" in paths
+    assert "/api/consultation-cards/verifications" in paths
+    verification = schema["components"]["schemas"]["AgentVerificationRequest"]
+    assert verification["additionalProperties"] is False
+    assert "order_succeeded" not in verification["properties"]
+    assert set(schema["components"]["schemas"]["AgentRole"]["enum"]) == {
+        "AGENT",
+        "OPERATOR",
+    }

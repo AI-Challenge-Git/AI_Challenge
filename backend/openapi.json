@@ -47,6 +47,341 @@
         }
       }
     },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "agent-auth"
+        ],
+        "summary": "Login",
+        "operationId": "login_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentLoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials or access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/consultation-cards": {
+      "get": {
+        "tags": [
+          "agent-cards"
+        ],
+        "summary": "List Cards",
+        "operationId": "list_cards_api_agent_consultation_cards_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultationCardListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials or access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Agent role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consultation-cards/lookup": {
+      "post": {
+        "tags": [
+          "agent-cards"
+        ],
+        "summary": "Lookup Card",
+        "operationId": "lookup_card_api_consultation_cards_lookup_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultationCardLookupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultationCardDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials or access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Agent role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Card unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/consultation-cards/verifications": {
+      "post": {
+        "tags": [
+          "agent-cards"
+        ],
+        "summary": "Verify Card",
+        "operationId": "verify_card_api_consultation_cards_verifications_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentVerificationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials or access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Agent role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Card unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/reports/analyze": {
       "post": {
         "tags": [
@@ -436,6 +771,285 @@
   },
   "components": {
     "schemas": {
+      "AgentLoginRequest": {
+        "properties": {
+          "employee_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 4,
+            "pattern": "^[A-Z0-9_-]{4,32}$",
+            "title": "Employee Id"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "format": "password",
+            "title": "Password",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "employee_id",
+          "password"
+        ],
+        "title": "AgentLoginRequest"
+      },
+      "AgentLoginResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "Access Token"
+          },
+          "token_type": {
+            "type": "string",
+            "const": "bearer",
+            "title": "Token Type"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "agent_label": {
+            "type": "string",
+            "title": "Agent Label"
+          },
+          "role": {
+            "$ref": "#/components/schemas/AgentRole"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_at",
+          "agent_label",
+          "role"
+        ],
+        "title": "AgentLoginResponse"
+      },
+      "AgentRole": {
+        "type": "string",
+        "enum": [
+          "AGENT",
+          "OPERATOR"
+        ],
+        "title": "AgentRole"
+      },
+      "AgentTechnicalDetail": {
+        "properties": {
+          "issue_type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "symptom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symptom"
+          },
+          "submission_status": {
+            "$ref": "#/components/schemas/SubmissionStatus"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "reported_occurred_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Occurred At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "issue_type",
+          "symptom",
+          "submission_status",
+          "error_code",
+          "reported_occurred_at"
+        ],
+        "title": "AgentTechnicalDetail"
+      },
+      "AgentVerificationRequest": {
+        "properties": {
+          "reference_number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^KBSOS-[A-Z2-7]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Number"
+          },
+          "card_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Id"
+          },
+          "action": {
+            "$ref": "#/components/schemas/OrderAction"
+          },
+          "symbol_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol Name"
+          },
+          "symbol_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol Code"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "order_type": {
+            "$ref": "#/components/schemas/OrderType"
+          },
+          "price_krw": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Krw"
+          },
+          "submission_status": {
+            "$ref": "#/components/schemas/SubmissionStatus"
+          },
+          "order_history_checked": {
+            "type": "boolean",
+            "title": "Order History Checked"
+          },
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid4",
+            "title": "Client Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action",
+          "order_type",
+          "submission_status",
+          "order_history_checked",
+          "client_request_id"
+        ],
+        "title": "AgentVerificationRequest"
+      },
+      "AgentVerificationResponse": {
+        "properties": {
+          "verification_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Verification Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationFieldResult"
+            },
+            "type": "array",
+            "title": "Fields"
+          },
+          "mismatch_fields": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "action",
+                "symbol_name",
+                "symbol_code",
+                "quantity",
+                "order_type",
+                "price_krw",
+                "submission_status"
+              ]
+            },
+            "type": "array",
+            "title": "Mismatch Fields"
+          },
+          "saved_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Saved At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "verification_id",
+          "status",
+          "fields",
+          "mismatch_fields",
+          "saved_at"
+        ],
+        "title": "AgentVerificationResponse"
+      },
       "AttachmentResponse": {
         "properties": {
           "id": {
@@ -711,6 +1325,71 @@
         ],
         "title": "ConsultationCandidate"
       },
+      "ConsultationCardDetail": {
+        "properties": {
+          "card_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Card Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "technical": {
+            "$ref": "#/components/schemas/AgentTechnicalDetail"
+          },
+          "consultation": {
+            "$ref": "#/components/schemas/ConsultationConfirmation"
+          },
+          "verification_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "safety_notice": {
+            "type": "string",
+            "title": "Safety Notice"
+          },
+          "has_attachment": {
+            "type": "boolean",
+            "title": "Has Attachment"
+          },
+          "related_signals": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Related Signals"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "card_id",
+          "created_at",
+          "expires_at",
+          "technical",
+          "consultation",
+          "verification_status",
+          "safety_notice",
+          "has_attachment",
+          "related_signals"
+        ],
+        "title": "ConsultationCardDetail"
+      },
       "ConsultationCardIssued": {
         "properties": {
           "reference_number": {
@@ -731,6 +1410,139 @@
           "expires_at"
         ],
         "title": "ConsultationCardIssued"
+      },
+      "ConsultationCardListItem": {
+        "properties": {
+          "card_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Card Id"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Received At"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issued At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "expired": {
+            "type": "boolean",
+            "title": "Expired"
+          },
+          "can_open": {
+            "type": "boolean",
+            "title": "Can Open"
+          },
+          "consultation_status": {
+            "type": "string",
+            "enum": [
+              "OPEN",
+              "VERIFIED"
+            ],
+            "title": "Consultation Status"
+          },
+          "technical_symptom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Technical Symptom"
+          },
+          "verification_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "card_id",
+          "received_at",
+          "issued_at",
+          "expires_at",
+          "expired",
+          "can_open",
+          "consultation_status",
+          "technical_symptom",
+          "verification_status"
+        ],
+        "title": "ConsultationCardListItem"
+      },
+      "ConsultationCardListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConsultationCardListItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "limit",
+          "offset"
+        ],
+        "title": "ConsultationCardListResponse"
+      },
+      "ConsultationCardLookupRequest": {
+        "properties": {
+          "reference_number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^KBSOS-[A-Z2-7]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Number"
+          },
+          "card_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ConsultationCardLookupRequest"
       },
       "ConsultationConfirmation": {
         "properties": {
@@ -1325,6 +2137,72 @@
           "reported_occurred_at"
         ],
         "title": "TechnicalConfirmation"
+      },
+      "VerificationFieldResult": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "action",
+              "symbol_name",
+              "symbol_code",
+              "quantity",
+              "order_type",
+              "price_krw",
+              "submission_status"
+            ],
+            "title": "Field"
+          },
+          "status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          },
+          "customer_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Value"
+          },
+          "agent_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Value"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "field",
+          "status",
+          "customer_value",
+          "agent_value"
+        ],
+        "title": "VerificationFieldResult"
+      },
+      "VerificationStatus": {
+        "type": "string",
+        "enum": [
+          "MATCHED",
+          "NEEDS_CONFIRMATION",
+          "IMPORTANT"
+        ],
+        "title": "VerificationStatus"
       }
     },
     "securitySchemes": {

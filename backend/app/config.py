@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     attachment_storage_dir: Path = DEFAULT_ATTACHMENT_STORAGE_DIR
     session_hmac_key: SecretStr = SecretStr("development-session-hmac-key-change-me")
     reference_hmac_key: SecretStr = SecretStr("development-reference-hmac-key-change-me")
+    agent_token_hmac_key: SecretStr = SecretStr("development-agent-token-hmac-key-change-me")
+    rate_limit_hmac_key: SecretStr = SecretStr("development-rate-limit-hmac-key-change-me")
+    agent_access_token_ttl_minutes: int = Field(default=30, ge=5, le=120)
+    agent_login_failure_limit: int = Field(default=5, ge=1, le=100)
+    agent_login_failure_window_seconds: int = Field(default=300, ge=1, le=3600)
+    agent_login_failure_delay_ms: int = Field(default=300, ge=0, le=5000)
+    agent_lookup_limit: int = Field(default=10, ge=1, le=1000)
+    agent_lookup_window_seconds: int = Field(default=60, ge=1, le=3600)
+    agent_lookup_failure_delay_ms: int = Field(default=250, ge=0, le=5000)
 
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":
@@ -40,11 +49,17 @@ class Settings(BaseSettings):
             self.nvidia_api_key is None or not self.nvidia_api_key.get_secret_value().strip()
         ):
             raise ValueError("NVIDIA_API_KEY must be configured for the nvidia AI adapter")
+        hmac_keys = (
+            self.session_hmac_key.get_secret_value(),
+            self.reference_hmac_key.get_secret_value(),
+            self.agent_token_hmac_key.get_secret_value(),
+            self.rate_limit_hmac_key.get_secret_value(),
+        )
         if self.app_env == "production" and (
-            self.session_hmac_key.get_secret_value().startswith("development-")
-            or self.reference_hmac_key.get_secret_value().startswith("development-")
+            any(key.startswith("development-") for key in hmac_keys)
+            or len(set(hmac_keys)) != len(hmac_keys)
         ):
-            raise ValueError("production HMAC keys must be configured")
+            raise ValueError("distinct production HMAC keys must be configured")
         if self.app_env == "production":
             raise ValueError("production requires a private object storage backend")
         return self

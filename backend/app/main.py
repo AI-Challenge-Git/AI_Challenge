@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.agents import router as agents_router
 from app.api.health import router as health_router
 from app.api.reports import router as reports_router
 from app.config import Settings, get_settings
@@ -42,6 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.exception_handler(ServiceError)
     async def service_error_handler(_: Request, exc: ServiceError) -> JSONResponse:
+        headers = {"Cache-Control": "no-store", **exc.headers}
         return JSONResponse(
             status_code=exc.status,
             media_type="application/problem+json",
@@ -52,7 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "detail": exc.detail,
                 "code": exc.code,
             },
-            headers={"Cache-Control": "no-store"},
+            headers=headers,
         )
 
     @application.exception_handler(RequestValidationError)
@@ -80,6 +82,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     application.include_router(health_router)
+    application.include_router(agents_router)
     application.include_router(reports_router)
     return application
 

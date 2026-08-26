@@ -18,6 +18,10 @@ def test_core_metadata_contains_required_business_tables() -> None:
         "idempotency_records",
         "audit_logs",
         "object_deletion_jobs",
+        "agent_accounts",
+        "agent_access_tokens",
+        "agent_verifications",
+        "rate_limit_buckets",
     } <= Base.metadata.tables.keys()
 
 
@@ -30,6 +34,9 @@ def test_sensitive_and_technical_data_boundaries_are_structural() -> None:
     attachment_columns = set(tables["attachments"].columns.keys())
     idempotency_columns = set(tables["idempotency_records"].columns.keys())
     deletion_job_columns = set(tables["object_deletion_jobs"].columns.keys())
+    account_columns = set(tables["agent_accounts"].columns.keys())
+    token_columns = set(tables["agent_access_tokens"].columns.keys())
+    rate_limit_columns = set(tables["rate_limit_buckets"].columns.keys())
 
     assert {"raw_text", "original_text", "session_token", "reference_number"}.isdisjoint(
         all_columns
@@ -60,6 +67,17 @@ def test_sensitive_and_technical_data_boundaries_are_structural() -> None:
         "reference_number",
     }.isdisjoint(idempotency_columns)
     assert {"object_key", "status", "attempt_count", "next_attempt_at"} <= deletion_job_columns
+    assert "password_hash" in account_columns
+    assert "password" not in account_columns
+    assert "token_digest" in token_columns
+    assert "access_token" not in token_columns
+    assert {
+        "principal_fingerprint",
+        "client_fingerprint",
+        "request_count",
+        "expires_at",
+    } <= rate_limit_columns
+    assert {"employee_id", "raw_ip", "agent_id"}.isdisjoint(rate_limit_columns)
     assert not any(
         "vector" in str(column.type).lower()
         for table in tables.values()
@@ -87,6 +105,8 @@ def test_core_types_and_server_times_match_the_decision() -> None:
         ("reports", "purge_at"),
         ("technical_symptoms", "reported_occurred_at"),
         ("consultation_cards", "attempted_at"),
+        ("agent_access_tokens", "expires_at"),
+        ("rate_limit_buckets", "expires_at"),
     ):
         column_type = tables[table_name].c[column_name].type
         assert isinstance(column_type, DateTime)
@@ -108,6 +128,10 @@ def test_constraints_and_indexes_have_deterministic_names() -> None:
     assert "ix_reports_session_received" in names
     assert "ix_reports_purge_at" in names
     assert "ix_object_deletion_jobs_ready" in names
+    assert "uq_agent_accounts_employee_id" in names
+    assert "uq_agent_access_tokens_token_digest" in names
+    assert "uq_agent_verifications_agent_id" in names
+    assert "uq_rate_limit_buckets_scope" in names
 
 
 def test_consultation_card_constraint_accepts_all_order_actions() -> None:
