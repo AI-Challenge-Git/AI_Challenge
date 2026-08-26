@@ -26,6 +26,10 @@ docker compose up --build
 - 고객 확인·상담카드 발급: `POST http://localhost:8000/api/reports`
 - 미확정 제보 폐기: `DELETE http://localhost:8000/api/reports`
 - 제보 전체 삭제: `DELETE http://localhost:8000/api/consultation-cards`
+- 상담원 로그인: `POST http://localhost:8000/api/auth/login`
+- 상담카드 목록: `GET http://localhost:8000/api/agent/consultation-cards`
+- 상담카드 조회: `POST http://localhost:8000/api/consultation-cards/lookup`
+- 상담원 재확인: `POST http://localhost:8000/api/consultation-cards/verifications`
 
 분석 API는 `pending`, `confirmation`, `failed`, `complete` 상태를 반환합니다. adapter 기본값은
 deterministic Fake이며 `AI_ADAPTER=nvidia`일 때 실제 provider adapter를 사용합니다. 백엔드
@@ -33,6 +37,22 @@ deterministic Fake이며 `AI_ADAPTER=nvidia`일 때 실제 provider adapter를 �
 
 스크린샷 multipart 요청은 `screenshot_redacted_confirmed=true`가 필수입니다. 이미지가 없는
 기존 JSON 요청에는 이 필드를 보내지 않습니다.
+
+## 로컬 데모 상담원 계정
+
+운영 환경에서는 데모 계정을 자동 생성하지 않습니다. migration 후 아래 명령을 명시적으로 한 번
+실행하면 `CS1024 / demo` 계정을 만들거나 같은 사번의 기존 row를 갱신합니다. password 환경변수가
+CLI 인자보다 우선하며 password와 hash는 출력하지 않습니다.
+
+```powershell
+cd backend
+$env:DEMO_AGENT_PASSWORD='demo'
+uv run python -m scripts.seed_agent
+Remove-Item Env:DEMO_AGENT_PASSWORD
+```
+
+로그인 성공 응답의 opaque token을 이후 상담원 API의
+`Authorization: Bearer <access_token>`으로 보냅니다. token MVP 기본 만료는 30분입니다.
 
 ## 72시간 보존 정리
 

@@ -25,6 +25,30 @@ class ObjectDeletionStatus(StrEnum):
     COMPLETED = "COMPLETED"
 
 
+class AgentRole(StrEnum):
+    AGENT = "AGENT"
+    OPERATOR = "OPERATOR"
+
+
+class VerificationStatus(StrEnum):
+    MATCHED = "MATCHED"
+    NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
+    IMPORTANT = "IMPORTANT"
+
+
+class RateLimitScope(StrEnum):
+    AGENT_LOGIN_FAILURE = "AGENT_LOGIN_FAILURE"
+    AGENT_CARD_LOOKUP = "AGENT_CARD_LOOKUP"
+
+
+class AuditOutcome(StrEnum):
+    SUCCESS = "SUCCESS"
+    FAILURE = "FAILURE"
+    RATE_LIMITED = "RATE_LIMITED"
+    REPLAY = "REPLAY"
+    CONFLICT = "CONFLICT"
+
+
 class FieldStatus(StrEnum):
     CONFIRMED_FROM_TEXT = "CONFIRMED_FROM_TEXT"
     NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"

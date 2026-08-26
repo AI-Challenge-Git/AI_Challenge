@@ -39,6 +39,11 @@ def test_fake_ai_adapter_is_the_safe_default() -> None:
     assert settings.ai_adapter == "fake"
     assert settings.ai_timeout_seconds == 10
     assert settings.ai_max_concurrency == 4
+    assert settings.agent_access_token_ttl_minutes == 30
+    assert settings.agent_login_failure_limit == 5
+    assert settings.agent_login_failure_window_seconds == 300
+    assert settings.agent_lookup_limit == 10
+    assert settings.agent_lookup_window_seconds == 60
 
 
 async def test_backend_service_keeps_timed_out_ai_calls_bounded() -> None:

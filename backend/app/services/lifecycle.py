@@ -13,10 +13,12 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.attachments import LocalAttachmentStore
 from app.codes import ObjectDeletionStatus
 from app.models import (
+    AgentAccessToken,
     Attachment,
     AuditLog,
     IdempotencyRecord,
     ObjectDeletionJob,
+    RateLimitBucket,
     Report,
 )
 
@@ -57,6 +59,8 @@ class PurgePreview:
     completed_deletion_jobs: int
     attachment_objects: int
     retry_ready_objects: int
+    expired_agent_tokens: int
+    expired_rate_limit_buckets: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +73,8 @@ class PurgeRunResult:
     object_deletions_failed: int
     object_deletions_skipped: int
     retry_waiting: int
+    agent_tokens_deleted: int
+    rate_limit_buckets_deleted: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +253,12 @@ async def preview_purge(session: AsyncSession, *, now: datetime) -> PurgePreview
     retry_ready_objects = await session.scalar(
         select(func.count()).select_from(ObjectDeletionJob).where(_eligible_deletion_jobs(now))
     )
+    expired_agent_tokens = await session.scalar(
+        select(func.count()).select_from(AgentAccessToken).where(AgentAccessToken.expires_at <= now)
+    )
+    expired_rate_limit_buckets = await session.scalar(
+        select(func.count()).select_from(RateLimitBucket).where(RateLimitBucket.expires_at <= now)
+    )
     return PurgePreview(
         reports=reports or 0,
         idempotency_records=idempotency_records or 0,
@@ -254,6 +266,8 @@ async def preview_purge(session: AsyncSession, *, now: datetime) -> PurgePreview
         completed_deletion_jobs=completed_deletion_jobs or 0,
         attachment_objects=attachment_objects or 0,
         retry_ready_objects=retry_ready_objects or 0,
+        expired_agent_tokens=expired_agent_tokens or 0,
+        expired_rate_limit_buckets=expired_rate_limit_buckets or 0,
     )
 
 
@@ -359,6 +373,20 @@ async def purge_expired_data(
         ObjectDeletionJob.purge_at,
         batch_size=batch_size,
     )
+    agent_tokens_deleted = await _purge_rows(
+        session,
+        AgentAccessToken,
+        AgentAccessToken.expires_at <= current_time,
+        AgentAccessToken.expires_at,
+        batch_size=batch_size,
+    )
+    rate_limit_buckets_deleted = await _purge_rows(
+        session,
+        RateLimitBucket,
+        RateLimitBucket.expires_at <= current_time,
+        RateLimitBucket.expires_at,
+        batch_size=batch_size,
+    )
     object_result = await process_object_deletion_jobs(
         session,
         attachment_store,
@@ -380,4 +408,6 @@ async def purge_expired_data(
         object_deletions_failed=object_result.failed,
         object_deletions_skipped=object_result.skipped,
         retry_waiting=retry_waiting or 0,
+        agent_tokens_deleted=agent_tokens_deleted,
+        rate_limit_buckets_deleted=rate_limit_buckets_deleted,
     )

@@ -29,6 +29,10 @@ erDiagram
     reports ||--o| attachments : has
     reports ||--o| technical_symptoms : confirms
     reports ||--o| consultation_cards : creates
+    consultation_cards ||--o{ agent_verifications : receives
+    agent_accounts ||--o{ agent_access_tokens : owns
+    agent_accounts ||--o{ agent_verifications : performs
+    agent_accounts ||--o{ audit_logs : acts
 
     policy_snapshots {
         uuid id PK
@@ -115,6 +119,54 @@ erDiagram
         timestamptz updated_at
     }
 
+    agent_accounts {
+        uuid id PK
+        varchar employee_id UK
+        varchar agent_label
+        varchar role
+        varchar password_hash
+        boolean is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    agent_access_tokens {
+        uuid id PK
+        uuid agent_id FK
+        bytea token_digest UK
+        timestamptz expires_at
+        timestamptz revoked_at
+        timestamptz created_at
+    }
+
+    agent_verifications {
+        uuid id PK
+        uuid card_id FK
+        uuid agent_id FK
+        uuid client_request_id
+        varchar action
+        varchar symbol_name
+        varchar symbol_code
+        bigint quantity
+        varchar order_type
+        bigint price_krw
+        varchar submission_status
+        boolean order_history_checked
+        varchar overall_status
+        timestamptz created_at
+    }
+
+    rate_limit_buckets {
+        uuid id PK
+        varchar scope
+        bytea principal_fingerprint
+        bytea client_fingerprint
+        timestamptz window_started_at
+        int request_count
+        timestamptz expires_at
+        timestamptz updated_at
+    }
+
     idempotency_records {
         uuid id PK
         bytea principal_digest
@@ -131,8 +183,10 @@ erDiagram
 
     audit_logs {
         uuid id PK
+        uuid actor_id FK
         varchar actor_type
         varchar action
+        varchar outcome
         char resource_fingerprint
         timestamptz created_at
     }
@@ -169,9 +223,13 @@ erDiagram
 - `object_deletion_jobs`는 report·attachment row와 독립적이며 무작위 object key와 안전한
   재시도 상태만 보존한다. 사용자 입력·원본 파일명·참조번호는 저장하지 않는다.
 - `consultation_cards.action`은 DB CHECK로 `BUY`, `SELL`, `UNKNOWN`만 허용한다.
-- vector·군집·상담원 역할과 조회 감사는 후속 migration에서 추가한다.
+- `agent_accounts`에는 Argon2 password hash만 저장하고 `agent_access_tokens`에는 전용 HMAC token
+  digest만 저장한다. 평문 password와 access token은 어떤 table에도 없다.
+- `agent_verifications`는 card FK의 `ON DELETE CASCADE`로 report root 삭제와 72시간 purge에
+  포함되며, 주문 성공·체결 결과를 저장하는 column은 없다.
+- `rate_limit_buckets`는 employee·agent·client의 raw 값을 저장하지 않고 전용 HMAC fingerprint와
+  원자적 request count만 저장한다. 만료 token과 bucket은 purge CLI가 정리한다.
+- vector·군집은 후속 migration에서 추가한다.
 
-향후 `technical_embeddings`, `signal_members`와 cluster 재계산, `agent_verifications`, agent
-session, 운영 Object Storage가 추가되면 해당 기능의 최초 migration과 service에 purge 계약과
-경계·동시성 테스트를 함께 등록한다. 현재 존재하지 않는 이 테이블은 retention 구현만을 위해
-미리 만들지 않는다.
+향후 `technical_embeddings`, `signal_members`와 cluster 재계산, 운영 Object Storage가 추가되면
+해당 기능의 최초 migration과 service에 purge 계약과 경계·동시성 테스트를 함께 등록한다.
