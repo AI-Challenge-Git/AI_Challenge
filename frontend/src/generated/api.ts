@@ -4,58 +4,6 @@
  */
 
 export interface paths {
-    "/api/consultation-cards": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Card */
-        delete: operations["delete_card_api_consultation_cards_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reports": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Confirm */
-        post: operations["confirm_api_reports_post"];
-        /** Discard */
-        delete: operations["discard_api_reports_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reports/analyze": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Analyze */
-        post: operations["analyze_api_reports_analyze_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -90,10 +38,217 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Login */
+        post: operations["login_api_auth_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/consultation-cards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Cards */
+        get: operations["list_cards_api_agent_consultation_cards_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/consultation-cards/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Lookup Card */
+        post: operations["lookup_card_api_consultation_cards_lookup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/consultation-cards/verifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Card */
+        post: operations["verify_card_api_consultation_cards_verifications_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Analyze */
+        post: operations["analyze_api_reports_analyze_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm */
+        post: operations["confirm_api_reports_post"];
+        /** Discard */
+        delete: operations["discard_api_reports_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/consultation-cards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Card */
+        delete: operations["delete_card_api_consultation_cards_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentLoginRequest */
+        AgentLoginRequest: {
+            /** Employee Id */
+            employee_id: string;
+            /**
+             * Password
+             * Format: password
+             */
+            password: string;
+        };
+        /** AgentLoginResponse */
+        AgentLoginResponse: {
+            /** Access Token */
+            access_token: string;
+            /**
+             * Token Type
+             * @constant
+             */
+            token_type: "bearer";
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Agent Label */
+            agent_label: string;
+            role: components["schemas"]["AgentRole"];
+        };
+        /**
+         * AgentRole
+         * @enum {string}
+         */
+        AgentRole: "AGENT" | "OPERATOR";
+        /** AgentTechnicalDetail */
+        AgentTechnicalDetail: {
+            issue_type: components["schemas"]["IssueType"];
+            /** Symptom */
+            symptom: string | null;
+            submission_status: components["schemas"]["SubmissionStatus"];
+            /** Error Code */
+            error_code: string | null;
+            /** Reported Occurred At */
+            reported_occurred_at: string | null;
+        };
+        /** AgentVerificationRequest */
+        AgentVerificationRequest: {
+            /** Reference Number */
+            reference_number?: string | null;
+            /** Card Id */
+            card_id?: string | null;
+            action: components["schemas"]["OrderAction"];
+            /** Symbol Name */
+            symbol_name?: string | null;
+            /** Symbol Code */
+            symbol_code?: string | null;
+            /** Quantity */
+            quantity?: number | null;
+            order_type: components["schemas"]["OrderType"];
+            /** Price Krw */
+            price_krw?: number | null;
+            submission_status: components["schemas"]["SubmissionStatus"];
+            /** Order History Checked */
+            order_history_checked: boolean;
+            /**
+             * Client Request Id
+             * Format: uuid4
+             */
+            client_request_id: string;
+        };
+        /** AgentVerificationResponse */
+        AgentVerificationResponse: {
+            /**
+             * Verification Id
+             * Format: uuid
+             */
+            verification_id: string;
+            status: components["schemas"]["VerificationStatus"];
+            /** Fields */
+            fields: components["schemas"]["VerificationFieldResult"][];
+            /** Mismatch Fields */
+            mismatch_fields: ("action" | "symbol_name" | "symbol_code" | "quantity" | "order_type" | "price_krw" | "submission_status")[];
+            /**
+             * Saved At
+             * Format: date-time
+             */
+            saved_at: string;
+        };
         /** AttachmentResponse */
         AttachmentResponse: {
             /**
@@ -106,92 +261,172 @@ export interface components {
         };
         /** CandidateField[IssueType] */
         CandidateField_IssueType_: {
+            value: components["schemas"]["IssueType"] | null;
+            status: components["schemas"]["FieldStatus"];
             /** Evidence Quote */
             evidence_quote: string | null;
-            status: components["schemas"]["FieldStatus"];
-            value: components["schemas"]["IssueType"] | null;
         };
         /** CandidateField[OrderAction] */
         CandidateField_OrderAction_: {
+            value: components["schemas"]["OrderAction"] | null;
+            status: components["schemas"]["FieldStatus"];
             /** Evidence Quote */
             evidence_quote: string | null;
-            status: components["schemas"]["FieldStatus"];
-            value: components["schemas"]["OrderAction"] | null;
         };
         /** CandidateField[OrderType] */
         CandidateField_OrderType_: {
+            value: components["schemas"]["OrderType"] | null;
+            status: components["schemas"]["FieldStatus"];
             /** Evidence Quote */
             evidence_quote: string | null;
-            status: components["schemas"]["FieldStatus"];
-            value: components["schemas"]["OrderType"] | null;
         };
         /** CandidateField[SubmissionStatus] */
         CandidateField_SubmissionStatus_: {
+            value: components["schemas"]["SubmissionStatus"] | null;
+            status: components["schemas"]["FieldStatus"];
             /** Evidence Quote */
             evidence_quote: string | null;
-            status: components["schemas"]["FieldStatus"];
-            value: components["schemas"]["SubmissionStatus"] | null;
         };
         /** CandidateField[int] */
         CandidateField_int_: {
-            /** Evidence Quote */
-            evidence_quote: string | null;
-            status: components["schemas"]["FieldStatus"];
             /** Value */
             value: number | null;
+            status: components["schemas"]["FieldStatus"];
+            /** Evidence Quote */
+            evidence_quote: string | null;
         };
         /** CandidateField[str] */
         CandidateField_str_: {
-            /** Evidence Quote */
-            evidence_quote: string | null;
-            status: components["schemas"]["FieldStatus"];
             /** Value */
             value: string | null;
+            status: components["schemas"]["FieldStatus"];
+            /** Evidence Quote */
+            evidence_quote: string | null;
         };
         /** ConsultationCandidate */
         ConsultationCandidate: {
             action: components["schemas"]["CandidateField_OrderAction_"];
-            attempted_at: components["schemas"]["CandidateField_str_"];
+            symbol_name: components["schemas"]["CandidateField_str_"];
+            symbol_code: components["schemas"]["CandidateField_str_"];
+            quantity: components["schemas"]["CandidateField_int_"];
             order_type: components["schemas"]["CandidateField_OrderType_"];
             price_krw: components["schemas"]["CandidateField_int_"];
-            quantity: components["schemas"]["CandidateField_int_"];
-            symbol_code: components["schemas"]["CandidateField_str_"];
-            symbol_name: components["schemas"]["CandidateField_str_"];
+            attempted_at: components["schemas"]["CandidateField_str_"];
         };
-        /** ConsultationCardIssued */
-        ConsultationCardIssued: {
+        /** ConsultationCardDetail */
+        ConsultationCardDetail: {
+            /**
+             * Card Id
+             * Format: uuid
+             */
+            card_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /**
              * Expires At
              * Format: date-time
              */
             expires_at: string;
+            technical: components["schemas"]["AgentTechnicalDetail"];
+            consultation: components["schemas"]["ConsultationConfirmation"];
+            verification_status: components["schemas"]["VerificationStatus"] | null;
+            /** Safety Notice */
+            safety_notice: string;
+            /** Has Attachment */
+            has_attachment: boolean;
+            /** Related Signals */
+            related_signals: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** ConsultationCardIssued */
+        ConsultationCardIssued: {
             /** Reference Number */
             reference_number: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+        };
+        /** ConsultationCardListItem */
+        ConsultationCardListItem: {
+            /**
+             * Card Id
+             * Format: uuid
+             */
+            card_id: string;
+            /**
+             * Received At
+             * Format: date-time
+             */
+            received_at: string;
+            /**
+             * Issued At
+             * Format: date-time
+             */
+            issued_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Expired */
+            expired: boolean;
+            /** Can Open */
+            can_open: boolean;
+            /**
+             * Consultation Status
+             * @enum {string}
+             */
+            consultation_status: "OPEN" | "VERIFIED";
+            /** Technical Symptom */
+            technical_symptom: string | null;
+            verification_status: components["schemas"]["VerificationStatus"] | null;
+        };
+        /** ConsultationCardListResponse */
+        ConsultationCardListResponse: {
+            /** Items */
+            items: components["schemas"]["ConsultationCardListItem"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+        };
+        /** ConsultationCardLookupRequest */
+        ConsultationCardLookupRequest: {
+            /** Reference Number */
+            reference_number?: string | null;
+            /** Card Id */
+            card_id?: string | null;
         };
         /** ConsultationConfirmation */
         ConsultationConfirmation: {
             action: components["schemas"]["OrderAction"];
-            /** Attempted At */
-            attempted_at: string | null;
+            /** Symbol Name */
+            symbol_name?: string | null;
+            /** Symbol Code */
+            symbol_code?: string | null;
+            /** Quantity */
+            quantity?: number | null;
             order_type: components["schemas"]["OrderType"];
             /** Price Krw */
             price_krw?: number | null;
-            /** Quantity */
-            quantity?: number | null;
-            /** Symbol Code */
-            symbol_code?: string | null;
-            /** Symbol Name */
-            symbol_name?: string | null;
+            /** Attempted At */
+            attempted_at: string | null;
         };
         /** DeleteConsultationCardRequest */
         DeleteConsultationCardRequest: {
+            /** Reference Number */
+            reference_number: string;
             /**
              * Client Request Id
              * Format: uuid4
              */
             client_request_id: string;
-            /** Reference Number */
-            reference_number: string;
         };
         /** DiscardReportRequest */
         DiscardReportRequest: {
@@ -228,7 +463,7 @@ export interface components {
          * OrderAction
          * @enum {string}
          */
-        OrderAction: "SELL" | "UNKNOWN" | "BUY";
+        OrderAction: "BUY" | "SELL" | "UNKNOWN";
         /**
          * OrderType
          * @enum {string}
@@ -236,22 +471,22 @@ export interface components {
         OrderType: "LIMIT" | "MARKET" | "UNKNOWN";
         /** ProblemDetails */
         ProblemDetails: {
-            /** Code */
-            code?: string | null;
+            /** Type */
+            type: string;
+            /** Title */
+            title: string;
+            /** Status */
+            status: number;
             /** Detail */
             detail?: string | null;
+            /** Code */
+            code?: string | null;
+            /** Request Id */
+            request_id?: string | null;
             /** Errors */
             errors?: {
                 [key: string]: string;
             }[] | null;
-            /** Request Id */
-            request_id?: string | null;
-            /** Status */
-            status: number;
-            /** Title */
-            title: string;
-            /** Type */
-            type: string;
         };
         /** ReportAnalysisCompleteResponse */
         ReportAnalysisCompleteResponse: {
@@ -277,18 +512,18 @@ export interface components {
             analysis_id: string;
             /** Analysis Version */
             analysis_version: number;
-            attachment: components["schemas"]["AttachmentResponse"] | null;
-            consultation: components["schemas"]["ConsultationCandidate"];
-            /** Masked Items */
-            masked_items: string[];
-            /** Masked Text */
-            masked_text: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             status: "confirmation";
+            attachment: components["schemas"]["AttachmentResponse"] | null;
+            /** Masked Text */
+            masked_text: string;
+            /** Masked Items */
+            masked_items: string[];
             technical: components["schemas"]["TechnicalCandidate"];
+            consultation: components["schemas"]["ConsultationCandidate"];
         };
         /** ReportAnalysisFailedResponse */
         ReportAnalysisFailedResponse: {
@@ -299,12 +534,12 @@ export interface components {
             analysis_id: string;
             /** Analysis Version */
             analysis_version: number;
-            error: components["schemas"]["SafeError"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             status: "failed";
+            error: components["schemas"]["SafeError"];
         };
         /** ReportAnalysisPendingResponse */
         ReportAnalysisPendingResponse: {
@@ -334,15 +569,15 @@ export interface components {
             analysis_version: number;
             /** Attachment Id */
             attachment_id: string | null;
+            /** Masked Text */
+            masked_text: string;
+            technical: components["schemas"]["TechnicalConfirmation"];
+            consultation: components["schemas"]["ConsultationConfirmation"];
             /**
              * Client Request Id
              * Format: uuid4
              */
             client_request_id: string;
-            consultation: components["schemas"]["ConsultationConfirmation"];
-            /** Masked Text */
-            masked_text: string;
-            technical: components["schemas"]["TechnicalConfirmation"];
         };
         /** ReportConfirmedResponse */
         ReportConfirmedResponse: {
@@ -360,23 +595,41 @@ export interface components {
         SubmissionStatus: "CUSTOMER_REPORTED_SUBMITTED" | "CUSTOMER_REPORTED_NOT_SUBMITTED" | "UNKNOWN";
         /** TechnicalCandidate */
         TechnicalCandidate: {
-            error_code: components["schemas"]["CandidateField_str_"];
             issue_type: components["schemas"]["CandidateField_IssueType_"];
-            reported_occurred_at: components["schemas"]["CandidateField_str_"];
-            submission_status: components["schemas"]["CandidateField_SubmissionStatus_"];
             symptom: components["schemas"]["CandidateField_str_"];
+            submission_status: components["schemas"]["CandidateField_SubmissionStatus_"];
+            error_code: components["schemas"]["CandidateField_str_"];
+            reported_occurred_at: components["schemas"]["CandidateField_str_"];
         };
         /** TechnicalConfirmation */
         TechnicalConfirmation: {
-            /** Error Code */
-            error_code?: string | null;
             issue_type: components["schemas"]["IssueType"];
-            /** Reported Occurred At */
-            reported_occurred_at: string | null;
-            submission_status: components["schemas"]["SubmissionStatus"];
             /** Symptom */
             symptom?: string | null;
+            submission_status: components["schemas"]["SubmissionStatus"];
+            /** Error Code */
+            error_code?: string | null;
+            /** Reported Occurred At */
+            reported_occurred_at: string | null;
         };
+        /** VerificationFieldResult */
+        VerificationFieldResult: {
+            /**
+             * Field
+             * @enum {string}
+             */
+            field: "action" | "symbol_name" | "symbol_code" | "quantity" | "order_type" | "price_krw" | "submission_status";
+            status: components["schemas"]["VerificationStatus"];
+            /** Customer Value */
+            customer_value: string | number | null;
+            /** Agent Value */
+            agent_value: string | number | null;
+        };
+        /**
+         * VerificationStatus
+         * @enum {string}
+         */
+        VerificationStatus: "MATCHED" | "NEEDS_CONFIRMATION" | "IMPORTANT";
     };
     responses: never;
     parameters: never;
@@ -386,7 +639,47 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    delete_card_api_consultation_cards_delete: {
+    live_health_live_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    ready_health_ready_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    login_api_auth_login_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -395,16 +688,298 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DeleteConsultationCardRequest"];
+                "application/json": components["schemas"]["AgentLoginRequest"];
             };
         };
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["AgentLoginResponse"];
+                };
+            };
+            /** @description Invalid credentials or access token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_cards_api_agent_consultation_cards_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsultationCardListResponse"];
+                };
+            };
+            /** @description Invalid credentials or access token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    lookup_card_api_consultation_cards_lookup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsultationCardLookupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsultationCardDetail"];
+                };
+            };
+            /** @description Invalid credentials or access token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Card unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    verify_card_api_consultation_cards_verifications_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentVerificationResponse"];
+                };
+            };
+            /** @description Invalid credentials or access token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Card unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    analyze_api_reports_analyze_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Client Request Id
+                     * Format: uuid4
+                     */
+                    client_request_id: string;
+                    /** Text */
+                    text: string;
+                };
+                "multipart/form-data": {
+                    text: string;
+                    /** Format: uuid4 */
+                    client_request_id: string;
+                    /**
+                     * Format: binary
+                     * @description PNG, JPEG, or WebP; maximum 5 MiB
+                     */
+                    screenshot: string;
+                    /**
+                     * @description The user confirms that sensitive image content was redacted.
+                     * @constant
+                     */
+                    screenshot_redacted_confirmed: true;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportAnalysisResponse"];
+                };
             };
             /** @description Invalid customer session */
             401: {
@@ -415,8 +990,8 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description Card not found */
-            404: {
+            /** @description State or idempotency conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -424,8 +999,17 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description State or idempotency conflict */
-            409: {
+            /** @description Body too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unsupported media type */
+            415: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -589,7 +1173,7 @@ export interface operations {
             };
         };
     };
-    analyze_api_reports_analyze_post: {
+    delete_card_api_consultation_cards_delete: {
         parameters: {
             query?: never;
             header?: never;
@@ -598,36 +1182,16 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    /**
-                     * Client Request Id
-                     * Format: uuid4
-                     */
-                    client_request_id: string;
-                    /** Text */
-                    text: string;
-                };
-                "multipart/form-data": {
-                    /** Format: uuid4 */
-                    client_request_id: string;
-                    /**
-                     * Format: binary
-                     * @description PNG, JPEG, or WebP; maximum 5 MiB
-                     */
-                    screenshot: string;
-                    text: string;
-                };
+                "application/json": components["schemas"]["DeleteConsultationCardRequest"];
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["ReportAnalysisResponse"];
-                };
+                content?: never;
             };
             /** @description Invalid customer session */
             401: {
@@ -638,26 +1202,17 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
+            /** @description Card not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
             /** @description State or idempotency conflict */
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProblemDetails"];
-                };
-            };
-            /** @description Body too large */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProblemDetails"];
-                };
-            };
-            /** @description Unsupported media type */
-            415: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -681,46 +1236,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProblemDetails"];
-                };
-            };
-        };
-    };
-    live_health_live_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HealthResponse"];
-                };
-            };
-        };
-    };
-    ready_health_ready_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };

@@ -87,78 +87,17 @@ export interface SavedCard {
   expires_at: string;
 }
 
-export type SignalStatus =
-  | "CANDIDATE"
-  | "SIGNAL_DETECTED"
-  | "REVIEW_REQUIRED"
-  | "OFFICIAL_NOTICE_LINKED"
-  | "RESOLVED";
+export type AgentSession = components["schemas"]["AgentLoginResponse"];
+export type AgentCardListItem = components["schemas"]["ConsultationCardListItem"];
+export type AgentCardListResponse = components["schemas"]["ConsultationCardListResponse"];
+export type AgentCase = components["schemas"]["ConsultationCardDetail"];
+export type AgentVerificationResult = components["schemas"]["AgentVerificationResponse"];
 
-export interface SignalItem {
-  id: string;
-  title: string;
-  status: SignalStatus;
-  report_count: number;
-  raw_report_count: number;
-  change: string;
-  first_seen: string;
-  last_seen: string;
-  channel: string;
-  feature_area: string;
-  symptom: string;
-  representative_report: string;
-  action: string;
-  official_notice_url: string | null;
-}
+export type AgentCardSelector =
+  | { reference_number: string; card_id?: never }
+  | { reference_number?: never; card_id: string };
 
-export interface DashboardSnapshot {
-  updated_at: string;
-  baseline_ratio: number;
-  volume: Array<{ time: string; count: number }>;
-  signals: SignalItem[];
-  policy: {
-    title: string;
-    version: string;
-    checked_at: string;
-    source_url: string | null;
-  };
-}
-
-export interface AgentCase {
-  reference_number: string;
-  expires_at: string;
-  technical: TechnicalData;
-  consultation: ConsultationData;
-  related_signal: SignalItem | null;
-  similarity: number | null;
-  attachment_url: string | null;
-}
-
-export interface AgentVerificationInput {
-  action: ConsultationData["action"];
-  symbol_name: string | null;
-  symbol_code: string | null;
-  quantity: number | null;
-  price: number | null;
-  order_type: ConsultationData["order_type"];
-  submission_status: TechnicalData["submission_status"];
-  order_history_checked: true;
-}
-
-export interface AgentSession {
-  access_token: string;
-  agent_label: string;
-}
-
-export interface VerificationIssue {
-  field: string;
-  level: "IMPORTANT" | "NEEDS_CONFIRMATION";
-  label: string;
-  customer_value: string;
-  agent_value: string;
-}
-
-export interface AgentVerificationResult {
-  saved_at: string;
-  issues: VerificationIssue[];
-}
+export type AgentVerificationInput = Omit<
+  components["schemas"]["AgentVerificationRequest"],
+  "reference_number" | "card_id" | "client_request_id"
+>;
