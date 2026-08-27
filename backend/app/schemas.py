@@ -195,7 +195,7 @@ class TechnicalConfirmation(ApiModel):
 class ConsultationConfirmation(ApiModel):
     action: OrderAction
     symbol_name: str | None = Field(default=None, min_length=1, max_length=80)
-    symbol_code: str | None = Field(default=None, pattern=r"^[0-9]{6}$")
+    symbol_code: str | None = Field(default=None, pattern=r"^[0-9A-Z]{6}$")
     quantity: StrictInt | None = Field(default=None, gt=0)
     order_type: OrderType
     price_krw: StrictInt | None = Field(default=None, gt=0)
@@ -431,7 +431,7 @@ VerificationFieldName = Literal[
 class AgentVerificationRequest(ConsultationCardSelector):
     action: OrderAction
     symbol_name: str | None = Field(default=None, min_length=1, max_length=80)
-    symbol_code: str | None = Field(default=None, pattern=r"^[0-9]{6}$")
+    symbol_code: str | None = Field(default=None, pattern=r"^[0-9A-Z]{6}$")
     quantity: StrictInt | None = Field(default=None, gt=0)
     order_type: OrderType
     price_krw: StrictInt | None = Field(default=None, gt=0)

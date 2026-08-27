@@ -67,6 +67,7 @@ from app.services.idempotency import (
     payload_sha256,
 )
 from app.services.lifecycle import card_is_accessible
+from app.services.symbols import validate_symbol
 
 Sleeper = Callable[[float], Awaitable[None]]
 CONSULTATION_SAFETY_NOTICE = (
@@ -765,6 +766,11 @@ async def save_agent_verification(
                         )
                     )
                 else:
+                    symbol_master_version_id = await validate_symbol(
+                        session,
+                        symbol_name=request.symbol_name,
+                        symbol_code=request.symbol_code,
+                    )
                     temporary = AgentVerification(
                         card_id=card.id,
                         agent_id=principal.agent_id,
@@ -772,6 +778,7 @@ async def save_agent_verification(
                         action=request.action.value,
                         symbol_name=request.symbol_name,
                         symbol_code=request.symbol_code,
+                        symbol_master_version_id=symbol_master_version_id,
                         quantity=request.quantity,
                         order_type=request.order_type.value,
                         price_krw=request.price_krw,

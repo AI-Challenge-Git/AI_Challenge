@@ -33,6 +33,9 @@ erDiagram
     agent_accounts ||--o{ agent_access_tokens : owns
     agent_accounts ||--o{ agent_verifications : performs
     agent_accounts ||--o{ audit_logs : acts
+    symbol_master_versions ||--o{ symbols : contains
+    symbol_master_versions ||--o{ consultation_cards : validates
+    symbol_master_versions ||--o{ agent_verifications : validates
 
     policy_snapshots {
         uuid id PK
@@ -107,6 +110,7 @@ erDiagram
         varchar action
         varchar symbol_name
         varchar symbol_code
+        uuid symbol_master_version_id FK
         bigint quantity
         varchar order_type
         bigint price_krw
@@ -147,6 +151,7 @@ erDiagram
         varchar action
         varchar symbol_name
         varchar symbol_code
+        uuid symbol_master_version_id FK
         bigint quantity
         varchar order_type
         bigint price_krw
@@ -154,6 +159,29 @@ erDiagram
         boolean order_history_checked
         varchar overall_status
         timestamptz created_at
+    }
+
+    symbol_master_versions {
+        uuid id PK
+        varchar version UK
+        text source_url
+        date source_as_of
+        char source_sha256 UK
+        varchar source_encoding
+        varchar schema_version
+        int row_count
+        boolean is_active
+        timestamptz imported_at
+    }
+
+    symbols {
+        uuid id PK
+        uuid master_version_id FK
+        varchar code
+        varchar name_ko
+        varchar market
+        varchar source_market
+        varchar stock_type
     }
 
     rate_limit_buckets {
@@ -227,6 +255,10 @@ erDiagram
   digest만 저장한다. 평문 password와 access token은 어떤 table에도 없다.
 - `agent_verifications`는 card FK의 `ON DELETE CASCADE`로 report root 삭제와 72시간 purge에
   포함되며, 주문 성공·체결 결과를 저장하는 column은 없다.
+- `symbols.code`, `consultation_cards.symbol_code`, `agent_verifications.symbol_code`의 구체값은
+  KRX 접두 `A`가 제외된 6자리 대문자 영숫자다. 숫자 6자리와 null도 유지한다.
+- `symbol_master_versions`와 `symbols`는 공유 기준 데이터라 report purge 대상이 아니다. 고객 확정값과
+  상담원 재확인은 검증에 사용한 version FK를 보존하므로 참조된 과거 version을 임의 삭제하지 않는다.
 - `rate_limit_buckets`는 employee·agent·client의 raw 값을 저장하지 않고 전용 HMAC fingerprint와
   원자적 request count만 저장한다. 만료 token과 bucket은 purge CLI가 정리한다.
 - vector·군집은 후속 migration에서 추가한다.

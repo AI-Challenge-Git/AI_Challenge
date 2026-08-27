@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 
 from app.api.dependencies import get_clock, get_security_sleeper
 from app.attachments import LocalAttachmentStore
@@ -30,6 +30,8 @@ from app.models import (
     PolicySnapshot,
     RateLimitBucket,
     Report,
+    Symbol,
+    SymbolMasterVersion,
     TechnicalSymptom,
 )
 from app.security import (
@@ -69,6 +71,7 @@ class AgentTestState:
 async def _clean() -> None:
     async with session_factory() as session, session.begin():
         await session.execute(delete(Report))
+        await session.execute(delete(SymbolMasterVersion))
         await session.execute(delete(IdempotencyRecord))
         await session.execute(delete(AuditLog))
         await session.execute(delete(AgentAccessToken))
@@ -106,6 +109,26 @@ async def clean_agent_data() -> AsyncIterator[AgentTestState]:
             updated_at=FIXED_NOW,
         )
         session.add_all((agent, operator))
+        master = SymbolMasterVersion(
+            version="agent-test-symbols",
+            source_url="https://example.invalid/krx",
+            source_as_of=FIXED_NOW.date(),
+            source_sha256="8" * 64,
+            source_encoding="UTF-8-SIG",
+            schema_version="krx-all-symbols.v1",
+            row_count=1,
+            is_active=True,
+        )
+        master.symbols.append(
+            Symbol(
+                code="000001",
+                name_ko="합성종목",
+                market="KOSPI",
+                source_market="KOSPI",
+                stock_type="보통주",
+            )
+        )
+        session.add(master)
         await session.flush()
 
     app.dependency_overrides[get_settings] = lambda: TEST_SETTINGS
@@ -133,6 +156,10 @@ async def _create_card(
     expires_at = expires_at or FIXED_NOW + timedelta(hours=1)
     purge_at = purge_at or received_at + timedelta(hours=72)
     async with session_factory() as session, session.begin():
+        symbol_master_version_id = await session.scalar(
+            select(SymbolMasterVersion.id).where(SymbolMasterVersion.is_active.is_(True))
+        )
+        assert symbol_master_version_id is not None
         policy = await session.scalar(select(PolicySnapshot).limit(1))
         if policy is None:
             policy = PolicySnapshot(
@@ -173,6 +200,7 @@ async def _create_card(
             action=action,
             symbol_name="합성종목",
             symbol_code="000001",
+            symbol_master_version_id=symbol_master_version_id,
             quantity=3,
             order_type=order_type,
             price_krw=price_krw,
@@ -507,6 +535,59 @@ async def test_verification_stores_matched_needs_confirmation_and_important() ->
     assert all(
         response.headers["cache-control"] == "no-store" for response in (matched, needs, important)
     )
+
+
+async def test_agent_verification_enforces_active_symbol_master() -> None:
+    card_id, _ = await _create_card()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        token = await _login(client)
+        mismatch_payload = _verification_payload(card_id)
+        mismatch_payload["symbol_name"] = "다른종목"
+        mismatch = await client.post(
+            "/api/consultation-cards/verifications",
+            headers=_auth(token),
+            json=mismatch_payload,
+        )
+        unsupported_payload = _verification_payload(card_id)
+        unsupported_payload["symbol_code"] = "999999"
+        unsupported = await client.post(
+            "/api/consultation-cards/verifications",
+            headers=_auth(token),
+            json=unsupported_payload,
+        )
+
+        async with session_factory() as session, session.begin():
+            await session.execute(
+                update(SymbolMasterVersion)
+                .where(SymbolMasterVersion.is_active.is_(True))
+                .values(is_active=False)
+            )
+        unavailable = await client.post(
+            "/api/consultation-cards/verifications",
+            headers=_auth(token),
+            json=_verification_payload(card_id),
+        )
+        unknown_payload = _verification_payload(card_id)
+        unknown_payload["symbol_name"] = None
+        unknown_payload["symbol_code"] = None
+        unknown = await client.post(
+            "/api/consultation-cards/verifications",
+            headers=_auth(token),
+            json=unknown_payload,
+        )
+
+    assert mismatch.status_code == 422
+    assert mismatch.json()["code"] == "SYMBOL_MISMATCH"
+    assert unsupported.status_code == 422
+    assert unsupported.json()["code"] == "UNSUPPORTED_SYMBOL"
+    assert unavailable.status_code == 503
+    assert unavailable.json()["code"] == "SYMBOL_MASTER_UNAVAILABLE"
+    assert unknown.status_code == 200
+    assert unknown.json()["status"] == "NEEDS_CONFIRMATION"
+    async with session_factory() as session:
+        saved = await session.scalar(select(AgentVerification))
+        assert saved is not None and saved.symbol_master_version_id is None
 
 
 async def test_verification_idempotency_replay_conflict_and_concurrency() -> None:

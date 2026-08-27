@@ -33,6 +33,9 @@ def test_agent_vertical_slice_is_present_in_openapi() -> None:
     verification = schema["components"]["schemas"]["AgentVerificationRequest"]
     assert verification["additionalProperties"] is False
     assert "order_succeeded" not in verification["properties"]
+    assert verification["properties"]["symbol_code"]["anyOf"][0]["pattern"] == ("^[0-9A-Z]{6}$")
+    consultation = schema["components"]["schemas"]["ConsultationConfirmation"]
+    assert consultation["properties"]["symbol_code"]["anyOf"][0]["pattern"] == ("^[0-9A-Z]{6}$")
     assert set(schema["components"]["schemas"]["AgentRole"]["enum"]) == {
         "AGENT",
         "OPERATOR",
