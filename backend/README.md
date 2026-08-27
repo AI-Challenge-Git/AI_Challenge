@@ -54,6 +54,25 @@ Remove-Item Env:DEMO_AGENT_PASSWORD
 로그인 성공 응답의 opaque token을 이후 상담원 API의
 `Authorization: Bearer <access_token>`으로 보냅니다. token MVP 기본 만료는 30분입니다.
 
+## KRX 종목 Master 적재
+
+KRX `전종목기본정보.CSV`는 UTF-8-SIG 또는 CP949로 읽고, `시장구분`이 KOSPI·KOSDAQ·
+KOSDAQ GLOBAL이면서 `주식종류=보통주`인 행만 한 transaction으로 적재합니다. 이름을 이용한
+임의 제외 규칙은 사용하지 않습니다. KOSDAQ GLOBAL은 검증 시장을 KOSDAQ으로 정규화하되 원본
+시장값도 보존합니다.
+
+```powershell
+cd backend
+uv run python -m scripts.import_krx_symbols "..\..\전종목기본정보.csv" --as-of 2026-08-28
+```
+
+종목코드는 KRX 원천의 접두 `A`가 제외된 단축코드를 사용하며 정확히 6자리 대문자 영숫자
+`^[0-9A-Z]{6}$`입니다. 따라서 `005930`과 `0011A0`이 모두 유효합니다. 중복 코드, 잘못된 코드,
+빈 대상 데이터가 하나라도 있으면 새 version은 전혀 활성화되지 않습니다. 고객 최종 저장과 상담원
+재확인은 활성 Master의 코드 존재 여부와 종목명·코드 일치를 검사합니다. Master 미적재는
+`503 SYMBOL_MASTER_UNAVAILABLE`, 미지원 코드는 `422 UNSUPPORTED_SYMBOL`, 불일치는
+`422 SYMBOL_MISMATCH`입니다. null은 종목 미확정 상태로 계속 허용합니다.
+
 ## 72시간 보존 정리
 
 상담카드 상세 접근 TTL은 발급 후 2시간이고, report root와 관련 업무 데이터의 물리
@@ -91,6 +110,7 @@ frontend\node_modules\.bin\openapi-typescript.cmd backend\openapi.json -o "$env:
 
 핵심 업무 테이블과 개인정보 분리 원칙은 [ERD](docs/erd.md), 백엔드 API 기준안은
 [API contract](docs/api-contract.md)에 정리되어 있습니다.
+프론트 종목코드 입력 변경사항은 [frontend handoff](docs/frontend-handoff.md)에 정리되어 있습니다.
 
 작업 종료 시 데이터 볼륨을 보존하도록 다음 명령을 사용합니다.
 

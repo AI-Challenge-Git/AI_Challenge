@@ -208,6 +208,30 @@ def test_confirmation_schema_accepts_all_order_actions(action: OrderAction) -> N
     assert confirmation.action is action
 
 
+def test_confirmation_schema_accepts_uppercase_alphanumeric_symbol_code() -> None:
+    confirmation = ConsultationConfirmation(
+        action=OrderAction.BUY,
+        symbol_name="액스비스",
+        symbol_code="0011A0",
+        quantity=1,
+        order_type=OrderType.MARKET,
+        price_krw=None,
+        attempted_at=None,
+    )
+
+    assert confirmation.symbol_code == "0011A0"
+    with pytest.raises(ValidationError):
+        ConsultationConfirmation(
+            action=OrderAction.BUY,
+            symbol_name="액스비스",
+            symbol_code="0011a0",
+            quantity=1,
+            order_type=OrderType.MARKET,
+            price_krw=None,
+            attempted_at=None,
+        )
+
+
 @pytest.mark.parametrize(
     ("field_name", "value"),
     [

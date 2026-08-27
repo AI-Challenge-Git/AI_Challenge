@@ -77,6 +77,7 @@ from app.services.lifecycle import (
     retention_deadline,
     utc_now,
 )
+from app.services.symbols import validate_symbol
 
 _AI_CALL_SLOTS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[int, asyncio.Semaphore]] = (
     WeakKeyDictionary()
@@ -530,6 +531,11 @@ async def confirm_report(
         if report.status != ReportStatus.AWAITING_CONFIRMATION.value:
             raise ServiceError(409, "INVALID_REPORT_STATE", "확인할 수 없는 제보 상태입니다.")
 
+        symbol_master_version_id = await validate_symbol(
+            session,
+            symbol_name=request.consultation.symbol_name,
+            symbol_code=request.consultation.symbol_code,
+        )
         confirmed_at = current_time
         report.status = ReportStatus.CONFIRMED.value
         report.confirmed_at = confirmed_at
@@ -551,6 +557,7 @@ async def confirm_report(
             action=request.consultation.action.value,
             symbol_name=request.consultation.symbol_name,
             symbol_code=request.consultation.symbol_code,
+            symbol_master_version_id=symbol_master_version_id,
             quantity=request.consultation.quantity,
             order_type=request.consultation.order_type.value,
             price_krw=request.consultation.price_krw,

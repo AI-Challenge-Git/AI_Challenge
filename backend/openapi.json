@@ -941,7 +941,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "pattern": "^[0-9]{6}$"
+                "pattern": "^[0-9A-Z]{6}$"
               },
               {
                 "type": "null"
@@ -1566,7 +1566,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "pattern": "^[0-9]{6}$"
+                "pattern": "^[0-9A-Z]{6}$"
               },
               {
                 "type": "null"

@@ -22,6 +22,8 @@ def test_core_metadata_contains_required_business_tables() -> None:
         "agent_access_tokens",
         "agent_verifications",
         "rate_limit_buckets",
+        "symbol_master_versions",
+        "symbols",
     } <= Base.metadata.tables.keys()
 
 
@@ -37,6 +39,8 @@ def test_sensitive_and_technical_data_boundaries_are_structural() -> None:
     account_columns = set(tables["agent_accounts"].columns.keys())
     token_columns = set(tables["agent_access_tokens"].columns.keys())
     rate_limit_columns = set(tables["rate_limit_buckets"].columns.keys())
+    symbol_version_columns = set(tables["symbol_master_versions"].columns.keys())
+    symbol_columns = set(tables["symbols"].columns.keys())
 
     assert {"raw_text", "original_text", "session_token", "reference_number"}.isdisjoint(
         all_columns
@@ -78,6 +82,21 @@ def test_sensitive_and_technical_data_boundaries_are_structural() -> None:
         "expires_at",
     } <= rate_limit_columns
     assert {"employee_id", "raw_ip", "agent_id"}.isdisjoint(rate_limit_columns)
+    assert {
+        "version",
+        "source_url",
+        "source_as_of",
+        "source_sha256",
+        "source_encoding",
+        "schema_version",
+        "row_count",
+        "is_active",
+    } <= symbol_version_columns
+    assert {"master_version_id", "code", "name_ko", "market", "source_market", "stock_type"} <= (
+        symbol_columns
+    )
+    assert "symbol_master_version_id" in consultation_columns
+    assert "symbol_master_version_id" in set(tables["agent_verifications"].columns.keys())
     assert not any(
         "vector" in str(column.type).lower()
         for table in tables.values()
@@ -107,6 +126,7 @@ def test_core_types_and_server_times_match_the_decision() -> None:
         ("consultation_cards", "attempted_at"),
         ("agent_access_tokens", "expires_at"),
         ("rate_limit_buckets", "expires_at"),
+        ("symbol_master_versions", "imported_at"),
     ):
         column_type = tables[table_name].c[column_name].type
         assert isinstance(column_type, DateTime)
@@ -132,6 +152,8 @@ def test_constraints_and_indexes_have_deterministic_names() -> None:
     assert "uq_agent_access_tokens_token_digest" in names
     assert "uq_agent_verifications_agent_id" in names
     assert "uq_rate_limit_buckets_scope" in names
+    assert "uq_symbol_master_versions_active" in names
+    assert "uq_symbols_master_version_id" in names
 
 
 def test_consultation_card_constraint_accepts_all_order_actions() -> None:
@@ -144,6 +166,21 @@ def test_consultation_card_constraint_accepts_all_order_actions() -> None:
 
     sql = str(constraint.sqltext)
     assert all(f"'{action}'" in sql for action in ("BUY", "SELL", "UNKNOWN"))
+
+
+def test_symbol_code_constraints_accept_uppercase_alphanumeric_short_codes() -> None:
+    for table_name, constraint_name in (
+        ("symbols", "ck_symbols_code_format"),
+        ("consultation_cards", "ck_consultation_cards_symbol_code_format"),
+        ("agent_verifications", "ck_agent_verifications_symbol_code_format"),
+    ):
+        constraint = next(
+            item
+            for item in Base.metadata.tables[table_name].constraints
+            if item.name == constraint_name
+        )
+        assert isinstance(constraint, CheckConstraint)
+        assert "^[0-9A-Z]{6}$" in str(constraint.sqltext)
 
 
 def test_core_migration_follows_0001_and_excludes_future_tables() -> None:

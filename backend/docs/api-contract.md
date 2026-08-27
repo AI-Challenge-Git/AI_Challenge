@@ -107,3 +107,19 @@ verification 상태, 안전 안내문과 `has_attachment`만 포함한다. 운�
 fingerprint 기준 기본 10회/60초다. bucket은 PostgreSQL 원자적 upsert로 공유되며 제한 시 `429`와
 `Retry-After`를 반환한다. raw IP와 employee ID는 rate-limit·audit에 저장하지 않는다. lookup의
 성공·실패·만료·제한과 로그인·verification 보안 event는 주문 상세 없이 audit한다.
+
+## KRX 종목 검증
+
+고객 최종 저장과 상담원 재확인의 `symbol_code`는 null 또는 KRX 접두 `A`가 제외된 정확히 6자리
+대문자 영숫자 `^[0-9A-Z]{6}$`다. 숫자 6자리의 leading zero도 문자열로 보존한다. 종목이 미확정된
+`UNKNOWN` 상태는 code를 null로 전달한다. 구체적인 코드가 있으면 활성 KRX Symbol Master에서 코드
+존재 여부와 NFC 정규화된 `symbol_name`의 정확한 일치를 저장 전에 검사한다.
+
+| HTTP | code | 의미 |
+|---|---|---|
+| 503 | `SYMBOL_MASTER_UNAVAILABLE` | 활성 Master가 없어 안전한 검증 불가 |
+| 422 | `UNSUPPORTED_SYMBOL` | 활성 Master에 코드가 없음 |
+| 422 | `SYMBOL_MISMATCH` | 코드의 공식 종목명과 요청 종목명이 다름 |
+
+기존 멱등 결과 replay는 최초 처리 결과를 그대로 반환하고 Master 교체로 소급 재검증하지 않는다.
+새 저장 row는 사용한 `symbol_master_version_id`를 보존한다.

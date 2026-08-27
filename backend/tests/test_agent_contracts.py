@@ -103,6 +103,22 @@ def test_verification_accepts_buy_sell_and_rejects_order_result_field() -> None:
         assert request.action.value == action
         assert request.symbol_name == "합성종목"
 
+    alphanumeric = AgentVerificationRequest.model_validate(
+        {
+            "card_id": str(uuid4()),
+            "action": "BUY",
+            "symbol_name": "액스비스",
+            "symbol_code": "0011A0",
+            "quantity": 1,
+            "order_type": "MARKET",
+            "price_krw": None,
+            "submission_status": "CUSTOMER_REPORTED_SUBMITTED",
+            "order_history_checked": True,
+            "client_request_id": str(uuid4()),
+        }
+    )
+    assert alphanumeric.symbol_code == "0011A0"
+
     with pytest.raises(ValidationError):
         AgentVerificationRequest.model_validate(
             {

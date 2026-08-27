@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 from PIL import Image, PngImagePlugin
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 
 from app.ai import FakeDualExtractor, get_dual_extractor
 from app.attachments import AttachmentStorageError, LocalAttachmentStore, get_attachment_store
@@ -27,6 +27,8 @@ from app.models import (
     ObjectDeletionJob,
     Report,
     ReportAnalysis,
+    Symbol,
+    SymbolMasterVersion,
     TechnicalSymptom,
 )
 from app.schemas import ExtractionResult
@@ -116,6 +118,7 @@ class FailingDeleteOnceAttachmentStore(LocalAttachmentStore):
 async def _clean_business_data() -> None:
     async with session_factory() as session, session.begin():
         await session.execute(delete(Report))
+        await session.execute(delete(SymbolMasterVersion))
         await session.execute(delete(IdempotencyRecord))
         await session.execute(delete(AuditLog))
         await session.execute(delete(ObjectDeletionJob))
@@ -126,6 +129,27 @@ async def clean_business_data(tmp_path: Path) -> AsyncIterator[None]:
     store = LocalAttachmentStore(tmp_path / "attachments")
     app.dependency_overrides[get_attachment_store] = lambda: store
     await _clean_business_data()
+    async with session_factory() as session, session.begin():
+        master = SymbolMasterVersion(
+            version="report-test-symbols",
+            source_url="https://example.invalid/krx",
+            source_as_of=datetime(2026, 8, 18, tzinfo=UTC).date(),
+            source_sha256="9" * 64,
+            source_encoding="UTF-8-SIG",
+            schema_version="krx-all-symbols.v1",
+            row_count=1,
+            is_active=True,
+        )
+        master.symbols.append(
+            Symbol(
+                code="005930",
+                name_ko="삼성전자",
+                market="KOSPI",
+                source_market="KOSPI",
+                stock_type="보통주",
+            )
+        )
+        session.add(master)
     yield
     await _clean_business_data()
     await engine.dispose()
@@ -138,6 +162,47 @@ def _screenshot_bytes() -> bytes:
     metadata.add_text("account", "123-456-789")
     Image.new("RGB", (16, 12), "navy").save(output, format="PNG", pnginfo=metadata)
     return output.getvalue()
+
+
+async def _symbol_confirmation(
+    client: AsyncClient,
+    *,
+    symbol_name: str | None,
+    symbol_code: str | None,
+) -> dict[str, object]:
+    analyzed = await client.post(
+        "/api/reports/analyze",
+        headers=_headers(),
+        json={
+            "text": "종목 기준정보 검증을 위한 비식별 합성 주문 제보입니다.",
+            "client_request_id": str(uuid4()),
+        },
+    )
+    assert analyzed.status_code == 200
+    analysis = analyzed.json()
+    return {
+        "analysis_id": analysis["analysis_id"],
+        "analysis_version": analysis["analysis_version"],
+        "attachment_id": None,
+        "masked_text": analysis["masked_text"],
+        "technical": {
+            "issue_type": "ORDER_SUBMISSION_FAILURE",
+            "symptom": "주문 버튼 이후 화면 멈춤",
+            "submission_status": "UNKNOWN",
+            "error_code": None,
+            "reported_occurred_at": None,
+        },
+        "consultation": {
+            "action": "SELL",
+            "symbol_name": symbol_name,
+            "symbol_code": symbol_code,
+            "quantity": 1,
+            "order_type": "LIMIT",
+            "price_krw": 70000,
+            "attempted_at": None,
+        },
+        "client_request_id": str(uuid4()),
+    }
 
 
 async def test_customer_report_lifecycle_is_persisted_idempotent_and_deletable() -> None:
@@ -255,6 +320,57 @@ async def test_customer_report_lifecycle_is_persisted_idempotent_and_deletable()
         assert await session.scalar(select(func.count()).select_from(ConsultationCard)) == 0
         assert await session.scalar(select(func.count()).select_from(IdempotencyRecord)) == 1
         assert await session.scalar(select(func.count()).select_from(AuditLog)) == 1
+
+
+async def test_customer_confirmation_enforces_active_symbol_master() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        mismatch_payload = await _symbol_confirmation(
+            client,
+            symbol_name="다른종목",
+            symbol_code="005930",
+        )
+        mismatch = await client.post("/api/reports", headers=_headers(), json=mismatch_payload)
+
+        unsupported_payload = await _symbol_confirmation(
+            client,
+            symbol_name="미지원종목",
+            symbol_code="000000",
+        )
+        unsupported = await client.post(
+            "/api/reports", headers=_headers(), json=unsupported_payload
+        )
+
+        unavailable_payload = await _symbol_confirmation(
+            client,
+            symbol_name="삼성전자",
+            symbol_code="005930",
+        )
+        async with session_factory() as session, session.begin():
+            await session.execute(
+                update(SymbolMasterVersion)
+                .where(SymbolMasterVersion.is_active.is_(True))
+                .values(is_active=False)
+            )
+        unavailable = await client.post(
+            "/api/reports", headers=_headers(), json=unavailable_payload
+        )
+        consultation = unavailable_payload["consultation"]
+        assert isinstance(consultation, dict)
+        unknown_payload = {
+            **unavailable_payload,
+            "consultation": {**consultation, "symbol_name": None, "symbol_code": None},
+            "client_request_id": str(uuid4()),
+        }
+        unknown = await client.post("/api/reports", headers=_headers(), json=unknown_payload)
+
+    assert mismatch.status_code == 422
+    assert mismatch.json()["code"] == "SYMBOL_MISMATCH"
+    assert unsupported.status_code == 422
+    assert unsupported.json()["code"] == "UNSUPPORTED_SYMBOL"
+    assert unavailable.status_code == 503
+    assert unavailable.json()["code"] == "SYMBOL_MASTER_UNAVAILABLE"
+    assert unknown.status_code == 200
 
 
 async def test_localized_placeholders_are_canonical_in_db_ai_and_response() -> None:

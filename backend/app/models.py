@@ -57,6 +57,78 @@ class PolicySnapshot(Base):
     reports: Mapped[list["Report"]] = relationship(back_populates="policy_snapshot")
 
 
+class SymbolMasterVersion(Base):
+    __tablename__ = "symbol_master_versions"
+    __table_args__ = (
+        CheckConstraint("char_length(btrim(version)) > 0", name="version_not_empty"),
+        CheckConstraint(
+            "source_sha256 ~ '^[0-9a-f]{64}$'",
+            name="source_sha256_lower_hex",
+        ),
+        CheckConstraint(
+            "source_encoding IN ('UTF-8-SIG', 'CP949')",
+            name="source_encoding_value",
+        ),
+        CheckConstraint("row_count > 0", name="row_count_positive"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    version: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    source_sha256: Mapped[str] = mapped_column(CHAR(64), unique=True, nullable=False)
+    source_encoding: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    symbols: Mapped[list["Symbol"]] = relationship(
+        back_populates="master_version", cascade="all, delete-orphan"
+    )
+
+
+Index(
+    "uq_symbol_master_versions_active",
+    SymbolMasterVersion.is_active,
+    unique=True,
+    postgresql_where=SymbolMasterVersion.is_active.is_(True),
+)
+
+
+class Symbol(Base):
+    __tablename__ = "symbols"
+    __table_args__ = (
+        UniqueConstraint("master_version_id", "code"),
+        CheckConstraint("code ~ '^[0-9A-Z]{6}$'", name="code_format"),
+        CheckConstraint("char_length(btrim(name_ko)) > 0", name="name_ko_not_empty"),
+        CheckConstraint("market IN ('KOSPI', 'KOSDAQ')", name="market_value"),
+        CheckConstraint(
+            "source_market IN ('KOSPI', 'KOSDAQ', 'KOSDAQ GLOBAL')",
+            name="source_market_value",
+        ),
+        CheckConstraint("stock_type = '보통주'", name="stock_type_common"),
+        Index("ix_symbols_master_version_id", "master_version_id"),
+        Index("ix_symbols_code", "code"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    master_version_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("symbol_master_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    code: Mapped[str] = mapped_column(String(6), nullable=False)
+    name_ko: Mapped[str] = mapped_column(String(80), nullable=False)
+    market: Mapped[str] = mapped_column(String(8), nullable=False)
+    source_market: Mapped[str] = mapped_column(String(20), nullable=False)
+    stock_type: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    master_version: Mapped[SymbolMasterVersion] = relationship(back_populates="symbols")
+
+
 class Report(Base):
     __tablename__ = "reports"
     __table_args__ = (
@@ -275,7 +347,7 @@ class ConsultationCard(Base):
     __table_args__ = (
         CheckConstraint("action IN ('BUY', 'SELL', 'UNKNOWN')", name="action_value"),
         CheckConstraint(
-            "symbol_code IS NULL OR symbol_code ~ '^[0-9]{6}$'",
+            "symbol_code IS NULL OR symbol_code ~ '^[0-9A-Z]{6}$'",
             name="symbol_code_format",
         ),
         CheckConstraint("quantity IS NULL OR quantity > 0", name="quantity_positive"),
@@ -308,6 +380,7 @@ class ConsultationCard(Base):
             name="reference_metadata_complete",
         ),
         Index("ix_consultation_cards_expires_at", "expires_at"),
+        Index("ix_consultation_cards_symbol_master_version_id", "symbol_master_version_id"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -320,6 +393,10 @@ class ConsultationCard(Base):
     action: Mapped[str] = mapped_column(String(16), nullable=False)
     symbol_name: Mapped[str | None] = mapped_column(String(80))
     symbol_code: Mapped[str | None] = mapped_column(String(6))
+    symbol_master_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("symbol_master_versions.id", ondelete="RESTRICT"),
+    )
     quantity: Mapped[int | None] = mapped_column(BigInteger)
     order_type: Mapped[str] = mapped_column(String(16), nullable=False)
     price_krw: Mapped[int | None] = mapped_column(BigInteger)
@@ -409,7 +486,7 @@ class AgentVerification(Base):
         UniqueConstraint("agent_id", "client_request_id"),
         CheckConstraint("action IN ('BUY', 'SELL', 'UNKNOWN')", name="action_value"),
         CheckConstraint(
-            "symbol_code IS NULL OR symbol_code ~ '^[0-9]{6}$'",
+            "symbol_code IS NULL OR symbol_code ~ '^[0-9A-Z]{6}$'",
             name="symbol_code_format",
         ),
         CheckConstraint("quantity IS NULL OR quantity > 0", name="quantity_positive"),
@@ -437,6 +514,7 @@ class AgentVerification(Base):
         ),
         Index("ix_agent_verifications_card_id", "card_id"),
         Index("ix_agent_verifications_agent_id", "agent_id"),
+        Index("ix_agent_verifications_symbol_master_version_id", "symbol_master_version_id"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -454,6 +532,10 @@ class AgentVerification(Base):
     action: Mapped[str] = mapped_column(String(16), nullable=False)
     symbol_name: Mapped[str | None] = mapped_column(String(80))
     symbol_code: Mapped[str | None] = mapped_column(String(6))
+    symbol_master_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("symbol_master_versions.id", ondelete="RESTRICT"),
+    )
     quantity: Mapped[int | None] = mapped_column(BigInteger)
     order_type: Mapped[str] = mapped_column(String(16), nullable=False)
     price_krw: Mapped[int | None] = mapped_column(BigInteger)
