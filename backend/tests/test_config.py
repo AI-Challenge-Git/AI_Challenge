@@ -37,7 +37,7 @@ def test_fake_ai_adapter_is_the_safe_default() -> None:
     settings = Settings()
 
     assert settings.ai_adapter == "fake"
-    assert settings.ai_timeout_seconds == 10
+    assert settings.ai_timeout_seconds == 90
     assert settings.ai_max_concurrency == 4
     assert settings.agent_access_token_ttl_minutes == 30
     assert settings.agent_login_failure_limit == 5

@@ -33,7 +33,7 @@ docker compose up --build
 
 분석 API는 `pending`, `confirmation`, `failed`, `complete` 상태를 반환합니다. adapter 기본값은
 deterministic Fake이며 `AI_ADAPTER=nvidia`일 때 실제 provider adapter를 사용합니다. 백엔드
-전체 호출 timeout은 10초이고 동기 provider 호출은 기본 4개로 제한됩니다.
+전체 호출 timeout은 90초이고 동기 provider 호출은 기본 4개로 제한됩니다.
 
 스크린샷 multipart 요청은 `screenshot_redacted_confirmed=true`가 필수입니다. 이미지가 없는
 기존 JSON 요청에는 이 필드를 보내지 않습니다.
