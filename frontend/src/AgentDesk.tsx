@@ -4,6 +4,7 @@ import {
   getConsultationCard,
   getConsultationCards,
   loginAgent,
+  normalizeSymbolCode,
   saveAgentVerification,
 } from "./api";
 import type {
@@ -145,7 +146,7 @@ export default function AgentDesk() {
     const payload: AgentVerificationInput = {
       action: String(data.get("action")) as AgentVerificationInput["action"],
       symbol_name: String(data.get("symbol_name")).trim() || null,
-      symbol_code: String(data.get("symbol_code")).trim() || null,
+      symbol_code: normalizeSymbolCode(String(data.get("symbol_code"))) || null,
       quantity: data.get("quantity") ? Number(data.get("quantity")) : null,
       price_krw: data.get("price_krw") ? Number(data.get("price_krw")) : null,
       order_type: String(data.get("order_type")) as AgentVerificationInput["order_type"],
@@ -263,7 +264,7 @@ export default function AgentDesk() {
                 <div className="verification-grid">
                   <label>주문 구분<select name="action" defaultValue={caseFile.consultation.action}><option value="SELL">매도</option><option value="BUY">매수</option><option value="UNKNOWN">모름</option></select></label>
                   <label>상담 확인 종목<input name="symbol_name" defaultValue={caseFile.consultation.symbol_name ?? ""} placeholder="모름" /></label>
-                  <label>종목코드<input name="symbol_code" inputMode="numeric" maxLength={6} defaultValue={caseFile.consultation.symbol_code ?? ""} placeholder="모름" /></label>
+                  <label>종목코드<input name="symbol_code" maxLength={6} pattern="[0-9A-Z]{6}" title="대문자 영문 또는 숫자 6자리" defaultValue={caseFile.consultation.symbol_code ?? ""} placeholder="모름" onInput={(event) => { event.currentTarget.value = normalizeSymbolCode(event.currentTarget.value); }} /></label>
                   <label>상담 확인 수량<input name="quantity" type="number" min="1" defaultValue={caseFile.consultation.quantity ?? ""} placeholder="모름" /></label>
                   <label>상담 확인 가격<input name="price_krw" type="number" min="1" step="100" defaultValue={caseFile.consultation.price_krw ?? ""} placeholder="모름" /></label>
                   <label>주문 방식<select name="order_type" defaultValue={caseFile.consultation.order_type}><option value="LIMIT">지정가</option><option value="MARKET">시장가</option><option value="UNKNOWN">모름</option></select></label>
