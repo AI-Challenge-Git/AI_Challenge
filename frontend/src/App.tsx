@@ -20,6 +20,7 @@ import {
   ApiError,
   deleteConsultationCard,
   discardAnalysis,
+  normalizeSymbolCode,
   saveConfirmedReport,
   validateScreenshot,
 } from "./api";
@@ -496,7 +497,7 @@ export default function App() {
                       <input aria-label="종목명" value={analysis.consultation.symbol_name ?? ""} placeholder="모름" onChange={(e) => updateConsultation("symbol_name", e.target.value || null)} />
                     </ResultField>
                     <ResultField label="종목코드" status={analysis.consultation.field_statuses.symbol_code} evidence={analysis.consultation.evidence.symbol_code} edited={editedFields.has("consultation.symbol_code")}>
-                      <input aria-label="종목코드" inputMode="numeric" maxLength={6} value={analysis.consultation.symbol_code ?? ""} placeholder="모름" onChange={(e) => updateConsultation("symbol_code", e.target.value.replace(/\D/g, "") || null)} />
+                      <input aria-label="종목코드" maxLength={6} pattern="[0-9A-Z]{6}" title="대문자 영문 또는 숫자 6자리" value={analysis.consultation.symbol_code ?? ""} placeholder="모름" onChange={(e) => updateConsultation("symbol_code", normalizeSymbolCode(e.target.value) || null)} />
                     </ResultField>
                     <ResultField label="수량" status={analysis.consultation.field_statuses.quantity} evidence={analysis.consultation.evidence.quantity} edited={editedFields.has("consultation.quantity")}>
                       <div className="suffix-input"><input aria-label="수량" type="number" min="1" value={analysis.consultation.quantity ?? ""} placeholder="모름" onChange={(e) => updateConsultation("quantity", e.target.value ? Number(e.target.value) : null)} /><span>주</span></div>

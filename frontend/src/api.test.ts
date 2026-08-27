@@ -83,6 +83,13 @@ afterEach(() => {
 });
 
 describe("백엔드 분석 DTO 연동", () => {
+  it("종목코드를 대문자 영숫자 6자리로 정규화한다", async () => {
+    const { normalizeSymbolCode } = await import("./api");
+
+    expect(normalizeSymbolCode("0011a0")).toBe("0011A0");
+    expect(normalizeSymbolCode("00-11a0!")).toBe("0011A0");
+  });
+
   it("API 주소가 없으면 로컬 가짜 분석으로 대체하지 않는다", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -158,7 +165,7 @@ describe("백엔드 분석 DTO 연동", () => {
       attachment_id: null,
       masked_text: confirmationResponse.masked_text,
       technical,
-      consultation: { ...consultation, action: "BUY" },
+      consultation: { ...consultation, action: "BUY", symbol_code: "0011a0" },
     }, "50cfd27c-aef1-44fd-9e8c-de24ade721c3");
 
     const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
@@ -172,7 +179,7 @@ describe("백엔드 분석 DTO 연동", () => {
     expect(sent.consultation).toEqual({
       action: "BUY",
       symbol_name: "삼성전자",
-      symbol_code: "005930",
+      symbol_code: "0011A0",
       quantity: 20,
       order_type: "LIMIT",
       price_krw: 70_000,
@@ -305,5 +312,29 @@ describe("백엔드 분석 DTO 연동", () => {
       retryAfterSeconds: 37,
       message: expect.stringContaining("37초"),
     });
+  });
+
+  it("종목 Master 오류를 사용자가 이해할 수 있는 문구로 변환한다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    const problem = (status: number, code: string) => JSON.stringify({
+      type: "about:blank", title: "Error", status, code, detail: "내부 상세정보",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(problem(503, "SYMBOL_MASTER_UNAVAILABLE"), { status: 503 }))
+      .mockResolvedValueOnce(new Response(problem(422, "UNSUPPORTED_SYMBOL"), { status: 422 }))
+      .mockResolvedValueOnce(new Response(problem(422, "SYMBOL_MISMATCH"), { status: 422 })));
+    const { saveConfirmedReport } = await import("./api");
+    const payload = {
+      analysis_id: confirmationResponse.analysis_id,
+      analysis_version: 1,
+      attachment_id: null,
+      masked_text: confirmationResponse.masked_text,
+      technical,
+      consultation,
+    };
+
+    await expect(saveConfirmedReport(payload)).rejects.toMatchObject({ code: "SYMBOL_MASTER_UNAVAILABLE", message: expect.stringContaining("일시적으로") });
+    await expect(saveConfirmedReport(payload)).rejects.toMatchObject({ code: "UNSUPPORTED_SYMBOL", message: expect.stringContaining("지원하지 않는 종목코드") });
+    await expect(saveConfirmedReport(payload)).rejects.toMatchObject({ code: "SYMBOL_MISMATCH", message: expect.stringContaining("일치하지 않습니다") });
   });
 });

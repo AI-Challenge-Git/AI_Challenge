@@ -72,6 +72,9 @@ async function parseError(response: Response): Promise<ApiError> {
   const code = typeof body.code === "string" ? body.code : undefined;
   if (code === "STALE_ANALYSIS") return new ApiError("더 최신 분석 결과가 있습니다. 다시 분석해 주세요.", code, response.status);
   if (code === "ANALYSIS_NOT_READY") return new ApiError("분석이 아직 완료되지 않았습니다. 다시 분석해 주세요.", code, response.status);
+  if (code === "SYMBOL_MASTER_UNAVAILABLE") return new ApiError("종목 정보를 확인하는 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.", code, response.status);
+  if (code === "UNSUPPORTED_SYMBOL") return new ApiError("지원하지 않는 종목코드입니다. 종목코드를 다시 확인해 주세요.", code, response.status);
+  if (code === "SYMBOL_MISMATCH") return new ApiError("종목명과 종목코드가 일치하지 않습니다. 다시 확인해 주세요.", code, response.status);
   if (response.status === 401) return new ApiError("로그인이 만료되었거나 인증 정보가 올바르지 않습니다. 다시 로그인해 주세요.", code, 401);
   if (response.status === 404) return new ApiError("요청한 상담 정보를 찾을 수 없습니다.", code, 404);
   if (response.status === 409) return new ApiError("같은 요청 ID로 다른 내용을 전송할 수 없습니다. 새로 시도해 주세요.", code, 409);
@@ -217,7 +220,7 @@ function adaptAnalysisResult(value: unknown): AnalysisResult {
   const consultation: ConsultationData = {
     action: action.value ?? "UNKNOWN",
     symbol_name: symbolName.value,
-    symbol_code: symbolCode.value,
+    symbol_code: symbolCode.value === "UNKNOWN" ? null : symbolCode.value,
     quantity: quantity.value,
     order_type: orderType.value ?? "UNKNOWN",
     price: price.value,
@@ -345,7 +348,9 @@ export async function saveConfirmedReport(payload: {
     consultation: {
       action: consultation.action,
       symbol_name: consultation.symbol_name,
-      symbol_code: consultation.symbol_code,
+      symbol_code: consultation.symbol_code && consultation.symbol_code !== "UNKNOWN"
+        ? normalizeSymbolCode(consultation.symbol_code) || null
+        : null,
       quantity: consultation.quantity,
       order_type: consultation.order_type,
       price_krw: consultation.order_type === "MARKET" ? null : consultation.price,
@@ -379,6 +384,10 @@ export async function loginAgent(employeeId: string, password: string): Promise<
     method: "POST",
     body: JSON.stringify(login),
   }, null);
+}
+
+export function normalizeSymbolCode(value: string): string {
+  return value.toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 6);
 }
 
 function normalizedSelector(selector: AgentCardSelector | string): AgentCardSelector {
@@ -437,6 +446,7 @@ export async function saveAgentVerification(
   const verification: ApiAgentVerificationRequest = {
     ...normalized,
     ...payload,
+    symbol_code: payload.symbol_code ? normalizeSymbolCode(payload.symbol_code) || null : null,
     client_request_id: clientRequestId,
   };
   return request<AgentVerificationResult>(
