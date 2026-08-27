@@ -8,9 +8,10 @@
 
 - 실제 사용자 흐름이 매수와 매도를 모두 다루므로 주문 방향을 기존 `SELL`, `UNKNOWN`에서
   `BUY`, `SELL`, `UNKNOWN`으로 확장한다.
-- 프론트, 백엔드와 AI 사이의 실패 시간을 예측할 수 있도록 백엔드 전체 AI 호출 제한을
-  10초로 고정한다. blocking provider thread는 timeout으로 중단되지 않으므로 백엔드 service가
-  동시 실행 수를 제한하고 adapter task가 실제 종료될 때 permit을 반환한다.
+- 변경된 AI 모델의 구조화 응답 시간을 수용하기 위해 백엔드 전체 AI 호출 제한을 90초로
+  통일한다. 이 값은 provider 재시도를 포함한 adapter 전체 예산이다. blocking provider thread는
+  timeout으로 중단되지 않으므로 백엔드 service가 동시 실행 수를 제한하고 adapter task가 실제
+  종료될 때 permit을 반환한다.
 - 이미지 개인정보는 OCR로 판정하지 않는다. 사용자가 직접 가렸음을 확인한 multipart 요청만
   백엔드가 수락한다.
 - 업무 데이터 최대 보존기간을 기존 2주에서 생성 후 72시간으로 단축한다. 접근 TTL 2시간과

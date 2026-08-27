@@ -47,7 +47,7 @@ AI timeout·schema 오류·provider 오류가 나면 미완성 report, analysis,
 현재 attachment는 private local volume에 정제·재인코딩해 저장하며 응답에는 data URL
 preview를 반환한다. Private Object Storage와 signed URL은 아직 구현하지 않았다.
 
-백엔드 service의 AI 전체 호출 제한은 10초이며 동시 AI 호출은 최대 4개로 제한한다.
+백엔드 service의 AI 전체 호출 제한은 90초이며 동시 AI 호출은 최대 4개로 제한한다.
 `asyncio.to_thread()` timeout은 이미 실행 중인 provider thread를 중단하지 않으므로,
 timeout 뒤에도 adapter task가 끝날 때까지 concurrency permit을 유지한다.
 
@@ -71,7 +71,8 @@ job으로 재시도한다.
 보존기간은 서로 독립적이다. purge는 backend CLI로 수행하며 기본은 dry-run이다.
 
 실제 provider 사용 여부는 `AI_ADAPTER` 설정으로 선택하며 기본값은 deterministic Fake다.
-NVIDIA 내부 client timeout은 AI 담당 파일의 별도 정합화가 필요하다.
+NVIDIA 내부 provider 호출과 correction retry는 AI 담당자가 백엔드의 전체 90초 예산 안에
+끝나도록 구성해야 한다.
 
 ## 상담원 인증과 카드 조회
 
