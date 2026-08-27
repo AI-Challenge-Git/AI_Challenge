@@ -1,5 +1,58 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const token = "A".repeat(43);
+const cardId = "11111111-1111-4111-8111-111111111111";
+
+const loginResponse = {
+  access_token: token,
+  token_type: "bearer",
+  expires_at: "2026-08-27T01:00:00Z",
+  agent_label: "CS1024",
+  role: "AGENT",
+};
+
+const cardDetail = {
+  card_id: cardId,
+  created_at: "2026-08-27T00:00:00Z",
+  expires_at: "2026-08-27T02:00:00Z",
+  technical: {
+    issue_type: "ORDER_SUBMISSION_FAILURE",
+    symptom: "주문 버튼 이후 지속 로딩",
+    submission_status: "CUSTOMER_REPORTED_SUBMITTED",
+    error_code: null,
+    reported_occurred_at: "2026-08-27T00:03:00Z",
+  },
+  consultation: {
+    action: "SELL",
+    symbol_name: "삼성전자",
+    symbol_code: "005930",
+    quantity: 20,
+    order_type: "LIMIT",
+    price_krw: 70_000,
+    attempted_at: "2026-08-27T00:03:00Z",
+  },
+  verification_status: null,
+  safety_notice: "공식 채널에서 주문 상태를 확인해 주세요.",
+  has_attachment: true,
+  related_signals: [],
+};
+
+const listResponse = {
+  items: [{
+    card_id: cardId,
+    received_at: "2026-08-27T00:00:00Z",
+    issued_at: "2026-08-27T00:00:00Z",
+    expires_at: "2026-08-27T02:00:00Z",
+    expired: false,
+    can_open: true,
+    consultation_status: "OPEN",
+    technical_symptom: "주문 버튼 이후 지속 로딩",
+    verification_status: null,
+  }],
+  limit: 50,
+  offset: 0,
+};
+
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -7,161 +60,76 @@ afterEach(() => {
   vi.resetModules();
 });
 
-describe("상담 참조번호 조회", () => {
-  it("실제 API 주소가 있어도 데모 계정은 Mock 상담원 화면을 사용한다", async () => {
+describe("상담원 API 계약", () => {
+  it("API 주소가 있으면 CS1024/demo도 실제 로그인과 목록 API를 호출한다", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(loginResponse)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(listResponse)));
     vi.stubGlobal("fetch", fetchMock);
-    vi.resetModules();
-    const { DEMO_REFERENCE_NUMBER, getConsultationCard, loginAgent } = await import("./api");
+    const { getConsultationCards, loginAgent } = await import("./api");
 
     const agent = await loginAgent("CS1024", "demo");
-    expect((await getConsultationCard(DEMO_REFERENCE_NUMBER, agent.access_token)).reference_number)
-      .toBe(DEMO_REFERENCE_NUMBER);
-    expect(fetchMock).not.toHaveBeenCalled();
+    const cards = await getConsultationCards(agent.access_token);
+
+    expect(agent.access_token).toBe(token);
+    expect(cards.items[0]).toMatchObject({ card_id: cardId, can_open: true });
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.com/api/auth/login");
+    expect(fetchMock.mock.calls[1][0]).toBe("https://api.example.com/api/agent/consultation-cards?limit=50&offset=0");
   });
 
-  it("참조번호를 정규화하고 없는 번호를 거절한다", async () => {
-    const { DEMO_REFERENCE_NUMBER, getConsultationCard } = await import("./api");
-    expect((await getConsultationCard("  kbsos-7h4q-9m2p ")).reference_number).toBe(DEMO_REFERENCE_NUMBER);
-    await expect(getConsultationCard("KBSOS-NOT-FOUND")).rejects.toThrow("찾지 못했습니다");
-  });
-
-  it("상담 재확인값의 불일치를 반환한다", async () => {
-    const { DEMO_REFERENCE_NUMBER, saveAgentVerification } = await import("./api");
-    const result = await saveAgentVerification(DEMO_REFERENCE_NUMBER, {
-      action: "BUY",
-      symbol_name: "SK하이닉스",
-      symbol_code: "000660",
-      quantity: 30,
-      price: 71_000,
-      order_type: "LIMIT",
-      submission_status: "UNKNOWN",
-      order_history_checked: true,
-    });
-    expect(result.issues.map(({ field }) => field)).toEqual([
-      "action",
-      "symbol_name",
-      "symbol_code",
-      "quantity",
-      "price",
-      "submission_status",
-    ]);
-  });
-
-  it("주문 방식과 제출 여부도 불일치 범위에 포함한다", async () => {
-    const { DEMO_REFERENCE_NUMBER, getConsultationCard, saveAgentVerification } = await import("./api");
-    const current = await getConsultationCard(DEMO_REFERENCE_NUMBER);
-    await saveAgentVerification(DEMO_REFERENCE_NUMBER, {
-      action: current.consultation.action,
-      symbol_name: current.consultation.symbol_name,
-      symbol_code: current.consultation.symbol_code,
-      quantity: current.consultation.quantity,
-      price: current.consultation.price,
-      order_type: "LIMIT",
-      submission_status: "SUBMITTED",
-      order_history_checked: true,
-    });
-    const result = await saveAgentVerification(DEMO_REFERENCE_NUMBER, {
-      action: current.consultation.action,
-      symbol_name: current.consultation.symbol_name,
-      symbol_code: current.consultation.symbol_code,
-      quantity: current.consultation.quantity,
-      price: current.consultation.price,
-      order_type: "MARKET",
-      submission_status: "NOT_SUBMITTED",
-      order_history_checked: true,
-    });
-    expect(result.issues.map(({ field }) => field)).toEqual(["order_type", "submission_status"]);
-  });
-
-  it("참조번호를 URL이 아닌 POST body로 전송한다", async () => {
+  it("card_id로 상세를 조회하고 새 ConsultationCardDetail을 반환한다", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ reference_number: "KBSOS-TEST-TEST" })));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(cardDetail)));
     vi.stubGlobal("fetch", fetchMock);
-    vi.resetModules();
     const { getConsultationCard } = await import("./api");
 
-    await getConsultationCard(" kbsos-test-test ");
+    const detail = await getConsultationCard({ card_id: cardId }, token);
 
+    expect(detail).toMatchObject({ card_id: cardId, has_attachment: true, related_signals: [] });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.example.com/api/consultation-cards/lookup",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ reference_number: "KBSOS-TEST-TEST" }),
-        headers: expect.objectContaining({ Authorization: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{43}$/) }),
+        body: JSON.stringify({ card_id: cardId }),
+        headers: expect.objectContaining({ Authorization: `Bearer ${token}` }),
       }),
     );
   });
 
-  it("상담원 검증도 참조번호와 확인 증빙을 POST body로 전송한다", async () => {
+  it("verification은 price_krw와 서버 submission enum을 전송한다", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ saved_at: "2026-08-15T00:00:00Z", issues: [] })));
+    const response = {
+      verification_id: "22222222-2222-4222-8222-222222222222",
+      status: "IMPORTANT",
+      fields: [{ field: "price_krw", status: "IMPORTANT", customer_value: 70_000, agent_value: 71_000 }],
+      mismatch_fields: ["price_krw"],
+      saved_at: "2026-08-27T00:10:00Z",
+    };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(response)));
     vi.stubGlobal("fetch", fetchMock);
-    vi.resetModules();
     const { saveAgentVerification } = await import("./api");
 
-    await saveAgentVerification("KBSOS-TEST-TEST", {
+    const result = await saveAgentVerification({ card_id: cardId }, {
       action: "SELL",
       symbol_name: "삼성전자",
       symbol_code: "005930",
       quantity: 20,
-      price: 70_000,
+      price_krw: 71_000,
       order_type: "LIMIT",
-      submission_status: "UNKNOWN",
+      submission_status: "CUSTOMER_REPORTED_SUBMITTED",
       order_history_checked: true,
-    }, "agent-token", "request-id");
+    }, token, "33333333-3333-4333-8333-333333333333");
 
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://api.example.com/api/consultation-cards/verifications");
-    expect(JSON.parse(String(init?.body))).toMatchObject({
-      reference_number: "KBSOS-TEST-TEST",
-      client_request_id: "request-id",
-      order_history_checked: true,
+    const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(sent).toMatchObject({
+      card_id: cardId,
+      price_krw: 71_000,
+      submission_status: "CUSTOMER_REPORTED_SUBMITTED",
+      client_request_id: "33333333-3333-4333-8333-333333333333",
     });
-    expect(String(init?.body)).not.toContain("agent_id");
+    expect(sent).not.toHaveProperty("price");
+    expect(result).toMatchObject({ status: "IMPORTANT", mismatch_fields: ["price_krw"] });
   });
 
-  it("고객이 삭제한 상담 준비카드는 다시 조회되지 않는다", async () => {
-    const {
-      DEMO_REFERENCE_NUMBER,
-      deleteConsultationCard,
-      getConsultationCard,
-      saveConfirmedReport,
-    } = await import("./api");
-    const demo = await getConsultationCard(DEMO_REFERENCE_NUMBER);
-    const saved = await saveConfirmedReport({
-      analysis_id: crypto.randomUUID(),
-      analysis_version: 1,
-      attachment_id: null,
-      masked_text: "주문 화면이 계속 로딩됩니다.",
-      technical: demo.technical,
-      consultation: demo.consultation,
-    });
-
-    await deleteConsultationCard(saved.reference_number);
-
-    await expect(getConsultationCard(saved.reference_number)).rejects.toThrow("찾지 못했습니다");
-  });
-
-  it("첨부 이미지를 저장해 상담원 카드에서 조회한다", async () => {
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock-screenshot");
-    const { analyzeReport, getConsultationCard, saveConfirmedReport } = await import("./api");
-    const analysis = await analyzeReport(
-      "KB 앱에서 주문 버튼을 눌렀는데 화면이 멈추고 계속 로딩됩니다.",
-      crypto.randomUUID(),
-      new File(["image"], "error.png", { type: "image/png" }),
-    );
-    if (analysis.status !== "confirmation") throw new Error("Mock 분석이 완료되지 않았습니다.");
-    const saved = await saveConfirmedReport({
-      analysis_id: analysis.analysis_id,
-      analysis_version: analysis.analysis_version,
-      attachment_id: analysis.attachment?.id ?? null,
-      masked_text: analysis.masked_text,
-      technical: analysis.technical,
-      consultation: analysis.consultation,
-    });
-
-    expect((await getConsultationCard(saved.reference_number)).attachment_url).toBe("blob:mock-screenshot");
-  });
 });

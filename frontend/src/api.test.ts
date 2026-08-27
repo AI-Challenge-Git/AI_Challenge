@@ -83,6 +83,16 @@ afterEach(() => {
 });
 
 describe("백엔드 분석 DTO 연동", () => {
+  it("API 주소가 없으면 로컬 가짜 분석으로 대체하지 않는다", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { analyzeReport } = await import("./api");
+
+    await expect(analyzeReport("주문 버튼을 누른 뒤 계속 로딩되어 결과를 확인하지 못했습니다."))
+      .rejects.toThrow("VITE_API_BASE_URL");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("pending이면 같은 요청으로 재시도하고 Candidate를 화면 모델로 변환한다", async () => {
     vi.useFakeTimers();
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
@@ -140,7 +150,7 @@ describe("백엔드 분석 DTO 연동", () => {
       consultation_card: { reference_number: "KBSOS-TEST", expires_at: expiresAt },
     })));
     vi.stubGlobal("fetch", fetchMock);
-    const { getConsultationCard, loginAgent, saveConfirmedReport } = await import("./api");
+    const { saveConfirmedReport } = await import("./api");
 
     const saved = await saveConfirmedReport({
       analysis_id: confirmationResponse.analysis_id,
@@ -170,9 +180,7 @@ describe("백엔드 분석 DTO 연동", () => {
     });
     expect(JSON.stringify(sent)).not.toMatch(/field_statuses|evidence|occurred_date|channel|feature_area|"price":/);
 
-    const agent = await loginAgent("CS1024", "demo");
-    await expect(getConsultationCard(saved.reference_number, agent.access_token))
-      .resolves.toMatchObject({ reference_number: "KBSOS-TEST", technical, consultation: { ...consultation, action: "BUY" } });
+    expect(saved).toEqual({ reference_number: "KBSOS-TEST", expires_at: expiresAt });
   });
 
   it("이미지는 multipart로 같은 멱등 요청에 포함한다", async () => {
@@ -192,6 +200,7 @@ describe("백엔드 분석 DTO 연동", () => {
     expect((body as FormData).get("client_request_id")).toBe(requestId);
     expect((body as FormData).get("screenshot")).toBe(screenshot);
     expect((body as FormData).get("text")).toBe(reportText);
+    expect((body as FormData).get("screenshot_redacted_confirmed")).toBe("true");
   });
 
   it("지정가 누락과 시장가 가격 입력은 네트워크 전송 전에 거부한다", async () => {
@@ -257,5 +266,44 @@ describe("백엔드 분석 DTO 연동", () => {
         headers: expect.objectContaining({ Authorization: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{43}$/) }),
       }),
     );
+  });
+
+  it("401·404·409·422·429를 안전한 화면 오류로 변환한다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    const problem = (status: number, code: string, detail = "내부 상세정보") => JSON.stringify({
+      type: "about:blank", title: "Error", status, code, detail,
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(problem(401, "INVALID_AGENT_CREDENTIALS"), { status: 401 }))
+      .mockResolvedValueOnce(new Response(problem(404, "CARD_NOT_FOUND"), { status: 404 }))
+      .mockResolvedValueOnce(new Response(problem(409, "IDEMPOTENCY_CONFLICT"), { status: 409 }))
+      .mockResolvedValueOnce(new Response(problem(422, "SCREENSHOT_REDACTION_REQUIRED"), { status: 422 }))
+      .mockResolvedValueOnce(new Response(problem(429, "RATE_LIMITED"), { status: 429, headers: { "Retry-After": "37" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { analyzeReport, getConsultationCard, getConsultationCards, saveAgentVerification } = await import("./api");
+    const cardId = "11111111-1111-4111-8111-111111111111";
+
+    await expect(getConsultationCards("agent-token")).rejects.toMatchObject({ status: 401, message: expect.stringContaining("다시 로그인") });
+    await expect(getConsultationCard({ card_id: cardId }, "agent-token")).rejects.toMatchObject({ status: 404, message: "요청한 상담 정보를 찾을 수 없습니다." });
+    await expect(saveAgentVerification({ card_id: cardId }, {
+      action: "SELL",
+      symbol_name: null,
+      symbol_code: null,
+      quantity: null,
+      order_type: "UNKNOWN",
+      price_krw: null,
+      submission_status: "UNKNOWN",
+      order_history_checked: true,
+    }, "agent-token", "33333333-3333-4333-8333-333333333333")).rejects.toMatchObject({ status: 409, message: expect.stringContaining("요청 ID") });
+    await expect(analyzeReport(
+      "주문 버튼을 누른 뒤 계속 로딩되어 결과를 확인하지 못했습니다.",
+      "44444444-4444-4444-8444-444444444444",
+      new File(["image"], "error.png", { type: "image/png" }),
+    )).rejects.toMatchObject({ status: 422, code: "SCREENSHOT_REDACTION_REQUIRED" });
+    await expect(getConsultationCards("agent-token")).rejects.toMatchObject({
+      status: 429,
+      retryAfterSeconds: 37,
+      message: expect.stringContaining("37초"),
+    });
   });
 });
