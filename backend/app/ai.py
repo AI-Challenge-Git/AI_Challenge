@@ -72,10 +72,8 @@ class NvidiaDualExtractorAdapter:
     - extract_safe()는 동기(blocking) 함수이므로 asyncio.to_thread로 감싸서
       FastAPI 이벤트 루프를 막지 않게 한다.
 
-    주의: settings.ai_timeout_seconds(기본 10초)가 RealDualExtractor 내부
-    NVIDIA 클라이언트 timeout(90초)보다 짧다. correction retry가 발생하면
-    10초를 넘길 수 있으므로, 배포 전 settings.ai_timeout_seconds 값을
-    백엔드 담당자와 조정해야 한다.
+    주의: settings.ai_timeout_seconds의 기본 90초는 adapter 전체 호출 예산이다.
+    NVIDIA 내부 provider 호출과 correction retry도 이 전체 예산 안에 끝나야 한다.
     """
 
     schema_version = "dual-extraction.v1"

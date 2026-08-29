@@ -14,6 +14,41 @@ class AnalysisStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class IdempotencyStatus(StrEnum):
+    COMPLETED = "COMPLETED"
+
+
+class ObjectDeletionStatus(StrEnum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    RETRY_PENDING = "RETRY_PENDING"
+    COMPLETED = "COMPLETED"
+
+
+class AgentRole(StrEnum):
+    AGENT = "AGENT"
+    OPERATOR = "OPERATOR"
+
+
+class VerificationStatus(StrEnum):
+    MATCHED = "MATCHED"
+    NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
+    IMPORTANT = "IMPORTANT"
+
+
+class RateLimitScope(StrEnum):
+    AGENT_LOGIN_FAILURE = "AGENT_LOGIN_FAILURE"
+    AGENT_CARD_LOOKUP = "AGENT_CARD_LOOKUP"
+
+
+class AuditOutcome(StrEnum):
+    SUCCESS = "SUCCESS"
+    FAILURE = "FAILURE"
+    RATE_LIMITED = "RATE_LIMITED"
+    REPLAY = "REPLAY"
+    CONFLICT = "CONFLICT"
+
+
 class FieldStatus(StrEnum):
     CONFIRMED_FROM_TEXT = "CONFIRMED_FROM_TEXT"
     NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
@@ -46,9 +81,9 @@ class SubmissionStatus(StrEnum):
 
 
 class OrderAction(StrEnum):
+    BUY = "BUY"
     SELL = "SELL"
     UNKNOWN = "UNKNOWN"
-    BUY = "BUY"
 
 
 class OrderType(StrEnum):

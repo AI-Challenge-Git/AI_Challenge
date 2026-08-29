@@ -9,7 +9,6 @@ from app.ai import DualExtractor, get_dual_extractor
 from app.api.dependencies import customer_principal
 from app.attachments import (
     MAX_ATTACHMENT_BYTES,
-    AttachmentStorageError,
     InvalidAttachmentError,
     LocalAttachmentStore,
     PreparedAttachment,
@@ -28,6 +27,7 @@ from app.schemas import (
     ReportConfirmedResponse,
     ReportCreateRequest,
 )
+from app.services.lifecycle import process_object_deletion_jobs
 from app.services.reports import (
     analyze_report,
     confirm_report,
@@ -51,7 +51,12 @@ ANALYZE_REQUEST_BODY: dict[str, Any] = {
             "schema": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["text", "client_request_id", "screenshot"],
+                "required": [
+                    "text",
+                    "client_request_id",
+                    "screenshot",
+                    "screenshot_redacted_confirmed",
+                ],
                 "properties": {
                     "text": {"type": "string"},
                     "client_request_id": {"type": "string", "format": "uuid4"},
@@ -59,6 +64,13 @@ ANALYZE_REQUEST_BODY: dict[str, Any] = {
                         "type": "string",
                         "format": "binary",
                         "description": "PNG, JPEG, or WebP; maximum 5 MiB",
+                    },
+                    "screenshot_redacted_confirmed": {
+                        "type": "boolean",
+                        "const": True,
+                        "description": (
+                            "The user confirms that sensitive image content was redacted."
+                        ),
                     },
                 },
             }
@@ -95,17 +107,24 @@ async def _parse_analyze_request(
     try:
         async with request.form(
             max_files=1,
-            max_fields=2,
+            max_fields=3,
             max_part_size=MAX_ATTACHMENT_BYTES + 1,
         ) as form:
             items = form.multi_items()
-            if len(items) != 3 or {key for key, _ in items} != {
+            values = dict(items)
+            if values.get("screenshot_redacted_confirmed") != "true":
+                raise ServiceError(
+                    422,
+                    "SCREENSHOT_REDACTION_REQUIRED",
+                    "민감정보를 직접 가렸는지 확인해 주세요.",
+                )
+            if len(items) != 4 or {key for key, _ in items} != {
                 "text",
                 "client_request_id",
                 "screenshot",
+                "screenshot_redacted_confirmed",
             }:
                 raise ServiceError(422, "VALIDATION_ERROR", "요청 값을 확인해 주세요.")
-            values = dict(items)
             upload = values["screenshot"]
             if not isinstance(upload, UploadFile):
                 raise ServiceError(422, "INVALID_ATTACHMENT", "이미지 파일을 확인해 주세요.")
@@ -125,19 +144,6 @@ async def _parse_analyze_request(
         return create_request, sanitize_attachment(raw)
     except InvalidAttachmentError as exc:
         raise ServiceError(422, "INVALID_ATTACHMENT", "이미지 파일을 확인해 주세요.") from exc
-
-
-async def _delete_attachment_object(
-    attachment_store: LocalAttachmentStore, object_key: str | None
-) -> None:
-    if object_key is None:
-        return
-    try:
-        await attachment_store.delete(object_key)
-    except AttachmentStorageError as exc:
-        raise ServiceError(
-            503, "ATTACHMENT_STORAGE_UNAVAILABLE", "이미지를 삭제하지 못했습니다."
-        ) from exc
 
 
 @router.post(
@@ -206,8 +212,13 @@ async def discard(
     session: Annotated[AsyncSession, Depends(get_session)],
     attachment_store: Annotated[LocalAttachmentStore, Depends(get_attachment_store)],
 ) -> Response:
-    object_key = await discard_report(session, principal, request)
-    await _delete_attachment_object(attachment_store, object_key)
+    job_id = await discard_report(session, principal, request)
+    await process_object_deletion_jobs(
+        session,
+        attachment_store,
+        batch_size=1,
+        job_ids=(job_id,) if job_id is not None else None,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"Cache-Control": "no-store"})
 
 
@@ -223,6 +234,11 @@ async def delete_card(
     settings: Annotated[Settings, Depends(get_settings)],
     attachment_store: Annotated[LocalAttachmentStore, Depends(get_attachment_store)],
 ) -> Response:
-    object_key = await delete_report(session, principal, request, settings)
-    await _delete_attachment_object(attachment_store, object_key)
+    job_id = await delete_report(session, principal, request, settings)
+    await process_object_deletion_jobs(
+        session,
+        attachment_store,
+        batch_size=1,
+        job_ids=(job_id,) if job_id is not None else None,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"Cache-Control": "no-store"})

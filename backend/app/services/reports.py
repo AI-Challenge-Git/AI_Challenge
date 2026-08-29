@@ -2,11 +2,13 @@ import asyncio
 import hashlib
 import hmac
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
+from functools import partial
 from uuid import UUID
+from weakref import WeakKeyDictionary
 
-from pydantic import BaseModel, ValidationError
-from sqlalchemy import func, select
+from pydantic import ValidationError
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -36,6 +38,7 @@ from app.schemas import (
     ConsultationCardIssued,
     DeleteConsultationCardRequest,
     DiscardReportRequest,
+    ExtractionResult,
     ReportAnalysisCompleteResponse,
     ReportAnalysisConfirmationResponse,
     ReportAnalysisFailedResponse,
@@ -58,12 +61,59 @@ from app.security import (
     reference_digest,
     scan_and_mask,
 )
+from app.services.idempotency import (
+    completed_idempotency_record as _completed_idempotency_record,
+)
+from app.services.idempotency import (
+    lock_idempotency_key as _lock_idempotency_key,
+)
+from app.services.idempotency import (
+    payload_sha256 as _payload_sha256,
+)
+from app.services.lifecycle import (
+    CARD_ACCESS_TTL,
+    process_object_deletion_jobs,
+    queue_object_deletion,
+    retention_deadline,
+    utc_now,
+)
+from app.services.symbols import validate_symbol
 
-CARD_TTL = timedelta(hours=2)
+_AI_CALL_SLOTS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[int, asyncio.Semaphore]] = (
+    WeakKeyDictionary()
+)
 
 
-def _payload_sha256(payload: BaseModel) -> str:
-    return canonical_json_sha256(payload.model_dump(mode="json"))
+def _ai_call_slots(max_concurrency: int) -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    loop_slots = _AI_CALL_SLOTS.setdefault(loop, {})
+    return loop_slots.setdefault(max_concurrency, asyncio.Semaphore(max_concurrency))
+
+
+def _release_ai_call_slot(
+    slots: asyncio.Semaphore,
+    completed: asyncio.Future[object],
+) -> None:
+    slots.release()
+    if not completed.cancelled():
+        completed.exception()
+
+
+async def _extract_with_runtime_limits(
+    extractor: DualExtractor,
+    masked_text: str,
+    settings: Settings,
+) -> ExtractionResult:
+    slots = _ai_call_slots(settings.ai_max_concurrency)
+    async with asyncio.timeout(settings.ai_timeout_seconds):
+        await slots.acquire()
+        try:
+            provider_call = asyncio.create_task(extractor.extract(masked_text))
+        except BaseException:
+            slots.release()
+            raise
+        provider_call.add_done_callback(partial(_release_ai_call_slot, slots))
+        return await asyncio.shield(provider_call)
 
 
 def _analyze_payload_sha256(
@@ -75,17 +125,22 @@ def _analyze_payload_sha256(
     return canonical_json_sha256(value)
 
 
-async def _lock_idempotency_key(
-    session: AsyncSession,
+def _failed_analysis_response(
     principal_digest: bytes,
-    operation: str,
     client_request_id: UUID,
-) -> None:
-    digest = hashlib.sha256(
-        principal_digest + operation.encode() + client_request_id.bytes
+    safe_error_code: str,
+) -> ReportAnalysisResponse:
+    response_digest = hashlib.sha256(
+        principal_digest + b"ANALYZE_REPORT" + client_request_id.bytes
     ).digest()
-    lock_key = int.from_bytes(digest[:8], byteorder="big", signed=True)
-    await session.execute(select(func.pg_advisory_xact_lock(lock_key)))
+    return ReportAnalysisResponse(
+        root=ReportAnalysisFailedResponse(
+            analysis_id=UUID(bytes=response_digest[:16], version=4),
+            analysis_version=1,
+            status="failed",
+            error=SafeError(code=safe_error_code),
+        )
+    )
 
 
 def _analysis_response(report: Report, analysis: ReportAnalysis) -> ReportAnalysisResponse:
@@ -151,7 +206,10 @@ async def analyze_report(
     extractor: DualExtractor,
     attachment_store: LocalAttachmentStore,
     prepared_attachment: PreparedAttachment | None = None,
+    *,
+    now: datetime | None = None,
 ) -> ReportAnalysisResponse:
+    received_at = now or utc_now()
     try:
         normalized = normalize_report_text(request.text)
         scan = scan_and_mask(normalized)
@@ -166,6 +224,23 @@ async def analyze_report(
         await _lock_idempotency_key(
             session, principal_digest, "ANALYZE_REPORT", request.client_request_id
         )
+        failure_replay = await session.scalar(
+            select(IdempotencyRecord).where(
+                IdempotencyRecord.principal_digest == principal_digest,
+                IdempotencyRecord.operation == "ANALYZE_REPORT",
+                IdempotencyRecord.client_request_id == request.client_request_id,
+            )
+        )
+        if failure_replay is not None:
+            if not hmac.compare_digest(failure_replay.payload_sha256, payload_sha256):
+                raise ServiceError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 ID의 내용이 다릅니다.")
+            if failure_replay.safe_failure_code is None:
+                raise ServiceError(503, "ANALYSIS_UNAVAILABLE", "분석 결과를 사용할 수 없습니다.")
+            return _failed_analysis_response(
+                principal_digest,
+                request.client_request_id,
+                failure_replay.safe_failure_code,
+            )
         existing = await session.scalar(
             select(Report)
             .where(
@@ -194,6 +269,9 @@ async def analyze_report(
             masked_text=scan.masked_text,
             request_payload_sha256=payload_sha256,
             status=ReportStatus.ANALYSIS_PENDING.value,
+            received_at=received_at,
+            purge_at=retention_deadline(received_at),
+            updated_at=received_at,
         )
         analysis = ReportAnalysis(
             report=report,
@@ -221,23 +299,32 @@ async def analyze_report(
         try:
             await attachment_store.put(attachment_object_key, prepared_attachment.content)
         except AttachmentStorageError as exc:
+            deletion_job_id: UUID | None = None
             async with session.begin():
                 failed_report = await session.scalar(
                     select(Report).where(Report.id == report.id).with_for_update()
                 )
                 if failed_report is not None:
-                    await session.delete(failed_report)
-            try:
-                await attachment_store.delete(attachment_object_key)
-            except AttachmentStorageError:
-                pass
+                    deletion_job_id = await queue_object_deletion(
+                        session,
+                        attachment_object_key,
+                        now=now or utc_now(),
+                    )
+                    await session.execute(delete(Report).where(Report.id == failed_report.id))
+            if deletion_job_id is not None:
+                await process_object_deletion_jobs(
+                    session,
+                    attachment_store,
+                    now=now,
+                    batch_size=1,
+                    job_ids=(deletion_job_id,),
+                )
             raise ServiceError(
                 503, "ATTACHMENT_STORAGE_UNAVAILABLE", "이미지를 안전하게 저장하지 못했습니다."
             ) from exc
 
     try:
-        async with asyncio.timeout(settings.ai_timeout_seconds):
-            extraction = await extractor.extract(scan.masked_text)
+        extraction = await _extract_with_runtime_limits(extractor, scan.masked_text, settings)
         validate_evidence_quotes(extraction, scan.masked_text)
     except Exception as exc:
         if isinstance(exc, TimeoutError):
@@ -247,23 +334,59 @@ async def analyze_report(
         else:
             safe_error_code = "PROVIDER_UNAVAILABLE"
 
+        failed_at = now or utc_now()
+        deletion_job_id = None
         async with session.begin():
             stored_report = await session.scalar(
-                select(Report).where(Report.id == report.id).with_for_update()
+                select(Report)
+                .where(Report.id == report.id)
+                .options(selectinload(Report.attachment))
+                .with_for_update()
             )
-            stored_analysis = await session.scalar(
-                select(ReportAnalysis).where(ReportAnalysis.id == analysis.id).with_for_update()
-            )
-            if stored_report is None or stored_analysis is None:
+            if stored_report is None:
                 raise ServiceError(
                     503, "ANALYSIS_UNAVAILABLE", "분석 결과를 사용할 수 없습니다."
                 ) from exc
-            if stored_analysis.status == AnalysisStatus.PENDING.value:
-                stored_report.status = ReportStatus.ANALYSIS_FAILED.value
-                stored_analysis.status = AnalysisStatus.FAILED.value
-                stored_analysis.safe_error_code = safe_error_code
-                stored_analysis.completed_at = datetime.now(UTC)
-        return _analysis_response(stored_report, stored_analysis)
+            deletion_job_id = await queue_object_deletion(
+                session,
+                stored_report.attachment.object_key
+                if stored_report.attachment is not None
+                else None,
+                now=failed_at,
+            )
+            session.add_all(
+                (
+                    _completed_idempotency_record(
+                        principal_digest=principal_digest,
+                        operation="ANALYZE_REPORT",
+                        client_request_id=request.client_request_id,
+                        payload_sha256=payload_sha256,
+                        response_status=200,
+                        now=failed_at,
+                        safe_failure_code=safe_error_code,
+                    ),
+                    AuditLog(
+                        actor_type="customer_session",
+                        action="REPORT_ANALYSIS_FAILED_PURGED",
+                        resource_fingerprint=hashlib.sha256(stored_report.id.bytes).hexdigest(),
+                        created_at=failed_at,
+                    ),
+                )
+            )
+            await session.execute(delete(Report).where(Report.id == stored_report.id))
+        if deletion_job_id is not None:
+            await process_object_deletion_jobs(
+                session,
+                attachment_store,
+                now=now,
+                batch_size=1,
+                job_ids=(deletion_job_id,),
+            )
+        return _failed_analysis_response(
+            principal_digest,
+            request.client_request_id,
+            safe_error_code,
+        )
 
     async with session.begin():
         stored_report = await session.scalar(
@@ -283,7 +406,7 @@ async def analyze_report(
             stored_analysis.status = AnalysisStatus.SUCCEEDED.value
             stored_analysis.technical_candidate = extraction.technical.model_dump(mode="json")
             stored_analysis.consultation_candidate = extraction.consultation.model_dump(mode="json")
-            stored_analysis.completed_at = datetime.now(UTC)
+            stored_analysis.completed_at = now or utc_now()
     return _analysis_response(stored_report, stored_analysis)
 
 
@@ -327,10 +450,12 @@ async def confirm_report(
     principal_digest: bytes,
     request: ReportConfirmationRequest,
     settings: Settings,
+    *,
+    now: datetime | None = None,
 ) -> ReportConfirmedResponse:
     payload_sha256 = _payload_sha256(request)
     reference_key = settings.reference_hmac_key.get_secret_value().encode()
-    now = datetime.now(UTC)
+    current_time = now or utc_now()
 
     try:
         ensure_confirmation_strings_are_safe(
@@ -406,7 +531,12 @@ async def confirm_report(
         if report.status != ReportStatus.AWAITING_CONFIRMATION.value:
             raise ServiceError(409, "INVALID_REPORT_STATE", "확인할 수 없는 제보 상태입니다.")
 
-        confirmed_at = now
+        symbol_master_version_id = await validate_symbol(
+            session,
+            symbol_name=request.consultation.symbol_name,
+            symbol_code=request.consultation.symbol_code,
+        )
+        confirmed_at = current_time
         report.status = ReportStatus.CONFIRMED.value
         report.confirmed_at = confirmed_at
         technical = TechnicalSymptom(
@@ -421,12 +551,13 @@ async def confirm_report(
             reported_occurred_at=request.technical.reported_occurred_at,
             confirmed_at=confirmed_at,
         )
-        expires_at = now + CARD_TTL
+        expires_at = current_time + CARD_ACCESS_TTL
         card = ConsultationCard(
             report=report,
             action=request.consultation.action.value,
             symbol_name=request.consultation.symbol_name,
             symbol_code=request.consultation.symbol_code,
+            symbol_master_version_id=symbol_master_version_id,
             quantity=request.consultation.quantity,
             order_type=request.consultation.order_type.value,
             price_krw=request.consultation.price_krw,
@@ -451,7 +582,9 @@ async def delete_report(
     principal_digest: bytes,
     request: DeleteConsultationCardRequest,
     settings: Settings,
-) -> str | None:
+    *,
+    now: datetime | None = None,
+) -> UUID | None:
     payload_sha256 = _payload_sha256(request)
     operation = "DELETE_REPORT"
     reference_key = settings.reference_hmac_key.get_secret_value().encode()
@@ -468,7 +601,7 @@ async def delete_report(
         if replay is not None:
             if not hmac.compare_digest(replay.payload_sha256, payload_sha256):
                 raise ServiceError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 ID의 내용이 다릅니다.")
-            return replay.attachment_object_key
+            return None
 
         digest = reference_digest(request.reference_number, reference_key)
         report = await session.scalar(
@@ -481,35 +614,41 @@ async def delete_report(
         if report is None or not hmac.compare_digest(report.session_digest, principal_digest):
             raise ServiceError(404, "CARD_NOT_FOUND", "상담카드를 찾을 수 없습니다.")
 
-        attachment_object_key = (
-            report.attachment.object_key if report.attachment is not None else None
+        completed_at = now or utc_now()
+        deletion_job_id = await queue_object_deletion(
+            session,
+            report.attachment.object_key if report.attachment is not None else None,
+            now=completed_at,
         )
         session.add_all(
             (
-                IdempotencyRecord(
+                _completed_idempotency_record(
                     principal_digest=principal_digest,
                     operation=operation,
                     client_request_id=request.client_request_id,
                     payload_sha256=payload_sha256,
                     response_status=204,
-                    attachment_object_key=attachment_object_key,
+                    now=completed_at,
                 ),
                 AuditLog(
                     actor_type="customer_session",
                     action="REPORT_DELETED",
                     resource_fingerprint=hashlib.sha256(report.id.bytes).hexdigest(),
+                    created_at=completed_at,
                 ),
             )
         )
-        await session.delete(report)
-        return attachment_object_key
+        await session.execute(delete(Report).where(Report.id == report.id))
+        return deletion_job_id
 
 
 async def discard_report(
     session: AsyncSession,
     principal_digest: bytes,
     request: DiscardReportRequest,
-) -> str | None:
+    *,
+    now: datetime | None = None,
+) -> UUID | None:
     payload_sha256 = _payload_sha256(request)
     operation = "DISCARD_REPORT"
 
@@ -525,7 +664,7 @@ async def discard_report(
         if replay is not None:
             if not hmac.compare_digest(replay.payload_sha256, payload_sha256):
                 raise ServiceError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 ID의 내용이 다릅니다.")
-            return replay.attachment_object_key
+            return None
 
         report = await session.scalar(
             select(Report)
@@ -539,25 +678,29 @@ async def discard_report(
         if report.status != ReportStatus.AWAITING_CONFIRMATION.value:
             raise ServiceError(409, "REPORT_ALREADY_CONFIRMED", "이미 확인이 완료된 제보입니다.")
 
-        attachment_object_key = (
-            report.attachment.object_key if report.attachment is not None else None
+        completed_at = now or utc_now()
+        deletion_job_id = await queue_object_deletion(
+            session,
+            report.attachment.object_key if report.attachment is not None else None,
+            now=completed_at,
         )
         session.add_all(
             (
-                IdempotencyRecord(
+                _completed_idempotency_record(
                     principal_digest=principal_digest,
                     operation=operation,
                     client_request_id=request.client_request_id,
                     payload_sha256=payload_sha256,
                     response_status=204,
-                    attachment_object_key=attachment_object_key,
+                    now=completed_at,
                 ),
                 AuditLog(
                     actor_type="customer_session",
                     action="REPORT_DISCARDED",
                     resource_fingerprint=hashlib.sha256(report.id.bytes).hexdigest(),
+                    created_at=completed_at,
                 ),
             )
         )
-        await session.delete(report)
-        return attachment_object_key
+        await session.execute(delete(Report).where(Report.id == report.id))
+        return deletion_job_id

@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
@@ -9,19 +10,24 @@ from pydantic import (
     ConfigDict,
     Field,
     RootModel,
+    SecretStr,
+    StrictBool,
     StrictInt,
     field_validator,
     model_validator,
 )
 
 from app.codes import (
+    AgentRole,
     FieldStatus,
     IssueType,
     OrderAction,
     OrderType,
     ReportStatus,
     SubmissionStatus,
+    VerificationStatus,
 )
+from app.security import normalize_placeholders
 
 # FE-07 / AI-05: 원문에 날짜 없이 시각만 있으면(예: "09:03") CONFIRMED_FROM_TEXT로
 # 확정할 수 없다. 날짜+시각+UTC offset이 모두 있는 완전한 형식일 때만 허용한다.
@@ -44,8 +50,7 @@ def _evidence_contains_explicit_date_and_time(evidence: str | None) -> bool:
     if not evidence:
         return False
     return bool(
-        _KOREAN_FULL_DATE_PATTERN.search(evidence)
-        and _KOREAN_TIME_PATTERN.search(evidence)
+        _KOREAN_FULL_DATE_PATTERN.search(evidence) and _KOREAN_TIME_PATTERN.search(evidence)
     )
 
 
@@ -66,6 +71,11 @@ class CandidateField[T](StrictAiModel):
     status: FieldStatus
     evidence_quote: str | None
 
+    @field_validator("value", "evidence_quote", mode="before")
+    @classmethod
+    def normalize_placeholder_aliases(cls, value: object) -> object:
+        return normalize_placeholders(value) if isinstance(value, str) else value
+
     @model_validator(mode="after")
     def validate_field_state(self) -> "CandidateField[T]":
         # AI-05: 근거 없는 값은 AI가 임의로 확정하지 않는다.
@@ -77,19 +87,13 @@ class CandidateField[T](StrictAiModel):
         #   UNKNOWN, OUT_OF_SCOPE -> value=null 필수, evidence_quote=null 필수
         if self.status is FieldStatus.CONFIRMED_FROM_TEXT:
             if self.value is None or not self.evidence_quote:
-                raise ValueError(
-                    "CONFIRMED_FROM_TEXT fields require a value and evidence"
-                )
+                raise ValueError("CONFIRMED_FROM_TEXT fields require a value and evidence")
         elif self.status is FieldStatus.NEEDS_CONFIRMATION:
             if self.value is not None:
-                raise ValueError(
-                    "NEEDS_CONFIRMATION fields cannot contain a confirmed value"
-                )
+                raise ValueError("NEEDS_CONFIRMATION fields cannot contain a confirmed value")
         else:  # UNKNOWN, OUT_OF_SCOPE
             if self.value is not None or self.evidence_quote is not None:
-                raise ValueError(
-                    f"{self.status.value} fields cannot contain a value or evidence"
-                )
+                raise ValueError(f"{self.status.value} fields cannot contain a value or evidence")
         return self
 
 
@@ -110,8 +114,8 @@ class TechnicalCandidate(StrictAiModel):
                 field.value is not None
                 and _FULL_DATETIME_WITH_OFFSET.fullmatch(field.value) is not None
             )
-            evidence_has_explicit_date_and_time = (
-                _evidence_contains_explicit_date_and_time(field.evidence_quote)
+            evidence_has_explicit_date_and_time = _evidence_contains_explicit_date_and_time(
+                field.evidence_quote
             )
             if not value_is_full_datetime or not evidence_has_explicit_date_and_time:
                 raise ValueError(
@@ -140,8 +144,8 @@ class ConsultationCandidate(StrictAiModel):
                 field.value is not None
                 and _FULL_DATETIME_WITH_OFFSET.fullmatch(field.value) is not None
             )
-            evidence_has_explicit_date_and_time = (
-                _evidence_contains_explicit_date_and_time(field.evidence_quote)
+            evidence_has_explicit_date_and_time = _evidence_contains_explicit_date_and_time(
+                field.evidence_quote
             )
             if not value_is_full_datetime or not evidence_has_explicit_date_and_time:
                 raise ValueError(
@@ -166,6 +170,11 @@ class ReportCreateRequest(ApiModel):
     client_request_id: UUID4
     text: str
 
+    @field_validator("text", mode="before")
+    @classmethod
+    def normalize_placeholder_aliases(cls, value: object) -> object:
+        return normalize_placeholders(value) if isinstance(value, str) else value
+
 
 class TechnicalConfirmation(ApiModel):
     issue_type: IssueType
@@ -173,6 +182,11 @@ class TechnicalConfirmation(ApiModel):
     submission_status: SubmissionStatus
     error_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
     reported_occurred_at: datetime | None
+
+    @field_validator("symptom", "error_code", mode="before")
+    @classmethod
+    def normalize_placeholder_aliases(cls, value: object) -> object:
+        return normalize_placeholders(value) if isinstance(value, str) else value
 
     @field_validator("reported_occurred_at")
     @classmethod
@@ -185,11 +199,16 @@ class TechnicalConfirmation(ApiModel):
 class ConsultationConfirmation(ApiModel):
     action: OrderAction
     symbol_name: str | None = Field(default=None, min_length=1, max_length=80)
-    symbol_code: str | None = Field(default=None, pattern=r"^[0-9]{6}$")
+    symbol_code: str | None = Field(default=None, pattern=r"^[0-9A-Z]{6}$")
     quantity: StrictInt | None = Field(default=None, gt=0)
     order_type: OrderType
     price_krw: StrictInt | None = Field(default=None, gt=0)
     attempted_at: datetime | None
+
+    @field_validator("symbol_name", "symbol_code", mode="before")
+    @classmethod
+    def normalize_placeholder_aliases(cls, value: object) -> object:
+        return normalize_placeholders(value) if isinstance(value, str) else value
 
     @field_validator("attempted_at")
     @classmethod
@@ -215,6 +234,11 @@ class ReportConfirmationRequest(ApiModel):
     technical: TechnicalConfirmation
     consultation: ConsultationConfirmation
     client_request_id: UUID4
+
+    @field_validator("masked_text", mode="before")
+    @classmethod
+    def normalize_placeholder_aliases(cls, value: object) -> object:
+        return normalize_placeholders(value) if isinstance(value, str) else value
 
 
 class AnalysisResponse(ApiModel):
@@ -314,3 +338,138 @@ class DiscardReportRequest(ApiModel):
 class DeleteConsultationCardRequest(ApiModel):
     reference_number: str = Field(pattern=r"^KBSOS-[A-Z2-7]{26}$")
     client_request_id: UUID4
+
+
+class AgentLoginRequest(ApiModel):
+    employee_id: str = Field(min_length=4, max_length=32, pattern=r"^[A-Z0-9_-]{4,32}$")
+    password: SecretStr = Field(min_length=1, max_length=128)
+
+    @field_validator("employee_id", mode="before")
+    @classmethod
+    def normalize_employee_id(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return unicodedata.normalize("NFC", value.strip()).upper()
+
+
+class AgentLoginResponse(ApiModel):
+    access_token: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    token_type: Literal["bearer"]
+    expires_at: datetime
+    agent_label: str
+    role: AgentRole
+
+
+class ConsultationCardListItem(ApiModel):
+    card_id: UUID
+    received_at: datetime
+    issued_at: datetime
+    expires_at: datetime
+    expired: bool
+    can_open: bool
+    consultation_status: Literal["OPEN", "VERIFIED"]
+    technical_symptom: str | None
+    verification_status: VerificationStatus | None
+
+
+class ConsultationCardListResponse(ApiModel):
+    items: list[ConsultationCardListItem]
+    limit: int
+    offset: int
+
+
+class ConsultationCardSelector(ApiModel):
+    reference_number: str | None = Field(
+        default=None,
+        pattern=r"^KBSOS-[A-Z2-7]{26}$",
+    )
+    card_id: UUID | None = None
+
+    @field_validator("reference_number", mode="before")
+    @classmethod
+    def normalize_reference_number(cls, value: object) -> object:
+        return value.strip().upper() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def require_exactly_one_selector(self) -> "ConsultationCardSelector":
+        if (self.reference_number is None) == (self.card_id is None):
+            raise ValueError("exactly one of reference_number or card_id is required")
+        return self
+
+
+class AgentTechnicalDetail(ApiModel):
+    issue_type: IssueType
+    symptom: str | None
+    submission_status: SubmissionStatus
+    error_code: str | None
+    reported_occurred_at: datetime | None
+
+
+class ConsultationCardLookupRequest(ConsultationCardSelector):
+    pass
+
+
+class ConsultationCardDetail(ApiModel):
+    card_id: UUID
+    created_at: datetime
+    expires_at: datetime
+    technical: AgentTechnicalDetail
+    consultation: ConsultationConfirmation
+    verification_status: VerificationStatus | None
+    safety_notice: str
+    has_attachment: bool
+    related_signals: list[dict[str, object]]
+
+
+VerificationFieldName = Literal[
+    "action",
+    "symbol_name",
+    "symbol_code",
+    "quantity",
+    "order_type",
+    "price_krw",
+    "submission_status",
+]
+
+
+class AgentVerificationRequest(ConsultationCardSelector):
+    action: OrderAction
+    symbol_name: str | None = Field(default=None, min_length=1, max_length=80)
+    symbol_code: str | None = Field(default=None, pattern=r"^[0-9A-Z]{6}$")
+    quantity: StrictInt | None = Field(default=None, gt=0)
+    order_type: OrderType
+    price_krw: StrictInt | None = Field(default=None, gt=0)
+    submission_status: SubmissionStatus
+    order_history_checked: StrictBool
+    client_request_id: UUID4
+
+    @field_validator("symbol_name", "symbol_code", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = normalize_placeholders(unicodedata.normalize("NFC", value.strip()))
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_order_price(self) -> "AgentVerificationRequest":
+        if self.order_type is OrderType.MARKET and self.price_krw is not None:
+            raise ValueError("market orders cannot contain price_krw")
+        if self.order_type is OrderType.LIMIT and self.price_krw is None:
+            raise ValueError("limit orders require price_krw")
+        return self
+
+
+class VerificationFieldResult(ApiModel):
+    field: VerificationFieldName
+    status: VerificationStatus
+    customer_value: str | int | None
+    agent_value: str | int | None
+
+
+class AgentVerificationResponse(ApiModel):
+    verification_id: UUID
+    status: VerificationStatus
+    fields: list[VerificationFieldResult]
+    mismatch_fields: list[VerificationFieldName]
+    saved_at: datetime
