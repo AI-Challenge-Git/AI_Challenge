@@ -581,9 +581,7 @@ class RealDualExtractor:
         )
         self._model = "openai/gpt-oss-20b"
 
-    def _coerce_types(
-        self, field_dict: dict[str, Any], value_type: type | None
-    ) -> dict[str, Any]:
+    def _coerce_types(self, field_dict: dict[str, Any], value_type: type | None) -> dict[str, Any]:
         """
         문자열로 온 값을 실제 타입(Enum, int)으로 바꾸는 타입 변환만 수행한다.
         규칙 위반(status/value 불일치) 여부는 여기서 손대지 않고
@@ -603,16 +601,12 @@ class RealDualExtractor:
             # 다른 형태를 반환한 경우. AttributeError로 죽지 않고 AI-07이
             # 요구하는 INVALID_SCHEMA 실패 경로(correction retry)로 보낸다.
             raise ValueError(
-                f"필드가 {{value, status, evidence_quote}} 객체가 아닙니다: "
-                f"{field_dict!r}"
+                f"필드가 {{value, status, evidence_quote}} 객체가 아닙니다: {field_dict!r}"
             )
         if field_dict.get("status") is not None:
             field_dict["status"] = FieldStatus(field_dict["status"])
 
-        if (
-            field_dict["status"] == FieldStatus.UNKNOWN
-            and field_dict.get("value") == "UNKNOWN"
-        ):
+        if field_dict["status"] == FieldStatus.UNKNOWN and field_dict.get("value") == "UNKNOWN":
             field_dict["value"] = None
 
         if value_type is not None and field_dict.get("value") is not None:
@@ -662,20 +656,58 @@ class RealDualExtractor:
         _classify_issue_type_focused()(전용 LLM 호출)가 담당한다.
         """
         failure_terms = (
-            "안 됨", "안됨", "안 되", "안 돼", "안 됩", "않", "못", "오류", "실패", "멈",
-            "로딩", "무반응", "빈 화면", "표시되지", "나오지", "틀렸",
-            "오지 않", "거부", "끊", "계속 돌아", "바뀌지", "되지",
-            "먹통", "아무 반응", "빙글빙글", "거절돼", "되돌아", "돌아옵",
-            "나타나지", "0으로 표시",
+            "안 됨",
+            "안됨",
+            "안 되",
+            "안 돼",
+            "안 됩",
+            "않",
+            "못",
+            "오류",
+            "실패",
+            "멈",
+            "로딩",
+            "무반응",
+            "빈 화면",
+            "표시되지",
+            "나오지",
+            "틀렸",
+            "오지 않",
+            "거부",
+            "끊",
+            "계속 돌아",
+            "바뀌지",
+            "되지",
+            "먹통",
+            "아무 반응",
+            "빙글빙글",
+            "거절돼",
+            "되돌아",
+            "돌아옵",
+            "나타나지",
+            "0으로 표시",
         )
         has_failure = any(term in text for term in failure_terms)
 
         information_topics = (
-            "수수료", "비용", "방법", "절차", "순서", "일정", "예정 종목",
-            "등록", "설치", "이전",
+            "수수료",
+            "비용",
+            "방법",
+            "절차",
+            "순서",
+            "일정",
+            "예정 종목",
+            "등록",
+            "설치",
+            "이전",
         )
         information_requests = (
-            "궁금", "알려", "설명해", "얼마", "보고 싶", "확인하고 싶",
+            "궁금",
+            "알려",
+            "설명해",
+            "얼마",
+            "보고 싶",
+            "확인하고 싶",
             "알고 싶",
         )
         if (
@@ -686,41 +718,89 @@ class RealDualExtractor:
             return IssueType.UNRELATED_OR_AMBIGUOUS
 
         network_terms = (
-            "와이파이", "Wi-Fi", "wifi", "모바일 데이터", "LTE", "5G",
-            "네트워크", "통신 연결", "무선망",
+            "와이파이",
+            "Wi-Fi",
+            "wifi",
+            "모바일 데이터",
+            "LTE",
+            "5G",
+            "네트워크",
+            "통신 연결",
+            "무선망",
         )
         device_terms = (
-            "다른 휴대전화", "다른 스마트폰", "다른 기기", "제 기기에서만",
-            "내 기기에서만", "제 휴대전화에서만", "내 휴대전화에서만",
-            "이 휴대폰에서만", "이 스마트폰에서만", "이 기기에서만",
-            "제 스마트폰에서만", "제 휴대폰에서만",
-            "다른 폰", "현재 단말에서만", "해당 단말에서만",
+            "다른 휴대전화",
+            "다른 스마트폰",
+            "다른 기기",
+            "제 기기에서만",
+            "내 기기에서만",
+            "제 휴대전화에서만",
+            "내 휴대전화에서만",
+            "이 휴대폰에서만",
+            "이 스마트폰에서만",
+            "이 기기에서만",
+            "제 스마트폰에서만",
+            "제 휴대폰에서만",
+            "다른 폰",
+            "현재 단말에서만",
+            "해당 단말에서만",
         )
-        if has_failure and not self._has_network_negation(text) and (
-            any(term in text for term in network_terms)
-            or any(term in text for term in device_terms)
+        if (
+            has_failure
+            and not self._has_network_negation(text)
+            and (
+                any(term in text for term in network_terms)
+                or any(term in text for term in device_terms)
+            )
         ):
             return IssueType.DEVICE_NETWORK_SUSPECTED
 
         login_terms = (
-            "로그인", "비밀번호", "인증번호", "본인인증", "계정 접속",
-            "계정", "아이디로 접속",
+            "로그인",
+            "비밀번호",
+            "인증번호",
+            "본인인증",
+            "계정 접속",
+            "계정",
+            "아이디로 접속",
         )
         if has_failure and any(term in text for term in login_terms):
             return IssueType.LOGIN_ACCESS_FAILURE
 
         balance_terms = (
-            "잔고", "보유 주식", "보유 종목", "체결 내역", "체결내역",
-            "주문 내역", "주문내역", "계좌 잔액", "보유 목록", "체결 기록",
-            "예수금", "예탁 자산", "예탁자산", "보유 수량", "체결 건", "주문 기록",
+            "잔고",
+            "보유 주식",
+            "보유 종목",
+            "체결 내역",
+            "체결내역",
+            "주문 내역",
+            "주문내역",
+            "계좌 잔액",
+            "보유 목록",
+            "체결 기록",
+            "예수금",
+            "예탁 자산",
+            "예탁자산",
+            "보유 수량",
+            "체결 건",
+            "주문 기록",
         )
         if has_failure and any(term in text for term in balance_terms):
             return IssueType.BALANCE_INQUIRY_ERROR
 
         result_terms = (
-            "접수됐는지", "접수되었는지", "접수 여부", "주문번호",
-            "체결 여부", "처리 결과", "주문 결과", "들어갔는지",
-            "접수 번호", "체결된 건지", "미체결", "실제 주문",
+            "접수됐는지",
+            "접수되었는지",
+            "접수 여부",
+            "주문번호",
+            "체결 여부",
+            "처리 결과",
+            "주문 결과",
+            "들어갔는지",
+            "접수 번호",
+            "체결된 건지",
+            "미체결",
+            "실제 주문",
         )
         if any(term in text for term in result_terms) and (
             has_failure or "모르" in text or "확인" in text
@@ -729,8 +809,14 @@ class RealDualExtractor:
 
         order_terms = ("주문", "매수", "매도")
         submission_terms = (
-            "버튼", "확인 후", "제출", "주문을 넣", "전송 화면", "진행 표시",
-            "확정", "확인창",
+            "버튼",
+            "확인 후",
+            "제출",
+            "주문을 넣",
+            "전송 화면",
+            "진행 표시",
+            "확정",
+            "확인창",
         )
         if (
             has_failure
@@ -740,9 +826,18 @@ class RealDualExtractor:
             return IssueType.ORDER_SUBMISSION_FAILURE
 
         information_terms = (
-            "수수료", "청약 일정", "공모주", "주가 전망", "증시 전망", "사용법",
-            "변경 방법", "방법을 알려", "절차를 알려", "거래 비용",
-            "상장 종목 일정", "설치하는 방법",
+            "수수료",
+            "청약 일정",
+            "공모주",
+            "주가 전망",
+            "증시 전망",
+            "사용법",
+            "변경 방법",
+            "방법을 알려",
+            "절차를 알려",
+            "거래 비용",
+            "상장 종목 일정",
+            "설치하는 방법",
         )
         if any(term in text for term in information_terms) and not has_failure:
             return IssueType.UNRELATED_OR_AMBIGUOUS
@@ -781,23 +876,54 @@ class RealDualExtractor:
         """전용 LLM 후보가 원문의 최소 유형 단서를 갖는지 검증한다."""
         evidence_terms = {
             IssueType.ORDER_SUBMISSION_FAILURE: (
-                "주문", "매수", "매도", "확정", "전송",
+                "주문",
+                "매수",
+                "매도",
+                "확정",
+                "전송",
             ),
             IssueType.ORDER_RESULT_UNCONFIRMED: (
-                "주문", "접수", "주문번호", "체결", "미체결",
+                "주문",
+                "접수",
+                "주문번호",
+                "체결",
+                "미체결",
             ),
             IssueType.LOGIN_ACCESS_FAILURE: (
-                "로그인", "비밀번호", "인증", "계정", "아이디",
+                "로그인",
+                "비밀번호",
+                "인증",
+                "계정",
+                "아이디",
             ),
             IssueType.BALANCE_INQUIRY_ERROR: (
-                "잔고", "예수금", "보유", "체결", "주문 기록", "주문 내역",
+                "잔고",
+                "예수금",
+                "보유",
+                "체결",
+                "주문 기록",
+                "주문 내역",
             ),
             IssueType.DEVICE_NETWORK_SUSPECTED: (
-                "와이파이", "Wi-Fi", "wifi", "LTE", "5G", "네트워크",
-                "통신", "휴대폰에서만", "스마트폰에서만", "기기에서만",
+                "와이파이",
+                "Wi-Fi",
+                "wifi",
+                "LTE",
+                "5G",
+                "네트워크",
+                "통신",
+                "휴대폰에서만",
+                "스마트폰에서만",
+                "기기에서만",
             ),
             IssueType.UNRELATED_OR_AMBIGUOUS: (
-                "수수료", "비용", "일정", "방법", "절차", "전망", "사용법",
+                "수수료",
+                "비용",
+                "일정",
+                "방법",
+                "절차",
+                "전망",
+                "사용법",
             ),
         }
         if issue_type is IssueType.UNKNOWN:
@@ -805,10 +931,7 @@ class RealDualExtractor:
         terms = evidence_terms.get(issue_type, ())
         if not any(term in text for term in terms):
             return False
-        if (
-            issue_type is IssueType.DEVICE_NETWORK_SUSPECTED
-            and self._has_network_negation(text)
-        ):
+        if issue_type is IssueType.DEVICE_NETWORK_SUSPECTED and self._has_network_negation(text):
             return False
         return True
 
@@ -833,9 +956,8 @@ class RealDualExtractor:
         if candidate is not None and candidate is not issue_type.value:
             return True
 
-        if (
-            issue_type.value is IssueType.DEVICE_NETWORK_SUSPECTED
-            and self._has_network_negation(masked_text)
+        if issue_type.value is IssueType.DEVICE_NETWORK_SUSPECTED and self._has_network_negation(
+            masked_text
         ):
             return True
 
@@ -855,9 +977,7 @@ class RealDualExtractor:
                 "처리 결과",
                 "주문 결과",
             )
-            has_submission_stall = any(
-                term in masked_text for term in submission_stall_terms
-            )
+            has_submission_stall = any(term in masked_text for term in submission_stall_terms)
             has_result_question = any(term in masked_text for term in result_terms)
             if has_submission_stall and not has_result_question:
                 return True
@@ -896,9 +1016,7 @@ class RealDualExtractor:
 
         return content, None, None
 
-    def _classify_issue_type_focused(
-        self, masked_text: str
-    ) -> tuple[IssueType, str | None] | None:
+    def _classify_issue_type_focused(self, masked_text: str) -> tuple[IssueType, str | None] | None:
         """
         짧은 전용 호출로 issue_type과 근거 조각을 함께 판정한다.
 
@@ -979,21 +1097,17 @@ class RealDualExtractor:
         """
         issue_type = result.technical.issue_type
         already_confirmed = (
-            issue_type.status is FieldStatus.CONFIRMED_FROM_TEXT
-            and issue_type.value is not None
+            issue_type.status is FieldStatus.CONFIRMED_FROM_TEXT and issue_type.value is not None
         )
-        if already_confirmed and not self._has_issue_type_conflict(
-            masked_text, result
-        ):
+        if already_confirmed and not self._has_issue_type_conflict(masked_text, result):
             return 0, False
 
         classified = self._classify_issue_type_focused(masked_text)
         if classified is None:
             return 1, False
         classified_type, evidence_quote = classified
-        if (
-            classified_type is not IssueType.UNKNOWN
-            and not self._issue_type_has_minimum_evidence(classified_type, masked_text)
+        if classified_type is not IssueType.UNKNOWN and not self._issue_type_has_minimum_evidence(
+            classified_type, masked_text
         ):
             return 1, False
 
@@ -1010,9 +1124,7 @@ class RealDualExtractor:
         current = (issue_type.value, issue_type.status, issue_type.evidence_quote)
         return 1, current != previous
 
-    def _validate_evidence_quotes(
-        self, masked_text: str, result: ExtractionResult
-    ) -> None:
+    def _validate_evidence_quotes(self, masked_text: str, result: ExtractionResult) -> None:
         """모든 non-null evidence_quote가 실제 masked_text의 substring인지 검증한다."""
         fields = [
             *result.technical.__dict__.items(),
@@ -1052,9 +1164,7 @@ class RealDualExtractor:
                 f"'시장가'가 없습니다. (evidence_quote={order_type.evidence_quote!r})"
             )
 
-    def _apply_safe_order_type_fallback(
-        self, masked_text: str, result: ExtractionResult
-    ) -> bool:
+    def _apply_safe_order_type_fallback(self, masked_text: str, result: ExtractionResult) -> bool:
         """
         원문에 "지정가"/"시장가"라는 단어 자체가 전혀 없는데도 모델이
         order_type을 LIMIT/MARKET으로 확정한, 명백히 근거 없는 경우에만
@@ -1080,9 +1190,7 @@ class RealDualExtractor:
         order_type.evidence_quote = None
         return True
 
-    def _run_post_validation(
-        self, masked_text: str, result: ExtractionResult
-    ) -> None:
+    def _run_post_validation(self, masked_text: str, result: ExtractionResult) -> None:
         """Pydantic 검증 이후 evidence grounding과 semantic validation을 수행한다."""
         self._validate_evidence_quotes(masked_text, result)
         self._validate_order_type_semantic(result)
@@ -1122,9 +1230,7 @@ class RealDualExtractor:
                 tech["submission_status"], SubmissionStatus
             )
             tech["error_code"] = self._coerce_types(tech["error_code"], None)
-            tech["reported_occurred_at"] = self._coerce_types(
-                tech["reported_occurred_at"], None
-            )
+            tech["reported_occurred_at"] = self._coerce_types(tech["reported_occurred_at"], None)
 
             cons = parsed["consultation"]
             cons["action"] = self._coerce_types(cons["action"], OrderAction)
@@ -1181,34 +1287,29 @@ class RealDualExtractor:
                 f"{correction_detail}\n\n"
                 "특히 status가 NEEDS_CONFIRMATION, UNKNOWN, OUT_OF_SCOPE인 "
                 "필드는 value가 반드시 null이어야 합니다.\n\n"
-
                 "날짜·시각 규칙을 다시 확인하세요. 원문에 시각만 있고 연도·월·일이 "
                 "없으면 reported_occurred_at과 attempted_at에 임의의 날짜를 생성하지 "
                 "말고 NEEDS_CONFIRMATION + value=null로 처리하세요.\n\n"
-
                 "반대로 원문에 4자리 또는 2자리 연도, 월, 일, 시각이 모두 "
                 "명시되어 있으면 완전한 날짜·시각이므로 반드시 "
                 "CONFIRMED_FROM_TEXT로 처리하세요. 완전한 날짜·시각을 "
                 "NEEDS_CONFIRMATION으로 낮추면 안 됩니다.\n\n"
-
                 "원문에서 연도가 두 자리인 경우 앞에 '20'을 붙여 4자리 연도로 "
                 "정규화하세요. 예를 들어 '26년'은 '2026년'으로 해석합니다. "
                 "value는 정규화된 4자리 연도와 UTC offset을 포함한 ISO 8601 "
                 "형식으로 작성하세요. evidence_quote는 원문의 연도 표현을 바꾸지 "
                 "말고 그대로 복사하세요. 원문이 '26년'이면 evidence_quote에도 "
                 "'26년'을 사용해야 합니다.\n\n"
-
                 "필수 필드를 절대 생략하지 마세요. technical의 issue_type, symptom, "
                 "submission_status, error_code, reported_occurred_at과 consultation의 "
                 "action, symbol_name, symbol_code, quantity, order_type, price_krw, "
                 "attempted_at을 예외 없이 전부 포함하세요. 정보가 없는 필드도 "
                 '{"value": null, "status": "UNKNOWN", "evidence_quote": null} '
-                "형태로 반드시 포함해야 합니다. 특히 status가 \"UNKNOWN\"인데 "
+                '형태로 반드시 포함해야 합니다. 특히 status가 "UNKNOWN"인데 '
                 'value 필드에 문자열 "UNKNOWN"을 넣는 것은 잘못된 형식입니다. '
                 "status와 value는 다른 필드입니다. status=UNKNOWN이면 value는 "
                 "반드시 null이어야 하며 evidence_quote도 반드시 null이어야 "
                 "합니다. UNKNOWN이라는 enum 문자열을 value에 넣지 마세요.\n\n"
-
                 "issue_type 분류 경계를 다시 확인하세요. 주문 버튼·확인·제출 "
                 "단계의 멈춤이나 로딩은 ORDER_SUBMISSION_FAILURE, 주문 시도 후 "
                 "접수 여부·주문번호·체결 여부를 모르면 "
@@ -1219,33 +1320,27 @@ class RealDualExtractor:
                 "문의는 UNRELATED_OR_AMBIGUOUS이고, 장애 표현은 있지만 기능을 "
                 "특정할 수 없을 때만 issue_type을 UNKNOWN 형식(value=null, "
                 "status=UNKNOWN, evidence_quote=null)으로 처리하세요.\n\n"
-
                 "issue_type을 분류할 수 있으면 IssueType 문자열은 반드시 value에 "
                 "넣고 status는 CONFIRMED_FROM_TEXT로 작성하세요. evidence_quote는 "
                 "현재 고객 제보에서 정확히 복사하세요. IssueType 문자열을 status에 "
                 "넣지 마세요.\n\n"
-
-                "order_type은 원문에 정확히 \"지정가\" 또는 \"시장가\"라는 단어가 "
-                "있을 때만 채우세요. \"매도 주문을 넣었다\"는 표현만으로는 "
+                'order_type은 원문에 정확히 "지정가" 또는 "시장가"라는 단어가 '
+                '있을 때만 채우세요. "매도 주문을 넣었다"는 표현만으로는 '
                 "LIMIT 또는 MARKET을 추론할 수 없습니다. 이런 경우 반드시 "
                 "value=null, status=UNKNOWN, evidence_quote=null로 처리하세요. "
                 "원문에 없는 단어를 근거로 생성하지 마세요.\n\n"
-
                 "evidence_quote는 원문을 요약하거나 의역하지 말고 어미와 조사까지 "
                 "한 글자도 다르지 않게 정확히 복사한 부분 문자열이어야 합니다. "
                 "새로운 문장을 만들지 말고 원문에서 관련 부분을 그대로 "
                 "복사하세요.\n\n"
-
                 "attempted_at은 주식 주문 시도 시각에만 사용하세요. 로그인, 앱 실행, "
                 "이체, 조회 등 주문과 무관한 행동의 시각을 attempted_at에 넣으면 "
                 "안 됩니다. 로그인 관련 문의는 issue_type을 "
                 "LOGIN_ACCESS_FAILURE로 분류하되 주문 관련 필드는 UNKNOWN으로 "
                 "처리하세요.\n\n"
-
                 "반드시 JSON 객체만 반환하세요. 설명, 분석, 코드블록 표시(```), "
                 "JSON 앞뒤 문장을 출력하지 마세요. 응답의 첫 문자는 { 이어야 하고 "
                 "마지막 문자는 } 이어야 합니다.\n\n"
-
                 "이 규칙을 모두 지켜 동일한 제보를 처음부터 다시 분석하세요."
             ),
         }
@@ -1313,9 +1408,7 @@ class RealDualExtractor:
                 self._build_correction_message(last_detail),
             ]
 
-            raw_content_n, failure_reason_n, detail_n = self._call_llm(
-                correction_messages
-            )
+            raw_content_n, failure_reason_n, detail_n = self._call_llm(correction_messages)
             if failure_reason_n is not None:
                 return ExtractOutcome(
                     None,
@@ -1327,14 +1420,12 @@ class RealDualExtractor:
                 )
             assert raw_content_n is not None
 
-            result_n, failure_reason_n, detail_n, fallback_applied_n = (
-                self._parse_and_validate(
+            result_n, failure_reason_n, detail_n, fallback_applied_n = self._parse_and_validate(
                 masked_text, raw_content_n
-                )
             )
             if result_n is not None:
-                classifier_calls, classifier_override = (
-                    self._apply_focused_issue_type(masked_text, result_n)
+                classifier_calls, classifier_override = self._apply_focused_issue_type(
+                    masked_text, result_n
                 )
                 return ExtractOutcome(
                     result_n,
@@ -1367,10 +1458,7 @@ class RealDualExtractor:
 if __name__ == "__main__":
     extractor = RealDualExtractor()
 
-    test_text = (
-        "2026년 8월 15일 오전 9시 3분에 삼성전자 매도 주문을 넣었는데 "
-        "계속 로딩만 됩니다."
-    )
+    test_text = "2026년 8월 15일 오전 9시 3분에 삼성전자 매도 주문을 넣었는데 계속 로딩만 됩니다."
     print("입력:", test_text)
     print("모델:", extractor._model)
     print("요청 시작...")

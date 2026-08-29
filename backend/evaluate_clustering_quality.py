@@ -11,7 +11,6 @@ from app.clustering import (
 from app.embedding import get_symptom_embedding
 from evaluate_embedding_pairs import CASES
 
-
 EXCLUDED_ISSUE_TYPES = {"UNKNOWN", "UNRELATED_OR_AMBIGUOUS"}
 ORDER_SEEDS = range(10)
 THRESHOLD_CANDIDATES = [value / 100 for value in range(79, 86)]
@@ -19,10 +18,7 @@ THRESHOLD_CANDIDATES = [value / 100 for value in range(79, 86)]
 
 def canonical_member_sets(groups):
     """대표와 그룹 출력 순서를 제외한 군집 멤버 집합."""
-    return frozenset(
-        frozenset(member.technical_symptom_id for member in group)
-        for group in groups
-    )
+    return frozenset(frozenset(member.technical_symptom_id for member in group) for group in groups)
 
 
 def membership_by_id(groups):
@@ -38,10 +34,7 @@ def safe_divide(numerator, denominator):
 
 
 def build_similarity_cache(reports):
-    embedding_by_id = {
-        report_id: embedding
-        for report_id, _, embedding in reports
-    }
+    embedding_by_id = {report_id: embedding for report_id, _, embedding in reports}
     cache = {}
     for left_id, right_id in combinations(sorted(embedding_by_id), 2):
         left = embedding_by_id[left_id]
@@ -87,15 +80,15 @@ def cluster_medoid_candidate(reports, cache, threshold):
                         cached_similarity(cache, report_id, other_id)
                         for other_id in remaining
                         if other_id != report_id
-                    ) / max(len(remaining) - 1, 1),
+                    )
+                    / max(len(remaining) - 1, 1),
                     report_id,
                 ),
             )
             members = frozenset(
                 report_id
                 for report_id in remaining
-                if cached_similarity(cache, representative_id, report_id)
-                >= threshold
+                if cached_similarity(cache, representative_id, report_id) >= threshold
             )
             result.append(members)
             remaining.difference_update(members)
@@ -108,8 +101,7 @@ def cluster_agglomerative_candidate(reports, cache, threshold, linkage):
     result = []
     for issue_type in sorted(candidates_by_issue_type):
         clusters = [
-            frozenset({report_id})
-            for report_id in sorted(candidates_by_issue_type[issue_type])
+            frozenset({report_id}) for report_id in sorted(candidates_by_issue_type[issue_type])
         ]
         while True:
             merge_candidates = []
@@ -170,10 +162,7 @@ def calculate_cluster_metrics(member_sets, case_by_id):
     ]
     tp = fp = fn = tn = 0
     for left_id, right_id in combinations(eligible_ids, 2):
-        true_same = (
-            case_by_id[left_id]["cluster_label"]
-            == case_by_id[right_id]["cluster_label"]
-        )
+        true_same = case_by_id[left_id]["cluster_label"] == case_by_id[right_id]["cluster_label"]
         predicted_same = membership[left_id] == membership[right_id]
         if true_same and predicted_same:
             tp += 1
@@ -215,9 +204,7 @@ def main():
     for algorithm in ("medoid", "complete", "average"):
         for threshold in THRESHOLD_CANDIDATES:
             if algorithm == "medoid":
-                member_sets = cluster_medoid_candidate(
-                    reports, similarity_cache, threshold
-                )
+                member_sets = cluster_medoid_candidate(reports, similarity_cache, threshold)
             else:
                 member_sets = cluster_agglomerative_candidate(
                     reports,
@@ -251,9 +238,7 @@ def main():
     if best_candidate is None:
         print("Precision 0.80 이상인 후보가 없습니다.")
     else:
-        algorithm, threshold, tp, fp, fn, tn, precision, recall, f1, _ = (
-            best_candidate
-        )
+        algorithm, threshold, tp, fp, fn, tn, precision, recall, f1, _ = best_candidate
         print(
             f"algorithm={algorithm}, threshold={threshold:.2f}, "
             f"TP={tp}, FP={fp}, FN={fn}, TN={tn}, "
@@ -295,8 +280,7 @@ def main():
     for group_index, group in enumerate(groups, 1):
         member_ids = [member.technical_symptom_id for member in group]
         labels = Counter(
-            case_by_id[member_id]["cluster_label"] or "평가 제외"
-            for member_id in member_ids
+            case_by_id[member_id]["cluster_label"] or "평가 제외" for member_id in member_ids
         )
         print(
             f"[{group_index:02d}] 대표={group[0].technical_symptom_id} "
@@ -331,23 +315,13 @@ def main():
         if len(labels) <= 1:
             continue
         overmerged = True
-        member_ids = [
-            case_id
-            for case_id in eligible_ids
-            if memberships[case_id] == group_index
-        ]
-        print(
-            f"예측 군집 {group_index + 1}: labels={sorted(labels)}, "
-            f"members={member_ids}"
-        )
+        member_ids = [case_id for case_id in eligible_ids if memberships[case_id] == group_index]
+        print(f"예측 군집 {group_index + 1}: labels={sorted(labels)}, members={member_ids}")
     if not overmerged:
         print("없음")
 
     eligible_singletons = sum(
-        1
-        for group in groups
-        if len(group) == 1
-        and group[0].technical_symptom_id in eligible_ids
+        1 for group in groups if len(group) == 1 and group[0].technical_symptom_id in eligible_ids
     )
     print(f"\n평가 대상 singleton 수: {eligible_singletons}")
 
@@ -370,8 +344,7 @@ def main():
 
     assert reversed_stable, "역순 입력에서 군집 멤버 구성이 달라졌습니다."
     assert not unstable_seeds, (
-        "무작위 입력 순서에서 군집 멤버 구성이 달라졌습니다: "
-        f"{unstable_seeds}"
+        f"무작위 입력 순서에서 군집 멤버 구성이 달라졌습니다: {unstable_seeds}"
     )
     print("입력 순서 안정성 검증 통과")
 

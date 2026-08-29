@@ -5,7 +5,6 @@ from collections import Counter, defaultdict
 from app.codes import FieldStatus, IssueType
 from app.real_extractor_v5 import RealDualExtractor
 
-
 # case_id, expected_issue_type, report_text
 CASES = [
     (
