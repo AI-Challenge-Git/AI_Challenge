@@ -5,6 +5,7 @@ import {
   BrainCircuit,
   Check,
   CheckCircle2,
+  Clock3,
   Copy,
   ExternalLink,
   FileCheck2,
@@ -533,6 +534,7 @@ export default function App() {
                 <strong>{savedCard.reference_number}</strong>
                 <button type="button" onClick={copyReference}>{copied ? <><Check size={16} /> 복사됨</> : <><Copy size={16} /> 번호 복사</>}</button>
               </div>
+              <div className="expiry"><Clock3 size={17} /> 상담 완료 이전까지 유효</div>
               <div className="order-warning"><TriangleAlert size={19} /><p><strong>상담 준비카드는 주문 접수증이 아닙니다.</strong><span>실제 주문은 공식 고객센터 또는 영업점에서 본인확인과 주문내용 재확인을 거쳐야 합니다.</span></p></div>
               {error ? <p className="error-message" role="alert"><TriangleAlert size={16} /> {error}</p> : null}
               <button className="secondary-button" type="button" onClick={reset}>새 제보 작성하기</button>
