@@ -83,6 +83,26 @@ afterEach(() => {
 });
 
 describe("백엔드 분석 DTO 연동", () => {
+  it("고객 세션 토큰으로 실제 Dashboard API를 조회한다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    const response = {
+      items: [],
+      baseline_status: "INSUFFICIENT_HISTORY",
+      baseline_ratio: null,
+      limit: 50,
+      offset: 0,
+    };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(response)));
+    vi.stubGlobal("fetch", fetchMock);
+    const { getSignalDashboard } = await import("./api");
+
+    await expect(getSignalDashboard()).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.com/api/signals/dashboard?limit=50&offset=0",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: expect.stringMatching(/^Bearer /) }) }),
+    );
+  });
+
   it("종목코드를 대문자 영숫자 6자리로 정규화한다", async () => {
     const { normalizeSymbolCode } = await import("./api");
 

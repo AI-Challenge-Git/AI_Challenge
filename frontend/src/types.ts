@@ -92,6 +92,8 @@ export type AgentCardListItem = components["schemas"]["ConsultationCardListItem"
 export type AgentCardListResponse = components["schemas"]["ConsultationCardListResponse"];
 export type AgentCase = components["schemas"]["ConsultationCardDetail"];
 export type AgentVerificationResult = components["schemas"]["AgentVerificationResponse"];
+export type SignalDashboard = components["schemas"]["SignalDashboardResponse"];
+export type SignalDashboardItem = components["schemas"]["SignalDashboardItem"];
 
 export type AgentCardSelector =
   | { reference_number: string; card_id?: never }
