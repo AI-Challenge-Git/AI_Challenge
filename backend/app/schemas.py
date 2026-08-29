@@ -32,7 +32,7 @@ _FULL_DATETIME_WITH_OFFSET = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
 )
 _KOREAN_FULL_DATE_PATTERN = re.compile(
-    r"\d{4}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일"
+    r"(?:\d{2}|\d{4})\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일"
 )
 _KOREAN_TIME_PATTERN = re.compile(
     r"(?:(?:오전|오후)\s*)?\d{1,2}\s*시(?:\s*\d{1,2}\s*분)?"
