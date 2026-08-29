@@ -97,11 +97,33 @@ def test_sensitive_and_technical_data_boundaries_are_structural() -> None:
     )
     assert "symbol_master_version_id" in consultation_columns
     assert "symbol_master_version_id" in set(tables["agent_verifications"].columns.keys())
-    assert not any(
-        "vector" in str(column.type).lower()
+    vector_columns = {
+        (table.name, column.name)
         for table in tables.values()
         for column in table.columns
-    )
+        if "vector" in str(column.type).lower()
+    }
+    assert vector_columns == {("technical_embeddings", "embedding")}
+    signal_columns = {
+        column.name
+        for table_name in (
+            "technical_embeddings",
+            "signal_processing_jobs",
+            "signal_clusters",
+            "signal_members",
+            "signal_audit_events",
+        )
+        for column in tables[table_name].columns
+    }
+    assert {
+        "raw_text",
+        "masked_text",
+        "session_digest",
+        "reference_number",
+        "reference_digest",
+        "object_key",
+        "access_token",
+    }.isdisjoint(signal_columns)
 
 
 def test_core_types_and_server_times_match_the_decision() -> None:

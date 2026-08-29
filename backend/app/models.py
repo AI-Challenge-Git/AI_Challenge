@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -21,18 +22,39 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import UserDefinedType
 
 from app.codes import (
     AgentRole,
     AnalysisStatus,
     AuditOutcome,
+    ClusteringPolicyStatus,
     IdempotencyStatus,
     ObjectDeletionStatus,
     RateLimitScope,
     ReportStatus,
+    SignalProcessingStatus,
+    SignalStatus,
     VerificationStatus,
 )
 from app.db import Base
+
+
+class Vector(UserDefinedType[list[float]]):
+    """Dimensionless pgvector type; dimensions are validated against row metadata."""
+
+    cache_ok = True
+
+    def get_col_spec(self, **_: Any) -> str:
+        return "vector"
+
+    def bind_processor(self, _: Any) -> Any:
+        def process(value: list[float] | None) -> str | None:
+            if value is None:
+                return None
+            return "[" + ",".join(format(item, ".17g") for item in value) + "]"
+
+        return process
 
 
 class PolicySnapshot(Base):
@@ -550,6 +572,319 @@ class AgentVerification(Base):
 
     card: Mapped[ConsultationCard] = relationship(back_populates="verifications")
     agent: Mapped[AgentAccount] = relationship(back_populates="verifications")
+
+
+class ClusteringPolicy(Base):
+    __tablename__ = "clustering_policies"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('EXPERIMENTAL', 'APPROVED', 'RETIRED')",
+            name="status_value",
+        ),
+        CheckConstraint("window_seconds > 0", name="window_seconds_positive"),
+        CheckConstraint("min_unique_sessions > 0", name="min_unique_sessions_positive"),
+        CheckConstraint(
+            "review_priority_threshold >= min_unique_sessions",
+            name="review_threshold_not_below_minimum",
+        ),
+        CheckConstraint(
+            "similarity_threshold > 0 AND similarity_threshold <= 1",
+            name="similarity_threshold_range",
+        ),
+        CheckConstraint("embedding_dimension > 0", name="embedding_dimension_positive"),
+        CheckConstraint("normalization IN ('L2', 'NONE')", name="normalization_value"),
+        CheckConstraint("distance_metric = 'COSINE'", name="distance_metric_cosine"),
+        CheckConstraint(
+            "structured_rules_version = 'hard-gate.v1'",
+            name="structured_rules_version_value",
+        ),
+        CheckConstraint(
+            "((status = 'APPROVED' AND approved_by IS NOT NULL AND approved_at IS NOT NULL) OR "
+            "(status <> 'APPROVED'))",
+            name="approval_metadata",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    policy_version: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=ClusteringPolicyStatus.EXPERIMENTAL.value, nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    window_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    min_unique_sessions: Mapped[int] = mapped_column(Integer, nullable=False)
+    review_priority_threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    structured_rules_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    embedding_dimension: Mapped[int] = mapped_column(Integer, nullable=False)
+    normalization: Mapped[str] = mapped_column(String(16), nullable=False)
+    input_format: Mapped[str] = mapped_column(String(64), nullable=False)
+    distance_metric: Mapped[str] = mapped_column(String(16), nullable=False)
+    taxonomy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    baseline_policy_version: Mapped[str | None] = mapped_column(String(64))
+    approved_by: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("agent_accounts.id", ondelete="RESTRICT"),
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+Index(
+    "uq_clustering_policies_active",
+    ClusteringPolicy.is_active,
+    unique=True,
+    postgresql_where=ClusteringPolicy.is_active.is_(True),
+)
+
+
+class TechnicalEmbedding(Base):
+    __tablename__ = "technical_embeddings"
+    __table_args__ = (
+        UniqueConstraint(
+            "technical_symptom_id",
+            "model_id",
+            "model_revision",
+            "embedding_dimension",
+            "normalization",
+            "input_format",
+        ),
+        CheckConstraint("embedding_dimension > 0", name="embedding_dimension_positive"),
+        CheckConstraint("normalization IN ('L2', 'NONE')", name="normalization_value"),
+        CheckConstraint("distance_metric = 'COSINE'", name="distance_metric_cosine"),
+        CheckConstraint(
+            "vector_dims(embedding) = embedding_dimension",
+            name="embedding_dimension_matches_vector",
+        ),
+        Index("ix_technical_embeddings_symptom_id", "technical_symptom_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    technical_symptom_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("technical_symptoms.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    embedding_dimension: Mapped[int] = mapped_column(Integer, nullable=False)
+    normalization: Mapped[str] = mapped_column(String(16), nullable=False)
+    input_format: Mapped[str] = mapped_column(String(64), nullable=False)
+    distance_metric: Mapped[str] = mapped_column(String(16), nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class SignalProcessingJob(Base):
+    __tablename__ = "signal_processing_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING', 'PROCESSING', 'FAILED', 'COMPLETED')",
+            name="status_value",
+        ),
+        CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
+        CheckConstraint(
+            "safe_error_code IS NULL OR safe_error_code IN "
+            "('EMBEDDING_UNAVAILABLE', 'INVALID_EMBEDDING', 'POLICY_MISMATCH', "
+            "'EMBEDDING_INPUT_UNAVAILABLE')",
+            name="safe_error_code_value",
+        ),
+        Index("ix_signal_processing_jobs_ready", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    report_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("reports.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    technical_symptom_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("technical_symptoms.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    policy_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("clustering_policies.id", ondelete="RESTRICT"),
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), default=SignalProcessingStatus.PENDING.value, nullable=False
+    )
+    safe_error_code: Mapped[str | None] = mapped_column(String(64))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SignalCluster(Base):
+    __tablename__ = "signal_clusters"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('CANDIDATE', 'SIGNAL_DETECTED', 'UNDER_REVIEW', 'CLOSED')",
+            name="status_value",
+        ),
+        CheckConstraint(
+            "closure_reason IS NULL OR closure_reason IN "
+            "('WINDOW_EXPIRED', 'FALSE_POSITIVE', 'MERGED', "
+            "'OFFICIAL_INCIDENT_RESOLVED', 'EVIDENCE_RECALCULATED')",
+            name="closure_reason_value",
+        ),
+        CheckConstraint(
+            "((status = 'CLOSED' AND closure_reason IS NOT NULL AND closed_at IS NOT NULL) OR "
+            "(status <> 'CLOSED' AND closure_reason IS NULL AND closed_at IS NULL))",
+            name="closed_metadata",
+        ),
+        CheckConstraint("raw_report_count >= 0", name="raw_report_count_nonnegative"),
+        CheckConstraint(
+            "reporting_unique_sessions >= 0",
+            name="reporting_unique_sessions_nonnegative",
+        ),
+        CheckConstraint(
+            "reporting_unique_sessions <= raw_report_count",
+            name="unique_sessions_not_above_raw_count",
+        ),
+        CheckConstraint(
+            "((official_notice_url IS NULL AND official_notice_linked_at IS NULL AND "
+            "official_notice_linked_by IS NULL) OR "
+            "(official_notice_url IS NOT NULL AND official_notice_linked_at IS NOT NULL AND "
+            "official_notice_linked_by IS NOT NULL))",
+            name="official_notice_metadata",
+        ),
+        Index("ix_signal_clusters_dashboard", "policy_id", "status", "last_report_at"),
+        Index("ix_signal_clusters_purge_at", "purge_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    policy_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("clustering_policies.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(24), default=SignalStatus.CANDIDATE.value, nullable=False
+    )
+    closure_reason: Mapped[str | None] = mapped_column(String(40))
+    channel: Mapped[str] = mapped_column(String(16), nullable=False)
+    feature_area: Mapped[str] = mapped_column(String(64), nullable=False)
+    reported_symptom_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    submission_status_filter: Mapped[str | None] = mapped_column(String(40))
+    error_code_filter: Mapped[str | None] = mapped_column(String(64))
+    raw_report_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reporting_unique_sessions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    review_priority: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    first_report_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_report_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    representative_symptom_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("technical_symptoms.id", ondelete="SET NULL"),
+    )
+    official_incident: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    official_notice_url: Mapped[str | None] = mapped_column(Text)
+    official_notice_linked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    official_notice_linked_by: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("agent_accounts.id", ondelete="RESTRICT"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purge_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SignalMember(Base):
+    __tablename__ = "signal_members"
+    __table_args__ = (
+        UniqueConstraint("signal_id", "report_id"),
+        CheckConstraint(
+            "similarity_at_join >= -1 AND similarity_at_join <= 1",
+            name="similarity_at_join_range",
+        ),
+        Index("ix_signal_members_report_id", "report_id"),
+        Index("ix_signal_members_symptom_id", "technical_symptom_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    signal_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("signal_clusters.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    report_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("reports.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    technical_symptom_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("technical_symptoms.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    embedding_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("technical_embeddings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    similarity_at_join: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class SignalAuditEvent(Base):
+    __tablename__ = "signal_audit_events"
+    __table_args__ = (
+        CheckConstraint("action ~ '^[A-Z][A-Z0-9_]{0,63}$'", name="action_format"),
+        CheckConstraint(
+            "before_status IS NULL OR before_status IN "
+            "('CANDIDATE', 'SIGNAL_DETECTED', 'UNDER_REVIEW', 'CLOSED')",
+            name="before_status_value",
+        ),
+        CheckConstraint(
+            "after_status IS NULL OR after_status IN "
+            "('CANDIDATE', 'SIGNAL_DETECTED', 'UNDER_REVIEW', 'CLOSED')",
+            name="after_status_value",
+        ),
+        Index("ix_signal_audit_events_signal_id", "signal_id"),
+        Index("ix_signal_audit_events_purge_at", "purge_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    signal_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("signal_clusters.id", ondelete="SET NULL"),
+    )
+    actor_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("agent_accounts.id", ondelete="RESTRICT"),
+    )
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    before_status: Mapped[str | None] = mapped_column(String(24))
+    after_status: Mapped[str | None] = mapped_column(String(24))
+    reason: Mapped[str | None] = mapped_column(String(64))
+    target_signal_id: Mapped[UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    purge_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class RateLimitBucket(Base):

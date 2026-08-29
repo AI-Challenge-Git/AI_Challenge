@@ -48,6 +48,7 @@ from app.schemas import (
     ConsultationCardListResponse,
     ConsultationCardLookupRequest,
     ConsultationConfirmation,
+    RelatedSignal,
     VerificationFieldName,
     VerificationFieldResult,
 )
@@ -67,6 +68,7 @@ from app.services.idempotency import (
     payload_sha256,
 )
 from app.services.lifecycle import card_is_accessible
+from app.services.signals import related_signals_for_report
 from app.services.symbols import validate_symbol
 
 Sleeper = Callable[[float], Awaitable[None]]
@@ -508,6 +510,7 @@ def _card_detail(
     card: ConsultationCard,
     technical: TechnicalSymptom,
     verification_status: VerificationStatus | None,
+    related_signals: list[RelatedSignal],
 ) -> ConsultationCardDetail:
     if card.expires_at is None:
         raise ServiceError(404, "CARD_NOT_FOUND", "상담카드를 찾을 수 없습니다.")
@@ -534,7 +537,7 @@ def _card_detail(
         verification_status=verification_status,
         safety_notice=CONSULTATION_SAFETY_NOTICE,
         has_attachment=card.report.attachment is not None,
-        related_signals=[],
+        related_signals=related_signals,
     )
 
 
@@ -598,7 +601,13 @@ async def lookup_consultation_card(
                 if technical is None:
                     raise ServiceError(503, "CARD_UNAVAILABLE", "상담카드를 사용할 수 없습니다.")
                 verification_status = await _latest_verification_status(session, card.id)
-                response = _card_detail(card, technical, verification_status)
+                related_signals = await related_signals_for_report(session, card.report_id)
+                response = _card_detail(
+                    card,
+                    technical,
+                    verification_status,
+                    related_signals,
+                )
                 session.add(
                     _audit(
                         actor_id=principal.agent_id,

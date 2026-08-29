@@ -1,3 +1,4 @@
+import math
 import re
 import unicodedata
 from datetime import datetime
@@ -19,11 +20,15 @@ from pydantic import (
 
 from app.codes import (
     AgentRole,
+    BaselineStatus,
     FieldStatus,
     IssueType,
     OrderAction,
     OrderType,
     ReportStatus,
+    SignalClosureReason,
+    SignalProcessingStatus,
+    SignalStatus,
     SubmissionStatus,
     VerificationStatus,
 )
@@ -412,6 +417,15 @@ class ConsultationCardLookupRequest(ConsultationCardSelector):
     pass
 
 
+class RelatedSignal(ApiModel):
+    signal_id: UUID
+    status: SignalStatus
+    reported_symptom_type: IssueType
+    reporting_unique_sessions: int = Field(ge=1)
+    last_report_at: datetime
+    official_incident: Literal[False]
+
+
 class ConsultationCardDetail(ApiModel):
     card_id: UUID
     created_at: datetime
@@ -421,7 +435,7 @@ class ConsultationCardDetail(ApiModel):
     verification_status: VerificationStatus | None
     safety_notice: str
     has_attachment: bool
-    related_signals: list[dict[str, object]]
+    related_signals: list[RelatedSignal]
 
 
 VerificationFieldName = Literal[
@@ -476,3 +490,120 @@ class AgentVerificationResponse(ApiModel):
     fields: list[VerificationFieldResult]
     mismatch_fields: list[VerificationFieldName]
     saved_at: datetime
+
+
+class SignalEmbeddingRequest(StrictAiModel):
+    schema_version: Literal["signal-embedding-request.v1"]
+    input_format: str
+    technical_symptom: str
+
+
+class SignalEmbeddingResult(StrictAiModel):
+    model_id: str
+    model_revision: str
+    dimension: StrictInt = Field(gt=0)
+    normalization: Literal["L2", "NONE"]
+    input_format: str
+    distance_metric: Literal["COSINE"]
+    vector: list[float] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_vector(self) -> "SignalEmbeddingResult":
+        if len(self.vector) != self.dimension:
+            raise ValueError("vector length must equal dimension")
+        if not all(math.isfinite(value) for value in self.vector):
+            raise ValueError("vector values must be finite")
+        if not any(value != 0 for value in self.vector):
+            raise ValueError("vector must not be all zeros")
+        return self
+
+
+class SignalDashboardItem(ApiModel):
+    signal_id: UUID
+    status: Literal[SignalStatus.SIGNAL_DETECTED, SignalStatus.UNDER_REVIEW]
+    channel: str
+    feature_area: str
+    reported_symptom_type: IssueType
+    reporting_unique_sessions: int = Field(ge=1)
+    raw_report_count: int = Field(ge=1)
+    review_priority: bool
+    first_report_at: datetime
+    last_report_at: datetime
+    affected_features: list[str]
+    policy_version: str
+    policy_status: str
+    baseline_status: BaselineStatus
+    baseline_ratio: None = None
+    official_incident: Literal[False]
+    official_notice_url: str | None
+
+
+class SignalDashboardResponse(ApiModel):
+    items: list[SignalDashboardItem]
+    baseline_status: BaselineStatus
+    baseline_ratio: None = None
+    limit: int
+    offset: int
+
+
+class SignalProcessingResult(ApiModel):
+    job_id: UUID
+    status: SignalProcessingStatus
+    signal_id: UUID | None
+    safe_error_code: str | None
+
+
+class OperatorSignalSelector(ApiModel):
+    signal_id: UUID
+    client_request_id: UUID4
+
+
+class OperatorAcknowledgeSignalRequest(OperatorSignalSelector):
+    reason: str = Field(min_length=1, max_length=64, pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+
+
+class OperatorCloseSignalRequest(OperatorSignalSelector):
+    closure_reason: SignalClosureReason
+
+
+class OperatorMergeSignalsRequest(ApiModel):
+    source_signal_id: UUID
+    target_signal_id: UUID
+    reason: str = Field(min_length=1, max_length=64, pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+    client_request_id: UUID4
+
+    @model_validator(mode="after")
+    def reject_same_signal(self) -> "OperatorMergeSignalsRequest":
+        if self.source_signal_id == self.target_signal_id:
+            raise ValueError("source and target signals must differ")
+        return self
+
+
+class OperatorSplitSignalRequest(OperatorSignalSelector):
+    report_ids: list[UUID] = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=1, max_length=64, pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+
+    @field_validator("report_ids")
+    @classmethod
+    def reject_duplicate_report_ids(cls, value: list[UUID]) -> list[UUID]:
+        if len(value) != len(set(value)):
+            raise ValueError("report_ids must be unique")
+        return value
+
+
+class OperatorOfficialNoticeRequest(OperatorSignalSelector):
+    official_notice_url: str = Field(
+        min_length=8,
+        max_length=2048,
+        pattern=r"^https://[^\s]+$",
+    )
+
+
+class OperatorSignalMutationResponse(ApiModel):
+    signal_id: UUID
+    status: SignalStatus
+    closure_reason: SignalClosureReason | None
+    reporting_unique_sessions: int = Field(ge=0)
+    raw_report_count: int = Field(ge=0)
+    official_notice_url: str | None
+    changed_at: datetime

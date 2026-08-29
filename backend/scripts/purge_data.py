@@ -36,11 +36,15 @@ async def run(*, execute: bool, batch_size: int) -> None:
                     + preview.completed_deletion_jobs
                     + preview.expired_agent_tokens
                     + preview.expired_rate_limit_buckets
+                    + preview.signal_clusters
+                    + preview.signal_audit_events
                 )
                 object_candidates = preview.attachment_objects + preview.retry_ready_objects
                 print(
                     "mode=dry-run "
                     f"reports={preview.reports} "
+                    f"signal_clusters={preview.signal_clusters} "
+                    f"signal_audit_events={preview.signal_audit_events} "
                     f"independent_records={independent_records} "
                     f"objects={object_candidates}"
                 )
@@ -58,6 +62,8 @@ async def run(*, execute: bool, batch_size: int) -> None:
                 + result.deletion_jobs_deleted
                 + result.agent_tokens_deleted
                 + result.rate_limit_buckets_deleted
+                + result.signal_clusters_deleted
+                + result.signal_audit_events_deleted
             )
             print(
                 "mode=execute "

@@ -58,3 +58,23 @@ async def agent_principal(
     if principal.role.value != "AGENT":
         raise ServiceError(403, "AGENT_ROLE_REQUIRED", "상담원 권한이 필요합니다.")
     return principal
+
+
+async def operator_principal(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    clock: Annotated[Callable[[], datetime], Depends(get_clock)],
+) -> AgentPrincipal:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise ServiceError(401, "AUTH_REQUIRED", "인증 정보가 필요합니다.")
+    async with session.begin():
+        principal = await resolve_agent_token(
+            session,
+            credentials.credentials,
+            settings,
+            now=clock(),
+        )
+    if principal.role.value != "OPERATOR":
+        raise ServiceError(403, "OPERATOR_ROLE_REQUIRED", "운영자 권한이 필요합니다.")
+    return principal
