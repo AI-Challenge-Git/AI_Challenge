@@ -79,7 +79,7 @@ class NvidiaDualExtractorAdapter:
     schema_version = "dual-extraction.v1"
     taxonomy_version = "issue-type.v1"
     adapter_name = "nvidia-build"
-    model_id: str | None = "meta/llama-3.1-8b-instruct"
+    model_id: str | None = "openai/gpt-oss-20b"
 
     def __init__(self) -> None:
         self._inner = RealDualExtractor()

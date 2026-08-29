@@ -16,6 +16,12 @@ FakeDualExtractor를 대체하되, 동일한 DualExtractor 프로토콜을 따�
 - correction retry를 1회 -> 최대 2회로 확장 (evidence_quote 재조합처럼
   모델이 확률적으로 실수하는 유형이 1회 재시도로는 복구가 안 되는
   경우가 실사용에서 관찰되어, 재시도 여지를 늘림).
+- issue_type: 로컬 키워드 규칙(_classify_issue_type_candidate)이 값을
+  직접 확정/덮어쓰던 동작을 제거. 이제 로컬 규칙은 "1차 확정값과 충돌하는가"
+  (_has_issue_type_conflict)만 판단해 전용 AI 재분류 호출 여부를 결정하고,
+  실제 issue_type 값과 evidence_quote는 항상 LLM(전체 추출 또는 전용 분류)
+  응답에서만 가져온다. evidence_quote도 masked_text 전체가 아니라 전용
+  분류 LLM이 직접 반환한 근거 조각을 substring 검증 후 사용한다.
 """
 
 import json
@@ -250,37 +256,220 @@ value와 evidence_quote 모두 null이어야 합니다. 원문 전체를 evidenc
 (reported_occurred_at은 장애가 발생한 시각이므로, 로그인 장애처럼 주문과
 무관한 문의에서도 발생 시각 단서가 있다면 사용할 수 있습니다.)
 
-## issue_type 분류 기준 - LOGIN_ACCESS_FAILURE
-다음과 같이 로그인·인증 관련 명시적 표현이 있으면 LOGIN_ACCESS_FAILURE로
-분류하세요. 정보 부족을 이유로 UNKNOWN으로 후퇴하지 마세요.
-- "로그인이 안 됨", "로그인하려는데", "비밀번호가 틀렸다고 나옴",
-  "인증번호가 안 옴", "접속이 안 됨" 등
-예: "로그인하려는데 계속 비밀번호가 틀렸다고 나와요." → issue_type = LOGIN_ACCESS_FAILURE
-이 경우 symptom에는 "로그인 시도 시 비밀번호 오류 발생"처럼 관찰된 증상만
-간결하게 요약하고, submission_status/action/order_type/attempted_at 등
-주문 관련 필드는 로그인 문의와 무관하므로 전부 UNKNOWN으로 두세요.
+## issue_type 분류 기준
+문장이 짧거나 종목·수량 정보가 없다는 이유만으로 UNKNOWN 또는
+UNRELATED_OR_AMBIGUOUS로 후퇴하지 마세요. 아래에서 관찰된 장애 단계나
+명시적인 원인 단서에 맞는 유형을 선택하세요.
+
+### issue_type 필드 출력 계약
+IssueType과 FieldStatus는 서로 다른 값입니다.
+
+분류 가능한 경우 IssueType 문자열은 반드시 value에 넣고 status는 반드시
+CONFIRMED_FROM_TEXT로 작성하세요. evidence_quote는 분류 근거가 되는 원문의
+정확한 부분 문자열이어야 합니다.
+
+올바른 분류 성공 형식:
+{{"value": "ORDER_SUBMISSION_FAILURE", "status": "CONFIRMED_FROM_TEXT",
+  "evidence_quote": "주문 버튼을 눌렀는데 화면이 멈췄습니다."}}
+
+잘못된 형식 - IssueType을 status에 넣지 마세요:
+{{"value": null, "status": "ORDER_SUBMISSION_FAILURE",
+  "evidence_quote": "주문 버튼을 눌렀는데 화면이 멈췄습니다."}}
+
+분류할 근거가 부족한 경우에만 다음 UNKNOWN 형식을 사용하세요:
+{{"value": null, "status": "UNKNOWN", "evidence_quote": null}}
+
+status에 허용되는 값은 CONFIRMED_FROM_TEXT, NEEDS_CONFIRMATION, UNKNOWN,
+OUT_OF_SCOPE뿐입니다. ORDER_SUBMISSION_FAILURE 같은 IssueType 문자열은
+status 값이 될 수 없습니다.
+
+### ORDER_SUBMISSION_FAILURE
+주문 버튼, 매수·매도 확인, 주문 제출 등 주문을 보내는 단계에서 화면 멈춤,
+무반응, 다음 화면으로 넘어가지 않음, 계속 로딩되는 증상입니다.
+- 예: "주문 버튼을 눌렀는데 화면이 멈췄습니다."
+- 예: "매도 확인 후 다음 단계로 넘어가지 않습니다."
+- 예: "주문 제출 중 계속 로딩됩니다."
+
+### ORDER_RESULT_UNCONFIRMED
+주문을 시도한 뒤 접수 여부, 주문번호, 처리 결과 또는 체결 여부를 확인할 수
+없는 증상입니다. 주문을 보내는 도중 멈춘 것과 구분하세요.
+- 예: "주문했는데 접수됐는지 모르겠습니다."
+- 예: "주문번호가 표시되지 않아 결과를 확인할 수 없습니다."
+- 예: "매도 후 체결 여부를 확인할 수 없습니다."
+
+### LOGIN_ACCESS_FAILURE
+로그인·비밀번호·본인인증·인증번호와 관련된 명시적인 접속 실패입니다.
+- 예: "비밀번호가 틀렸다고 나와 로그인되지 않습니다."
+- 예: "인증번호가 오지 않아 로그인할 수 없습니다."
+이 경우 submission_status/action/order_type/attempted_at 등 주문 관련 필드는
+로그인 문의와 무관하므로 전부 UNKNOWN으로 두세요.
+
+### BALANCE_INQUIRY_ERROR
+잔고, 보유 종목·수량, 체결 내역 또는 주문 내역의 조회·표시·갱신 오류입니다.
+- 예: "잔고 화면이 갱신되지 않습니다."
+- 예: "보유 주식 수량이 표시되지 않습니다."
+- 예: "체결 내역을 조회하면 빈 화면이 나옵니다."
+
+### DEVICE_NETWORK_SUSPECTED
+와이파이, 모바일 데이터, 통신 연결 또는 특정 휴대전화·기기와 장애의 연관성이
+원문에 명시된 경우입니다. 일반적인 화면 멈춤만으로 네트워크나 기기 문제를
+추론하지 마세요. 명시적인 네트워크·기기 조건이 있으면 다른 기능별 유형보다
+DEVICE_NETWORK_SUSPECTED를 우선합니다.
+- 예: "와이파이가 끊길 때 앱이 멈춥니다."
+- 예: "다른 휴대전화에서는 되는데 제 기기에서만 실행되지 않습니다."
+
+### UNRELATED_OR_AMBIGUOUS
+장애 제보가 아니라 수수료, 일정, 전망, 사용법 등을 묻는 정보성 문의이거나
+현재 장애 taxonomy와 무관한 요청입니다.
+- 예: "해외주식 거래 수수료가 궁금합니다."
+- 예: "공모주 청약 일정을 알려주세요."
+- 예: "오늘 주가 전망이 궁금합니다."
+
+### UNKNOWN
+장애가 발생했다는 표현은 있지만 어느 기능이나 원인인지 분류할 근거가
+부족한 경우입니다. 정보성 문의인 UNRELATED_OR_AMBIGUOUS와 구분하세요.
+- 예: "M-able에서 문제가 발생했습니다."
+- 예: "기능이 제대로 되지 않습니다."
+UNKNOWN은 enum 문자열을 value에 넣지 말고 반드시 다음처럼 출력하세요.
+{{"value": null, "status": "UNKNOWN", "evidence_quote": null}}
+
+우선순위:
+1. 명시적인 네트워크·기기 조건이 있으면 DEVICE_NETWORK_SUSPECTED
+2. 그 외에는 장애가 발생한 기능과 단계에 따라 주문 제출, 주문 결과, 로그인,
+   잔고·내역 조회 유형을 선택
+3. 장애가 아닌 정보성 문의는 UNRELATED_OR_AMBIGUOUS
+4. 장애는 명시됐지만 분류 근거가 부족할 때만 UNKNOWN
 
 ## 다시 한번 강조합니다
 status가 "CONFIRMED_FROM_TEXT"일 때만 value가 non-null일 수 있습니다.
 그 외 모든 status(NEEDS_CONFIRMATION, UNKNOWN, OUT_OF_SCOPE)에서는
 value가 반드시 null이어야 합니다. 이 규칙을 어기면 응답 전체가 거부됩니다.
 
-## 시각(occurred_at, attempted_at) 처리 규칙
-- 날짜와 시각이 모두 명확할 때만 "CONFIRMED_FROM_TEXT"를 사용하고,
-  value는 ISO 8601 형식(예: "2026-08-15T09:03:00+09:00")으로 작성하세요.
-- "9시 3분쯤"처럼 날짜 없이 시각만 있으면 반드시 "NEEDS_CONFIRMATION"으로 표시하고
-  value는 null로 두세요.
+## 날짜·시각(reported_occurred_at, attempted_at) 처리 규칙
 
-예시 - 연·월·일과 시각이 모두 있는 경우:
-원문: "2026년 8월 15일 오전 9시 3분에 매도 주문을 넣었다"
+날짜·시각 필드는 원문에 실제로 명시된 정보만 사용하세요.
+
+### 완전한 날짜·시각
+
+원문에 다음 정보가 모두 있으면 완전한 날짜·시각입니다.
+
+- 4자리 또는 2자리 연도
+- 월
+- 일
+- 시각
+
+완전한 날짜·시각은 반드시 status="CONFIRMED_FROM_TEXT"로 처리하세요.
+완전한 날짜·시각을 status="NEEDS_CONFIRMATION"으로 낮추면 안 됩니다.
+
+value는 반드시 UTC offset을 포함한 ISO 8601 형식으로 작성하세요.
+한국어 원문에 별도의 시간대가 명시되지 않은 경우 이 서비스의 시연 범위인
+Asia/Seoul의 UTC offset인 "+09:00"을 사용하세요.
+
+### 4자리 연도
+
+원문에 4자리 연도·월·일·시각이 모두 있으면 그대로 ISO 8601 형식으로
+정규화하세요.
+
+원문:
+"2026년 8월 15일 오전 9시 3분에 매도 주문을 넣었다"
+
 reported_occurred_at:
-{{"value": "2026-08-15T09:03:00+09:00", "status": "CONFIRMED_FROM_TEXT",
-   "evidence_quote": "2026년 8월 15일 오전 9시 3분에"}}
+{{"value": "2026-08-15T09:03:00+09:00",
+  "status": "CONFIRMED_FROM_TEXT",
+  "evidence_quote": "2026년 8월 15일 오전 9시 3분에"}}
+
 attempted_at:
-{{"value": "2026-08-15T09:03:00+09:00", "status": "CONFIRMED_FROM_TEXT",
-   "evidence_quote": "2026년 8월 15일 오전 9시 3분에"}}
-(reported_occurred_at과 attempted_at을 항상 똑같이 채워야 한다는 뜻은 아닙니다.
-문맥상 같은 시점을 가리킬 때만 같은 값을 사용하세요.)
+{{"value": "2026-08-15T09:03:00+09:00",
+  "status": "CONFIRMED_FROM_TEXT",
+  "evidence_quote": "2026년 8월 15일 오전 9시 3분에"}}
+
+다음과 같이 완전한 날짜·시각을 NEEDS_CONFIRMATION으로 처리하면 안 됩니다.
+
+잘못된 출력:
+{{"value": null,
+  "status": "NEEDS_CONFIRMATION",
+  "evidence_quote": "2026년 8월 15일 오전 9시 3분에"}}
+
+### 2자리 축약 연도
+
+원문에서 연도가 정확히 두 자리로 표현된 경우 YY년을 20YY년으로
+정규화하세요.
+
+예:
+- 26년 → 2026년
+- 25년 → 2025년
+
+두 자리 연도·월·일·시각이 모두 있으면 완전한 날짜·시각입니다.
+반드시 status="CONFIRMED_FROM_TEXT"를 사용하세요.
+
+value에는 정규화된 4자리 연도를 사용하세요.
+evidence_quote의 연도는 변환하지 말고 원문의 두 자리 연도 표현을
+그대로 복사하세요.
+
+원문:
+"26년 8월 15일 오후 8시 25분에 매도 주문을 넣었다"
+
+reported_occurred_at:
+{{"value": "2026-08-15T20:25:00+09:00",
+  "status": "CONFIRMED_FROM_TEXT",
+  "evidence_quote": "26년 8월 15일 오후 8시 25분에"}}
+
+attempted_at:
+{{"value": "2026-08-15T20:25:00+09:00",
+  "status": "CONFIRMED_FROM_TEXT",
+  "evidence_quote": "26년 8월 15일 오후 8시 25분에"}}
+
+다음과 같이 evidence_quote의 연도를 임의로 바꾸면 안 됩니다.
+
+잘못된 evidence_quote:
+"2026년 8월 15일 오후 8시 25분에"
+
+올바른 evidence_quote:
+"26년 8월 15일 오후 8시 25분에"
+
+### 날짜가 없는 시각
+
+원문에 시각만 있고 연도·월·일이 모두 존재하지 않으면 날짜를 생성하지 마세요.
+
+날짜 없는 시각은 반드시 다음과 같이 처리하세요.
+
+- value=null
+- status="NEEDS_CONFIRMATION"
+- evidence_quote에는 원문의 시각 표현을 그대로 사용
+
+원문:
+"오전 9시 3분에 주문했다"
+
+reported_occurred_at:
+{{"value": null,
+  "status": "NEEDS_CONFIRMATION",
+  "evidence_quote": "오전 9시 3분에"}}
+
+attempted_at:
+{{"value": null,
+  "status": "NEEDS_CONFIRMATION",
+  "evidence_quote": "오전 9시 3분에"}}
+
+날짜가 없는 시각에 오늘 날짜나 다른 임의의 날짜를 결합하면 안 됩니다.
+
+### 날짜·시각 정보가 전혀 없는 경우
+
+원문에 날짜나 시각 관련 표현이 전혀 없으면 다음과 같이 처리하세요.
+
+{{"value": null,
+  "status": "UNKNOWN",
+  "evidence_quote": null}}
+
+### 필드 의미 구분
+
+reported_occurred_at은 고객이 장애를 겪은 발생 시각입니다.
+attempted_at은 고객이 주식 주문을 시도한 시각입니다.
+
+동일한 원문 날짜·시각 표현이 장애 발생과 주문 시도를 모두 직접 나타낼 때만
+두 필드에 같은 값을 사용할 수 있습니다.
+
+로그인, 앱 실행, 이체, 시세 조회 등 주문과 무관한 행동의 시각을
+attempted_at으로 사용하면 안 됩니다.
 
 ## 필수 JSON 필드 규칙 - 매우 중요
 아래 필드는 정보 존재 여부와 관계없이 절대 생략하지 마세요.
@@ -349,7 +538,7 @@ class ExtractOutcome(NamedTuple):
     """
     extract_safe()의 반환 타입. result와 failure_reason 중 하나만 채워진다.
 
-    attempt_count: 실제 LLM 호출 횟수 (1~3)
+    attempt_count: 전체 구조화 추출 LLM의 호출 횟수 (1~3)
     first_pass_valid: 1차 응답이 재요청(LLM 재호출) 없이 최종 성공했는지 여부.
         order_type deterministic fallback이 적용된 경우도 LLM은 1번만
         호출됐으므로 first_pass_valid=True로 취급한다
@@ -360,6 +549,8 @@ class ExtractOutcome(NamedTuple):
     failure_reason / detail: 최종(마지막 시도) 실패 정보
     first_failure_reason / first_failure_detail: 1차 시도가 실패했을 경우
         그 실패 정보. 1차가 바로 성공했다면 둘 다 None.
+    classification_call_count: issue_type 전용 분류 호출 횟수.
+    classification_override_applied: 전용 분류가 기존 issue_type을 바꿨는지 여부.
     """
 
     result: ExtractionResult | None
@@ -370,6 +561,8 @@ class ExtractOutcome(NamedTuple):
     semantic_fallback_applied: bool = False
     first_failure_reason: ExtractFailureReason | None = None
     first_failure_detail: str | None = None
+    classification_call_count: int = 0
+    classification_override_applied: bool = False
 
 
 class RealDualExtractor:
@@ -386,7 +579,7 @@ class RealDualExtractor:
             timeout=90.0,
             max_retries=1,
         )
-        self._model = "meta/llama-3.1-8b-instruct"
+        self._model = "openai/gpt-oss-20b"
 
     def _coerce_types(
         self, field_dict: dict[str, Any], value_type: type | None
@@ -405,6 +598,14 @@ class RealDualExtractor:
         단지 그것을 표현하는 방식(JSON null 대신 문자열 "UNKNOWN")만 스키마
         규칙과 다르게 쓴 순수 형식 오류다.
         """
+        if not isinstance(field_dict, dict):
+            # 모델이 {value, status, evidence_quote} 객체 대신 문자열 등
+            # 다른 형태를 반환한 경우. AttributeError로 죽지 않고 AI-07이
+            # 요구하는 INVALID_SCHEMA 실패 경로(correction retry)로 보낸다.
+            raise ValueError(
+                f"필드가 {{value, status, evidence_quote}} 객체가 아닙니다: "
+                f"{field_dict!r}"
+            )
         if field_dict.get("status") is not None:
             field_dict["status"] = FieldStatus(field_dict["status"])
 
@@ -428,8 +629,245 @@ class RealDualExtractor:
                 field_dict["value"] = value_type(raw_value)
         return field_dict
 
+    def _normalize_unknown_fields(self, parsed: dict[str, Any]) -> bool:
+        """UNKNOWN 결론은 유지하고 value/evidence의 표현만 계약에 맞춘다."""
+        changed = False
+        for section_name in ("technical", "consultation"):
+            section = parsed.get(section_name)
+            if not isinstance(section, dict):
+                continue
+            for field in section.values():
+                if not isinstance(field, dict):
+                    continue
+                if field.get("status") != FieldStatus.UNKNOWN.value:
+                    continue
+                if field.get("value") not in (None, "UNKNOWN"):
+                    continue
+                if field.get("value") is not None:
+                    field["value"] = None
+                    changed = True
+                if field.get("evidence_quote") is not None:
+                    field["evidence_quote"] = None
+                    changed = True
+        return changed
+
+    def _classify_issue_type_candidate(self, text: str) -> IssueType | None:
+        """
+        키워드 단서 기반 후보 탐지기.
+
+        3차 회의 문서 12장의 역할 분담표에서 "오류 유형 분류"는 AI 담당으로
+        명시되어 있으므로, 이 함수는 issue_type 값을 직접 확정하지 않는다.
+        오직 _has_issue_type_conflict()에서 "전용 AI 재분류를 호출해야 하는
+        상황인가"를 판단하는 신호로만 사용한다. 최종 확정은 항상
+        _classify_issue_type_focused()(전용 LLM 호출)가 담당한다.
+        """
+        failure_terms = (
+            "안 됨", "안됨", "안 되", "안 돼", "안 됩", "않", "못", "오류", "실패", "멈",
+            "로딩", "무반응", "빈 화면", "표시되지", "나오지", "틀렸",
+            "오지 않", "거부", "끊", "계속 돌아", "바뀌지", "되지",
+            "먹통", "아무 반응", "빙글빙글", "거절돼", "되돌아", "돌아옵",
+            "나타나지", "0으로 표시",
+        )
+        has_failure = any(term in text for term in failure_terms)
+
+        information_topics = (
+            "수수료", "비용", "방법", "절차", "순서", "일정", "예정 종목",
+            "등록", "설치", "이전",
+        )
+        information_requests = (
+            "궁금", "알려", "설명해", "얼마", "보고 싶", "확인하고 싶",
+            "알고 싶",
+        )
+        if (
+            not has_failure
+            and any(term in text for term in information_topics)
+            and any(term in text for term in information_requests)
+        ):
+            return IssueType.UNRELATED_OR_AMBIGUOUS
+
+        network_terms = (
+            "와이파이", "Wi-Fi", "wifi", "모바일 데이터", "LTE", "5G",
+            "네트워크", "통신 연결", "무선망",
+        )
+        device_terms = (
+            "다른 휴대전화", "다른 스마트폰", "다른 기기", "제 기기에서만",
+            "내 기기에서만", "제 휴대전화에서만", "내 휴대전화에서만",
+            "이 휴대폰에서만", "이 스마트폰에서만", "이 기기에서만",
+            "제 스마트폰에서만", "제 휴대폰에서만",
+            "다른 폰", "현재 단말에서만", "해당 단말에서만",
+        )
+        if has_failure and not self._has_network_negation(text) and (
+            any(term in text for term in network_terms)
+            or any(term in text for term in device_terms)
+        ):
+            return IssueType.DEVICE_NETWORK_SUSPECTED
+
+        login_terms = (
+            "로그인", "비밀번호", "인증번호", "본인인증", "계정 접속",
+            "계정", "아이디로 접속",
+        )
+        if has_failure and any(term in text for term in login_terms):
+            return IssueType.LOGIN_ACCESS_FAILURE
+
+        balance_terms = (
+            "잔고", "보유 주식", "보유 종목", "체결 내역", "체결내역",
+            "주문 내역", "주문내역", "계좌 잔액", "보유 목록", "체결 기록",
+            "예수금", "예탁 자산", "예탁자산", "보유 수량", "체결 건", "주문 기록",
+        )
+        if has_failure and any(term in text for term in balance_terms):
+            return IssueType.BALANCE_INQUIRY_ERROR
+
+        result_terms = (
+            "접수됐는지", "접수되었는지", "접수 여부", "주문번호",
+            "체결 여부", "처리 결과", "주문 결과", "들어갔는지",
+            "접수 번호", "체결된 건지", "미체결", "실제 주문",
+        )
+        if any(term in text for term in result_terms) and (
+            has_failure or "모르" in text or "확인" in text
+        ):
+            return IssueType.ORDER_RESULT_UNCONFIRMED
+
+        order_terms = ("주문", "매수", "매도")
+        submission_terms = (
+            "버튼", "확인 후", "제출", "주문을 넣", "전송 화면", "진행 표시",
+            "확정", "확인창",
+        )
+        if (
+            has_failure
+            and any(term in text for term in order_terms)
+            and any(term in text for term in submission_terms)
+        ):
+            return IssueType.ORDER_SUBMISSION_FAILURE
+
+        information_terms = (
+            "수수료", "청약 일정", "공모주", "주가 전망", "증시 전망", "사용법",
+            "변경 방법", "방법을 알려", "절차를 알려", "거래 비용",
+            "상장 종목 일정", "설치하는 방법",
+        )
+        if any(term in text for term in information_terms) and not has_failure:
+            return IssueType.UNRELATED_OR_AMBIGUOUS
+
+        return None
+
+    def _has_network_negation(self, text: str) -> bool:
+        """네트워크가 원인이 아니라고 명시한 표현인지 확인한다."""
+        network_normal_terms = (
+            "와이파이는 정상",
+            "와이파이가 정상",
+            "네트워크는 정상",
+            "네트워크가 정상",
+            "통신은 정상",
+            "통신 상태는 정상",
+            "연결은 정상",
+            "데이터 연결은 정상",
+            "인터넷은 멀쩡",
+        )
+        if any(term in text for term in network_normal_terms):
+            return True
+
+        network_negation_pattern = re.compile(
+            r"(?:와이파이|네트워크|통신|데이터\s*연결|인터넷)"
+            r"[^.!?\n]{0,20}"
+            r"(?:정상|멀쩡|문제[^.!?\n]{0,5}없|오류[^.!?\n]{0,8}없|"
+            r"이상[^.!?\n]{0,5}없)"
+        )
+        return network_negation_pattern.search(text) is not None
+
+    def _issue_type_has_minimum_evidence(
+        self,
+        issue_type: IssueType,
+        text: str,
+    ) -> bool:
+        """전용 LLM 후보가 원문의 최소 유형 단서를 갖는지 검증한다."""
+        evidence_terms = {
+            IssueType.ORDER_SUBMISSION_FAILURE: (
+                "주문", "매수", "매도", "확정", "전송",
+            ),
+            IssueType.ORDER_RESULT_UNCONFIRMED: (
+                "주문", "접수", "주문번호", "체결", "미체결",
+            ),
+            IssueType.LOGIN_ACCESS_FAILURE: (
+                "로그인", "비밀번호", "인증", "계정", "아이디",
+            ),
+            IssueType.BALANCE_INQUIRY_ERROR: (
+                "잔고", "예수금", "보유", "체결", "주문 기록", "주문 내역",
+            ),
+            IssueType.DEVICE_NETWORK_SUSPECTED: (
+                "와이파이", "Wi-Fi", "wifi", "LTE", "5G", "네트워크",
+                "통신", "휴대폰에서만", "스마트폰에서만", "기기에서만",
+            ),
+            IssueType.UNRELATED_OR_AMBIGUOUS: (
+                "수수료", "비용", "일정", "방법", "절차", "전망", "사용법",
+            ),
+        }
+        if issue_type is IssueType.UNKNOWN:
+            return True
+        terms = evidence_terms.get(issue_type, ())
+        if not any(term in text for term in terms):
+            return False
+        if (
+            issue_type is IssueType.DEVICE_NETWORK_SUSPECTED
+            and self._has_network_negation(text)
+        ):
+            return False
+        return True
+
+    def _has_issue_type_conflict(
+        self,
+        masked_text: str,
+        result: ExtractionResult,
+    ) -> bool:
+        """
+        1차 확정된 issue_type이 로컬 키워드 단서와 어긋나는지만 판단한다.
+
+        값을 직접 바꾸지 않는다 — 충돌이 있으면 _apply_focused_issue_type()이
+        전용 AI 재분류를 강제로 호출하도록 신호를 보낼 뿐이다. 전용 AI 호출이
+        실패하거나 모호하면 기존 확정값이 그대로 유지된다 (AI-05: 근거 없는
+        값을 임의로 확정/변경하지 않는다).
+        """
+        issue_type = result.technical.issue_type
+        if issue_type.status is not FieldStatus.CONFIRMED_FROM_TEXT:
+            return False
+
+        candidate = self._classify_issue_type_candidate(masked_text)
+        if candidate is not None and candidate is not issue_type.value:
+            return True
+
+        if (
+            issue_type.value is IssueType.DEVICE_NETWORK_SUSPECTED
+            and self._has_network_negation(masked_text)
+        ):
+            return True
+
+        if issue_type.value is IssueType.ORDER_RESULT_UNCONFIRMED:
+            submission_stall_terms = (
+                "확인 후 다음 단계로 넘어가지",
+                "확인 후 다음 화면으로 넘어가지",
+                "주문 화면이 반응하지",
+                "주문 버튼을 눌러도 반응하지",
+            )
+            result_terms = (
+                "접수됐는지",
+                "접수되었는지",
+                "접수 여부",
+                "주문번호",
+                "체결 여부",
+                "처리 결과",
+                "주문 결과",
+            )
+            has_submission_stall = any(
+                term in masked_text for term in submission_stall_terms
+            )
+            has_result_question = any(term in masked_text for term in result_terms)
+            if has_submission_stall and not has_result_question:
+                return True
+
+        return False
+
     def _call_llm(
-        self, messages: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int = 4096,
     ) -> tuple[str | None, ExtractFailureReason | None, str | None]:
         """LLM을 호출하고 원본 응답 텍스트를 반환한다. 실패하면 (None, 사유, 상세)."""
         try:
@@ -437,7 +875,8 @@ class RealDualExtractor:
                 model=self._model,
                 messages=cast("Iterable[ChatCompletionMessageParam]", messages),
                 temperature=0.0,
-                max_tokens=1500,
+                max_tokens=max_tokens,
+                extra_body={"reasoning_effort": "low"},
             )
         except APITimeoutError as e:
             return None, ExtractFailureReason.TIMEOUT, str(e)
@@ -456,6 +895,120 @@ class RealDualExtractor:
             )
 
         return content, None, None
+
+    def _classify_issue_type_focused(
+        self, masked_text: str
+    ) -> tuple[IssueType, str | None] | None:
+        """
+        짧은 전용 호출로 issue_type과 근거 조각을 함께 판정한다.
+
+        evidence_quote는 이 호출의 LLM이 원문에서 직접 복사한 것이어야 하며,
+        masked_text의 정확한 substring이 아니면 후보 전체를 버린다 (AI-03).
+        실패/모호/근거 불일치 시 None을 반환하고, 호출부는 기존 값을 그대로
+        유지한다.
+        """
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    "고객 제보의 주된 오류유형을 분류하고 근거를 함께 반환하세요. "
+                    "다음 JSON 객체 하나만 출력하고 설명이나 코드블록을 붙이지 "
+                    "마세요.\n"
+                    '{"issue_type": "<7개 값 중 하나>", '
+                    '"evidence_quote": "<근거 문자열 또는 null>"}\n\n'
+                    "issue_type 값:\n"
+                    "ORDER_SUBMISSION_FAILURE: 주문 버튼·확정·전송 단계의 멈춤, "
+                    "무반응, 로딩\n"
+                    "ORDER_RESULT_UNCONFIRMED: 주문 후 접수·주문번호·체결 결과를 "
+                    "확인할 수 없음\n"
+                    "LOGIN_ACCESS_FAILURE: 로그인·비밀번호·인증 과정의 실제 실패\n"
+                    "BALANCE_INQUIRY_ERROR: 잔고·예수금·보유종목·체결내역·주문내역 "
+                    "조회 또는 표시 오류\n"
+                    "DEVICE_NETWORK_SUSPECTED: 네트워크나 특정 기기와 장애의 "
+                    "연관성이 명시됨. 네트워크가 정상이라고 하면 선택하지 않음\n"
+                    "UNRELATED_OR_AMBIGUOUS: 장애가 아닌 수수료·일정·방법·전망 문의\n"
+                    "UNKNOWN: 장애는 있으나 기능과 원인을 특정할 근거가 부족함\n\n"
+                    "evidence_quote는 사용자 메시지(원문)에서 분류 근거가 되는 "
+                    "부분을 어미·조사까지 한 글자도 다르지 않게 그대로 복사한 "
+                    "부분 문자열이어야 합니다. 요약하거나 새 문장을 만들지 "
+                    "마세요. issue_type이 UNKNOWN이면 evidence_quote는 반드시 "
+                    "null입니다.\n\n"
+                    "우선순위: 명시적 네트워크·기기 원인, 장애 발생 기능과 단계, "
+                    "정보성 문의, 마지막으로 UNKNOWN."
+                ),
+            },
+            {"role": "user", "content": masked_text},
+        ]
+        content, failure_reason, _ = self._call_llm(messages, max_tokens=1024)
+        if failure_reason is not None or content is None:
+            return None
+
+        try:
+            parsed = json.loads(_extract_json_text(content))
+        except (ValueError, json.JSONDecodeError):
+            return None
+
+        try:
+            issue_type = IssueType(parsed.get("issue_type"))
+        except ValueError:
+            return None
+
+        evidence_quote = parsed.get("evidence_quote")
+        if issue_type is IssueType.UNKNOWN:
+            return issue_type, None
+        if (
+            not isinstance(evidence_quote, str)
+            or not evidence_quote
+            or evidence_quote not in masked_text
+        ):
+            return None
+        return issue_type, evidence_quote
+
+    def _apply_focused_issue_type(
+        self,
+        masked_text: str,
+        result: ExtractionResult,
+    ) -> tuple[int, bool]:
+        """
+        전용 분류가 유효할 때만 issue_type 필드를 교체한다.
+
+        1차 확정값이 이미 있고 로컬 규칙과 충돌하지 않으면 전용 AI를
+        호출하지 않고 그대로 둔다 (불필요한 호출 절약). 충돌이 있거나
+        아직 확정되지 않았으면 전용 AI를 호출하되, 최종 결정과 evidence_quote는
+        항상 이 AI 응답에서만 가져온다 — 로컬 규칙은 호출 여부만 결정한다.
+        """
+        issue_type = result.technical.issue_type
+        already_confirmed = (
+            issue_type.status is FieldStatus.CONFIRMED_FROM_TEXT
+            and issue_type.value is not None
+        )
+        if already_confirmed and not self._has_issue_type_conflict(
+            masked_text, result
+        ):
+            return 0, False
+
+        classified = self._classify_issue_type_focused(masked_text)
+        if classified is None:
+            return 1, False
+        classified_type, evidence_quote = classified
+        if (
+            classified_type is not IssueType.UNKNOWN
+            and not self._issue_type_has_minimum_evidence(classified_type, masked_text)
+        ):
+            return 1, False
+
+        previous = (issue_type.value, issue_type.status, issue_type.evidence_quote)
+        if classified_type is IssueType.UNKNOWN:
+            issue_type.value = None
+            issue_type.status = FieldStatus.UNKNOWN
+            issue_type.evidence_quote = None
+        else:
+            issue_type.value = classified_type
+            issue_type.status = FieldStatus.CONFIRMED_FROM_TEXT
+            issue_type.evidence_quote = evidence_quote
+
+        current = (issue_type.value, issue_type.status, issue_type.evidence_quote)
+        return 1, current != previous
 
     def _validate_evidence_quotes(
         self, masked_text: str, result: ExtractionResult
@@ -536,24 +1089,32 @@ class RealDualExtractor:
 
     def _parse_and_validate(
         self, masked_text: str, raw_content: str
-    ) -> tuple[ExtractionResult | None, ExtractFailureReason | None, str | None]:
+    ) -> tuple[
+        ExtractionResult | None,
+        ExtractFailureReason | None,
+        str | None,
+        bool,
+    ]:
         """
         LLM 응답을 파싱/검증한다.
 
-        order_type의 근거 없는 LIMIT/MARKET 확정만 deterministic fallback으로
-        UNKNOWN 처리한다. 다른 schema/evidence 오류는 자동 보정하지 않는다.
+        UNKNOWN 필드의 null 표현 정규화, 근거 없는 order_type 제거만
+        deterministic fallback으로 처리한다. issue_type의 확정/재확정은
+        여기서 하지 않는다 (extract_safe()의 _apply_focused_issue_type() 참고).
+        새로운 주문 세부정보나 날짜 값은 생성하지 않는다.
         """
         try:
             cleaned = _extract_json_text(raw_content)
         except ValueError as e:
-            return None, ExtractFailureReason.INVALID_JSON, f"{e}\n원본: {raw_content}"
+            return None, ExtractFailureReason.INVALID_JSON, f"{e}\n원본: {raw_content}", False
 
         try:
             parsed = json.loads(cleaned)
         except json.JSONDecodeError as e:
-            return None, ExtractFailureReason.INVALID_JSON, f"{e}\n원본: {raw_content}"
+            return None, ExtractFailureReason.INVALID_JSON, f"{e}\n원본: {raw_content}", False
 
         try:
+            fallback_applied = self._normalize_unknown_fields(parsed)
             tech = parsed["technical"]
             tech["issue_type"] = self._coerce_types(tech["issue_type"], IssueType)
             tech["symptom"] = self._coerce_types(tech["symptom"], None)
@@ -586,7 +1147,10 @@ class RealDualExtractor:
                 consultation=consultation,
             )
 
-            self._apply_safe_order_type_fallback(masked_text, result)
+            fallback_applied |= self._apply_safe_order_type_fallback(masked_text, result)
+            # issue_type의 확정/재확정은 여기서 하지 않는다. extract_safe()가
+            # _parse_and_validate() 이후 _apply_focused_issue_type()을 통해
+            # 전용 AI 호출로만 처리한다 (3차 회의 12장: 오류 유형 분류 = AI 담당).
             self._run_post_validation(masked_text, result)
 
         except KeyError as e:
@@ -594,50 +1158,95 @@ class RealDualExtractor:
                 None,
                 ExtractFailureReason.INVALID_SCHEMA,
                 f"필수 필드 {e}가 응답에 누락됨\n원본: {raw_content}",
+                False,
             )
         except (ValueError, ValidationError) as e:
-            return None, ExtractFailureReason.INVALID_SCHEMA, f"{e}\n원본: {raw_content}"
+            return None, ExtractFailureReason.INVALID_SCHEMA, f"{e}\n원본: {raw_content}", False
 
-        return result, None, None
+        return result, None, None, fallback_applied
 
     def _build_correction_message(self, detail: str | None) -> dict[str, Any]:
         """correction 재요청용 user 메시지를 만든다."""
+        # 검증 detail에는 모델의 원본 응답이 포함된다. 원본이 장황하거나
+        # 교정 지시를 그대로 복사한 경우 이를 다음 요청에 전부 되먹이면
+        # 프롬프트가 기하급수적으로 길어지고 다시 지시를 복사할 수 있으므로,
+        # 오류 종류와 앞부분을 판별하기에 충분한 길이만 전달한다.
+        correction_detail = (detail or "상세 오류 없음")[:2000]
         return {
             "role": "user",
             "content": (
-                "이전 응답이 규칙을 위반했습니다. 오류 내용:\n"
-                f"{detail}\n\n"
+                "이전 응답을 설명하지 말고 수정된 JSON 객체 하나만 반환하세요. "
+                "교정 지시, 분석, 코드블록을 응답에 복사하지 마세요.\n\n"
+                "이전 응답의 오류 내용:\n"
+                f"{correction_detail}\n\n"
                 "특히 status가 NEEDS_CONFIRMATION, UNKNOWN, OUT_OF_SCOPE인 "
-                "필드는 value가 반드시 null이어야 합니다. 또한 날짜 없는 시각만 "
-                "원문에 있으면 reported_occurred_at/attempted_at에 날짜를 생성하지 말고 "
-                "NEEDS_CONFIRMATION + value=null로 처리하세요.\n\n"
+                "필드는 value가 반드시 null이어야 합니다.\n\n"
+
+                "날짜·시각 규칙을 다시 확인하세요. 원문에 시각만 있고 연도·월·일이 "
+                "없으면 reported_occurred_at과 attempted_at에 임의의 날짜를 생성하지 "
+                "말고 NEEDS_CONFIRMATION + value=null로 처리하세요.\n\n"
+
+                "반대로 원문에 4자리 또는 2자리 연도, 월, 일, 시각이 모두 "
+                "명시되어 있으면 완전한 날짜·시각이므로 반드시 "
+                "CONFIRMED_FROM_TEXT로 처리하세요. 완전한 날짜·시각을 "
+                "NEEDS_CONFIRMATION으로 낮추면 안 됩니다.\n\n"
+
+                "원문에서 연도가 두 자리인 경우 앞에 '20'을 붙여 4자리 연도로 "
+                "정규화하세요. 예를 들어 '26년'은 '2026년'으로 해석합니다. "
+                "value는 정규화된 4자리 연도와 UTC offset을 포함한 ISO 8601 "
+                "형식으로 작성하세요. evidence_quote는 원문의 연도 표현을 바꾸지 "
+                "말고 그대로 복사하세요. 원문이 '26년'이면 evidence_quote에도 "
+                "'26년'을 사용해야 합니다.\n\n"
+
                 "필수 필드를 절대 생략하지 마세요. technical의 issue_type, symptom, "
                 "submission_status, error_code, reported_occurred_at과 consultation의 "
                 "action, symbol_name, symbol_code, quantity, order_type, price_krw, "
                 "attempted_at을 예외 없이 전부 포함하세요. 정보가 없는 필드도 "
                 '{"value": null, "status": "UNKNOWN", "evidence_quote": null} '
                 "형태로 반드시 포함해야 합니다. 특히 status가 \"UNKNOWN\"인데 "
-                'value 필드에 문자열 "UNKNOWN"을 넣는 것은 잘못된 형식입니다 '
-                "(status와 value는 다른 필드입니다). status=UNKNOWN이면 value는 "
-                "반드시 null(값 없음)이어야 합니다.\n\n"
+                'value 필드에 문자열 "UNKNOWN"을 넣는 것은 잘못된 형식입니다. '
+                "status와 value는 다른 필드입니다. status=UNKNOWN이면 value는 "
+                "반드시 null이어야 하며 evidence_quote도 반드시 null이어야 "
+                "합니다. UNKNOWN이라는 enum 문자열을 value에 넣지 마세요.\n\n"
+
+                "issue_type 분류 경계를 다시 확인하세요. 주문 버튼·확인·제출 "
+                "단계의 멈춤이나 로딩은 ORDER_SUBMISSION_FAILURE, 주문 시도 후 "
+                "접수 여부·주문번호·체결 여부를 모르면 "
+                "ORDER_RESULT_UNCONFIRMED, 잔고·보유수량·체결내역·주문내역의 "
+                "조회 오류는 BALANCE_INQUIRY_ERROR입니다. 와이파이·모바일 "
+                "데이터·특정 기기와 장애의 연관성이 명시되면 "
+                "DEVICE_NETWORK_SUSPECTED입니다. 장애가 아닌 수수료·일정·전망 "
+                "문의는 UNRELATED_OR_AMBIGUOUS이고, 장애 표현은 있지만 기능을 "
+                "특정할 수 없을 때만 issue_type을 UNKNOWN 형식(value=null, "
+                "status=UNKNOWN, evidence_quote=null)으로 처리하세요.\n\n"
+
+                "issue_type을 분류할 수 있으면 IssueType 문자열은 반드시 value에 "
+                "넣고 status는 CONFIRMED_FROM_TEXT로 작성하세요. evidence_quote는 "
+                "현재 고객 제보에서 정확히 복사하세요. IssueType 문자열을 status에 "
+                "넣지 마세요.\n\n"
+
                 "order_type은 원문에 정확히 \"지정가\" 또는 \"시장가\"라는 단어가 "
                 "있을 때만 채우세요. \"매도 주문을 넣었다\"는 표현만으로는 "
-                "LIMIT/MARKET을 추론할 근거가 없으므로 반드시 value=null, "
-                "status=UNKNOWN입니다. 원문에 없는 단어(예: \"지정가\")를 근거로 "
-                "지어내지 마세요.\n\n"
-                "★★★ evidence_quote 오류가 반복되고 있다면 특히 주의하세요: "
-                "evidence_quote는 원문을 요약하거나 의역하지 말고, 어미와 "
-                "조사까지 한 글자도 다르지 않게 정확히 그대로 복사(copy-paste)한 "
-                "부분 문자열이어야 합니다. 새로운 문장을 만들어내지 말고, "
-                "원문에서 관련된 부분을 그대로 오려붙이듯 사용하세요. ★★★\n\n"
-                "attempted_at은 주문 시도 시각에만 사용하고, 로그인 등 "
-                "다른 행동의 시각을 넣지 마세요. 로그인 관련 문의는 "
-                "issue_type=LOGIN_ACCESS_FAILURE로 분류하되 주문 관련 필드는 "
-                "전부 UNKNOWN으로 두세요.\n\n"
+                "LIMIT 또는 MARKET을 추론할 수 없습니다. 이런 경우 반드시 "
+                "value=null, status=UNKNOWN, evidence_quote=null로 처리하세요. "
+                "원문에 없는 단어를 근거로 생성하지 마세요.\n\n"
+
+                "evidence_quote는 원문을 요약하거나 의역하지 말고 어미와 조사까지 "
+                "한 글자도 다르지 않게 정확히 복사한 부분 문자열이어야 합니다. "
+                "새로운 문장을 만들지 말고 원문에서 관련 부분을 그대로 "
+                "복사하세요.\n\n"
+
+                "attempted_at은 주식 주문 시도 시각에만 사용하세요. 로그인, 앱 실행, "
+                "이체, 조회 등 주문과 무관한 행동의 시각을 attempted_at에 넣으면 "
+                "안 됩니다. 로그인 관련 문의는 issue_type을 "
+                "LOGIN_ACCESS_FAILURE로 분류하되 주문 관련 필드는 UNKNOWN으로 "
+                "처리하세요.\n\n"
+
                 "반드시 JSON 객체만 반환하세요. 설명, 분석, 코드블록 표시(```), "
-                "JSON 앞뒤 문장을 절대 출력하지 마세요. 응답의 첫 문자는 { 이어야 "
-                "하고 마지막 문자는 } 이어야 합니다.\n\n"
-                "이 규칙을 모두 지켜서 동일한 제보에 대해 처음부터 다시 응답하세요."
+                "JSON 앞뒤 문장을 출력하지 마세요. 응답의 첫 문자는 { 이어야 하고 "
+                "마지막 문자는 } 이어야 합니다.\n\n"
+
+                "이 규칙을 모두 지켜 동일한 제보를 처음부터 다시 분석하세요."
             ),
         }
 
@@ -645,10 +1254,9 @@ class RealDualExtractor:
         """
         AI-07 계약에 맞게, 실패 유형을 구분해서 안전하게 반환한다.
 
-        1차 응답이 스키마/evidence 검증에 실패하면, order_type 순수
-        hallucination(원문에 단서 자체가 없는 경우)만 로컬에서 UNKNOWN으로
-        낮추고 LLM을 다시 부르지 않는다. 그 외 실패는 위반 내용을 알려주는
-        correction 메시지와 함께 최대 2회까지 재요청한다.
+        1차 응답에서 UNKNOWN의 순수 표현 오류를 정규화하고, 명시 단서가 있는
+        issue_type과 근거 없는 order_type만 로컬 안전 보정한다. 그 외 실패는
+        위반 내용을 알려주는 correction 메시지와 함께 최대 2회 재요청한다.
 
         재시도를 2회로 늘린 이유: evidence_quote 재조합(원문을 어미까지
         똑같이 복사하지 않고 요약/재구성)처럼 모델이 확률적으로 실수하는
@@ -671,12 +1279,23 @@ class RealDualExtractor:
             return ExtractOutcome(None, failure_reason, detail, attempt_count=1)
         assert raw_content is not None  # failure_reason이 None이면 항상 값이 있다
 
-        result, failure_reason, detail = self._parse_and_validate(
+        result, failure_reason, detail, fallback_applied = self._parse_and_validate(
             masked_text, raw_content
         )
         if result is not None:
+            classifier_calls, classifier_override = self._apply_focused_issue_type(
+                masked_text,
+                result,
+            )
             return ExtractOutcome(
-                result, None, None, attempt_count=1, first_pass_valid=True
+                result,
+                None,
+                None,
+                attempt_count=1,
+                first_pass_valid=True,
+                semantic_fallback_applied=fallback_applied,
+                classification_call_count=classifier_calls,
+                classification_override_applied=classifier_override,
             )
 
         first_failure_reason = failure_reason
@@ -708,18 +1327,26 @@ class RealDualExtractor:
                 )
             assert raw_content_n is not None
 
-            result_n, failure_reason_n, detail_n = self._parse_and_validate(
+            result_n, failure_reason_n, detail_n, fallback_applied_n = (
+                self._parse_and_validate(
                 masked_text, raw_content_n
+                )
             )
             if result_n is not None:
+                classifier_calls, classifier_override = (
+                    self._apply_focused_issue_type(masked_text, result_n)
+                )
                 return ExtractOutcome(
                     result_n,
                     None,
                     None,
                     attempt_count=attempt,
                     first_pass_valid=False,
+                    semantic_fallback_applied=fallback_applied_n,
                     first_failure_reason=first_failure_reason,
                     first_failure_detail=first_failure_detail,
+                    classification_call_count=classifier_calls,
+                    classification_override_applied=classifier_override,
                 )
 
             last_failure_reason = failure_reason_n
