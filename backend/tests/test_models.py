@@ -83,6 +83,33 @@ def test_constraints_and_indexes_have_deterministic_names() -> None:
     assert "ix_reports_session_received" in names
 
 
+def test_consultation_action_constraint_allows_buy_and_sell() -> None:
+    table = Base.metadata.tables["consultation_cards"]
+    action_constraint = next(
+        constraint
+        for constraint in table.constraints
+        if constraint.name == "ck_consultation_cards_action_value"
+    )
+
+    expression = str(action_constraint.sqltext)
+    assert "'SELL'" in expression
+    assert "'BUY'" in expression
+    assert "'UNKNOWN'" in expression
+
+
+def test_buy_action_migration_replaces_existing_check_constraint() -> None:
+    migration = (
+        Path(__file__).parents[1]
+        / "alembic"
+        / "versions"
+        / "allow_buy_consultation_action.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'down_revision: str | Sequence[str] | None = "add_private_attachments"' in migration
+    assert '"action IN (\'SELL\', \'BUY\', \'UNKNOWN\')"' in migration
+    assert '"action IN (\'SELL\', \'UNKNOWN\')"' in migration
+
+
 def test_core_migration_follows_0001_and_excludes_future_tables() -> None:
     migration = (
         Path(__file__).parents[1] / "alembic" / "versions" / "0002_core_report_flow.py"
