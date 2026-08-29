@@ -12,6 +12,7 @@ import type {
   ConsultationData,
   FieldStatus,
   SavedCard,
+  SignalDashboard,
   TechnicalData,
 } from "./types";
 
@@ -376,6 +377,10 @@ export async function discardAnalysis(analysisId: string, clientRequestId: strin
     method: "DELETE",
     body: JSON.stringify(discard),
   });
+}
+
+export async function getSignalDashboard(limit = 50, offset = 0): Promise<SignalDashboard> {
+  return request<SignalDashboard>(`/api/signals/dashboard?limit=${limit}&offset=${offset}`);
 }
 
 export async function loginAgent(employeeId: string, password: string): Promise<AgentSession> {

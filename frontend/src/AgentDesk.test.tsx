@@ -34,7 +34,14 @@ const cardDetail = {
   verification_status: null,
   safety_notice: "공식 채널에서 주문 상태를 확인해 주세요.",
   has_attachment: true,
-  related_signals: [],
+  related_signals: [{
+    signal_id: "33333333-3333-4333-8333-333333333333",
+    status: "SIGNAL_DETECTED",
+    reported_symptom_type: "ORDER_SUBMISSION_FAILURE",
+    reporting_unique_sessions: 3,
+    last_report_at: "2026-08-30T00:04:00Z",
+    official_incident: false,
+  }],
 };
 
 const listResponse = {
@@ -86,7 +93,11 @@ describe("상담원 API 계약", () => {
 
     const detail = await getConsultationCard({ card_id: cardId }, token);
 
-    expect(detail).toMatchObject({ card_id: cardId, has_attachment: true, related_signals: [] });
+    expect(detail).toMatchObject({
+      card_id: cardId,
+      has_attachment: true,
+      related_signals: [{ status: "SIGNAL_DETECTED", reporting_unique_sessions: 3, official_incident: false }],
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.example.com/api/consultation-cards/lookup",
       expect.objectContaining({
