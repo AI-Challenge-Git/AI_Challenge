@@ -40,10 +40,7 @@ embeddings = [
     for report_id, issue_type, symptom in reports
 ]
 
-embedding_by_id = {
-    report_id: embedding
-    for report_id, _, embedding in embeddings
-}
+embedding_by_id = {report_id: embedding for report_id, _, embedding in embeddings}
 
 print("Pairwise cosine similarity:")
 for left_index in range(len(reports)):
@@ -58,11 +55,7 @@ for left_index in range(len(reports)):
 
         same_issue_type = left_issue_type == right_issue_type
 
-        print(
-            f"  {left_id} ↔ {right_id}: "
-            f"{similarity:.6f} "
-            f"(same_issue_type={same_issue_type})"
-        )
+        print(f"  {left_id} ↔ {right_id}: {similarity:.6f} (same_issue_type={same_issue_type})")
         print(f"    {left_id}: {left_symptom}")
         print(f"    {right_id}: {right_symptom}")
 
@@ -73,10 +66,7 @@ groups = group_similar_reports(
 
 group_members_by_id = {}
 for group in groups:
-    member_ids = frozenset(
-        member.technical_symptom_id
-        for member in group
-    )
+    member_ids = frozenset(member.technical_symptom_id for member in group)
     for member_id in member_ids:
         group_members_by_id[member_id] = member_ids
 
@@ -86,9 +76,7 @@ assert group_members_by_id["r1"] == group_members_by_id["r2"], (
 assert group_members_by_id["r3"] != group_members_by_id["r1"], (
     "오류유형이 다른 r3은 r1/r2 그룹과 분리되어야 합니다."
 )
-assert group_members_by_id["r4"] == frozenset({"r4"}), (
-    "UNKNOWN인 r4는 단독 그룹이어야 합니다."
-)
+assert group_members_by_id["r4"] == frozenset({"r4"}), "UNKNOWN인 r4는 단독 그룹이어야 합니다."
 assert group_members_by_id["r5"] == frozenset({"r5"}), (
     "UNKNOWN인 r5는 동일 문장이어도 단독 그룹이어야 합니다."
 )
@@ -102,15 +90,10 @@ assert group_members_by_id["r7"] == frozenset({"r7"}), (
 print()
 print("군집화 결과:")
 for group in groups:
-    ids_in_group = {
-        member.technical_symptom_id
-        for member in group
-    }
+    ids_in_group = {member.technical_symptom_id for member in group}
 
     group_issue_types = [
-        issue_type
-        for report_id, issue_type, _ in reports
-        if report_id in ids_in_group
+        issue_type for report_id, issue_type, _ in reports if report_id in ids_in_group
     ]
     group_symptoms = [
         (symptom, embedding_by_id[report_id])
@@ -142,26 +125,32 @@ for group in groups:
 
 print()
 assert summarize_group_symptoms([]) == "증상 정보 없음"
-assert summarize_group_symptoms([
-    ("단일 증상", [1.0, 0.0]),
-]) == "단일 증상"
+assert (
+    summarize_group_symptoms(
+        [
+            ("단일 증상", [1.0, 0.0]),
+        ]
+    )
+    == "단일 증상"
+)
 
 medoid_test_symptoms = [
     ("왼쪽 증상", [1.0, 0.0]),
     ("중심 증상", [1.0, 1.0]),
     ("오른쪽 증상", [0.0, 1.0]),
 ]
-assert summarize_group_symptoms(
-    medoid_test_symptoms,
-) == "중심 증상", (
-    "다른 증상들과 평균 유사도가 가장 높은 문장이 "
-    "대표 증상으로 선택되어야 합니다."
-)
-assert summarize_group_symptoms(
-    list(reversed(medoid_test_symptoms)),
-) == "중심 증상", (
-    "입력 순서가 바뀌어도 대표 증상은 동일해야 합니다."
-)
+assert (
+    summarize_group_symptoms(
+        medoid_test_symptoms,
+    )
+    == "중심 증상"
+), "다른 증상들과 평균 유사도가 가장 높은 문장이 대표 증상으로 선택되어야 합니다."
+assert (
+    summarize_group_symptoms(
+        list(reversed(medoid_test_symptoms)),
+    )
+    == "중심 증상"
+), "입력 순서가 바뀌어도 대표 증상은 동일해야 합니다."
 
 clustered_symptoms = [
     (symptom, embedding_by_id[report_id])
@@ -169,17 +158,15 @@ clustered_symptoms = [
     if report_id in group_members_by_id["r1"]
 ]
 representative_symptom = summarize_group_symptoms(clustered_symptoms)
-assert representative_symptom in {
-    symptom
-    for symptom, _ in clustered_symptoms
-}, "대표 증상은 해당 그룹의 실제 증상 문장이어야 합니다."
+assert representative_symptom in {symptom for symptom, _ in clustered_symptoms}, (
+    "대표 증상은 해당 그룹의 실제 증상 문장이어야 합니다."
+)
 
 
 def canonical_member_sets(cluster_groups):
     """대표 ID와 그룹 출력 순서를 제외하고 멤버 집합만 비교한다."""
     return frozenset(
-        frozenset(member.technical_symptom_id for member in group)
-        for group in cluster_groups
+        frozenset(member.technical_symptom_id for member in group) for group in cluster_groups
     )
 
 

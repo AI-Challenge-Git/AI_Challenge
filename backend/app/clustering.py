@@ -68,19 +68,13 @@ def group_similar_reports(
         if issue_type in EXCLUDED_ISSUE_TYPES:
             excluded.append((report_id, embedding))
             continue
-        candidates_by_issue_type.setdefault(issue_type, []).append(
-            (report_id, embedding)
-        )
+        candidates_by_issue_type.setdefault(issue_type, []).append((report_id, embedding))
 
     for issue_type in sorted(candidates_by_issue_type):
         embedding_by_id = {
-            report_id: embedding
-            for report_id, embedding in candidates_by_issue_type[issue_type]
+            report_id: embedding for report_id, embedding in candidates_by_issue_type[issue_type]
         }
-        clusters = [
-            frozenset({report_id})
-            for report_id in sorted(embedding_by_id)
-        ]
+        clusters = [frozenset({report_id}) for report_id in sorted(embedding_by_id)]
 
         while True:
             merge_candidates = []
@@ -127,11 +121,7 @@ def group_similar_reports(
         for cluster in clusters:
             average_similarity_by_id = {}
             for report_id in cluster:
-                other_ids = [
-                    other_id
-                    for other_id in cluster
-                    if other_id != report_id
-                ]
+                other_ids = [other_id for other_id in cluster if other_id != report_id]
                 average_similarity_by_id[report_id] = (
                     sum(
                         cosine_similarity(
@@ -139,7 +129,8 @@ def group_similar_reports(
                             embedding_by_id[other_id],
                         )
                         for other_id in other_ids
-                    ) / len(other_ids)
+                    )
+                    / len(other_ids)
                     if other_ids
                     else 1.0
                 )
