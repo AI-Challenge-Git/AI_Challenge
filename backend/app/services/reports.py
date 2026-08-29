@@ -77,6 +77,7 @@ from app.services.lifecycle import (
     retention_deadline,
     utc_now,
 )
+from app.services.signals import detach_report_from_signals, enqueue_signal_processing
 from app.services.symbols import validate_symbol
 
 _AI_CALL_SLOTS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[int, asyncio.Semaphore]] = (
@@ -569,6 +570,13 @@ async def confirm_report(
         )
         session.add_all((technical, card))
         await session.flush()
+        session.add(
+            enqueue_signal_processing(
+                report_id=report.id,
+                technical_symptom_id=technical.id,
+                now=current_time,
+            )
+        )
         return ReportConfirmedResponse(
             consultation_card=ConsultationCardIssued(
                 reference_number=reference_number,
@@ -638,6 +646,7 @@ async def delete_report(
                 ),
             )
         )
+        await detach_report_from_signals(session, report.id, now=completed_at)
         await session.execute(delete(Report).where(Report.id == report.id))
         return deletion_job_id
 

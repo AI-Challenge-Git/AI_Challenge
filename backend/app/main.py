@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.api.agents import router as agents_router
 from app.api.health import router as health_router
 from app.api.reports import router as reports_router
+from app.api.signals import router as signals_router
 from app.config import Settings, get_settings
 from app.db import engine
 from app.errors import ServiceError
@@ -84,6 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(health_router)
     application.include_router(agents_router)
     application.include_router(reports_router)
+    application.include_router(signals_router)
     return application
 
 

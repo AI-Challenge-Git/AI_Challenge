@@ -8,10 +8,10 @@ erDiagram
     REPORTS ||--o{ REPORT_ANALYSES : has_versions
     REPORTS ||--o| TECHNICAL_SYMPTOMS : confirms
     REPORTS ||--o| CONSULTATION_CARDS : creates
-    TECHNICAL_SYMPTOMS ||--o{ TECHNICAL_EMBEDDINGS : embeds_later
-    TECHNICAL_SYMPTOMS ||--o{ SIGNAL_MEMBERS : joins_later
-    SIGNAL_CLUSTERS ||--o{ SIGNAL_MEMBERS : contains_later
-    CLUSTERING_POLICIES ||--o{ SIGNAL_CLUSTERS : configures_later
+    TECHNICAL_SYMPTOMS ||--o{ TECHNICAL_EMBEDDINGS : embeds
+    TECHNICAL_SYMPTOMS ||--o{ SIGNAL_MEMBERS : joins
+    SIGNAL_CLUSTERS ||--o{ SIGNAL_MEMBERS : contains
+    CLUSTERING_POLICIES ||--o{ SIGNAL_CLUSTERS : configures
     CONSULTATION_CARDS ||--o{ AGENT_VERIFICATIONS : verifies_later
     CONSULTATION_CARDS ||--o{ REFERENCE_LOOKUP_EVENTS : accessed_later
     APP_USERS ||--o{ USER_ROLE_ASSIGNMENTS : receives_later
@@ -36,6 +36,14 @@ erDiagram
     symbol_master_versions ||--o{ symbols : contains
     symbol_master_versions ||--o{ consultation_cards : validates
     symbol_master_versions ||--o{ agent_verifications : validates
+    technical_symptoms ||--o| signal_processing_jobs : queues
+    technical_symptoms ||--o{ technical_embeddings : embeds
+    clustering_policies ||--o{ signal_processing_jobs : processes
+    clustering_policies ||--o{ signal_clusters : configures
+    signal_clusters ||--o{ signal_members : contains
+    reports ||--o{ signal_members : contributes
+    technical_embeddings ||--o{ signal_members : compares
+    signal_clusters ||--o{ signal_audit_events : audits
 
     policy_snapshots {
         uuid id PK
@@ -236,6 +244,20 @@ erDiagram
 후속 migration이 추가될 때 이 문서에도 실제 반영된 엔터티와 관계를 누적한다. 아래 데이터
 경계는 일정과 무관하게 유지한다.
 
+## 장애 신호 물리 테이블
+
+| 테이블 | 핵심 물리 필드·제약 |
+|---|---|
+| `clustering_policies` | version UK, EXPERIMENTAL/APPROVED/RETIRED, window/min/threshold, model metadata, active partial UK |
+| `technical_embeddings` | symptom FK cascade, dimensionless vector, model metadata UK, `vector_dims` CHECK |
+| `signal_processing_jobs` | report·symptom FK cascade/UK, policy FK restrict, status, attempt, lease/next retry, safe error |
+| `signal_clusters` | policy FK, 상태·종료사유 CHECK, hard-gate fields, raw/distinct count, notice metadata, purge_at |
+| `signal_members` | signal·report·symptom·embedding FK, `(signal_id, report_id)` UK, join similarity |
+| `signal_audit_events` | signal FK set null, operator FK restrict, 상태 before/after, 안전한 reason, purge_at |
+
+`reports`가 계속 업무 데이터 삭제 root다. report 삭제 cascade 전에 서비스가 membership을 명시적으로
+제거하고 같은 transaction에서 cluster count·상태를 다시 계산한다.
+
 ## 데이터 경계
 
 - `reports`에는 마스킹된 텍스트와 HMAC session digest만 저장한다.
@@ -261,7 +283,17 @@ erDiagram
   상담원 재확인은 검증에 사용한 version FK를 보존하므로 참조된 과거 version을 임의 삭제하지 않는다.
 - `rate_limit_buckets`는 employee·agent·client의 raw 값을 저장하지 않고 전용 HMAC fingerprint와
   원자적 request count만 저장한다. 만료 token과 bucket은 purge CLI가 정리한다.
-- vector·군집은 후속 migration에서 추가한다.
+- embedding은 무차원 pgvector `vector`로 저장하고 row의 model metadata와
+  `vector_dims(embedding)` CHECK가 일치해야 한다. AI 모델 확정 전에는 ANN index를 만들지 않고 exact
+  cosine scan만 사용한다.
+- `clustering_policies`는 시간창·최소 고유 세션·유사도·모델 metadata를 version 관리한다. 활성 policy는
+  하나만 허용하며 확정 전 숫자는 `EXPERIMENTAL`이다.
+- `signal_members`는 `(signal_id, report_id)` UNIQUE로 편입 중복을 막고 규모는 report의
+  `session_digest` distinct count로 계산한다.
+- `signal_processing_jobs` 실패는 report와 상담카드를 삭제하지 않는다. provider 호출은 DB transaction
+  밖에서 실행하고 완료 편입 transaction은 gate별 advisory lock으로 동시 신호 생성을 직렬화한다.
+- `signal_audit_events`에는 원문·PII·세션·주문 상세·embedding을 저장하지 않는다.
 
-향후 `technical_embeddings`, `signal_members`와 cluster 재계산, 운영 Object Storage가 추가되면
-해당 기능의 최초 migration과 service에 purge 계약과 경계·동시성 테스트를 함께 등록한다.
+향후 운영 Object Storage가 추가되면 해당 기능의 최초 migration과 service에 purge 계약과
+경계·동시성 테스트를 함께 등록한다. 실제 AI model·dimension 승인 뒤 ANN index가 필요하면 기존
+dimensionless vector를 덮어쓰지 않고 새 model version용 additive migration으로 검토한다.

@@ -20,6 +20,8 @@ from app.models import (
     ObjectDeletionJob,
     RateLimitBucket,
     Report,
+    SignalAuditEvent,
+    SignalCluster,
 )
 
 CARD_ACCESS_TTL = timedelta(hours=2)
@@ -61,6 +63,8 @@ class PurgePreview:
     retry_ready_objects: int
     expired_agent_tokens: int
     expired_rate_limit_buckets: int
+    signal_clusters: int
+    signal_audit_events: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +79,8 @@ class PurgeRunResult:
     retry_waiting: int
     agent_tokens_deleted: int
     rate_limit_buckets_deleted: int
+    signal_clusters_deleted: int
+    signal_audit_events_deleted: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +265,12 @@ async def preview_purge(session: AsyncSession, *, now: datetime) -> PurgePreview
     expired_rate_limit_buckets = await session.scalar(
         select(func.count()).select_from(RateLimitBucket).where(RateLimitBucket.expires_at <= now)
     )
+    signal_clusters = await session.scalar(
+        select(func.count()).select_from(SignalCluster).where(SignalCluster.purge_at <= now)
+    )
+    signal_audit_events = await session.scalar(
+        select(func.count()).select_from(SignalAuditEvent).where(SignalAuditEvent.purge_at <= now)
+    )
     return PurgePreview(
         reports=reports or 0,
         idempotency_records=idempotency_records or 0,
@@ -268,6 +280,8 @@ async def preview_purge(session: AsyncSession, *, now: datetime) -> PurgePreview
         retry_ready_objects=retry_ready_objects or 0,
         expired_agent_tokens=expired_agent_tokens or 0,
         expired_rate_limit_buckets=expired_rate_limit_buckets or 0,
+        signal_clusters=signal_clusters or 0,
+        signal_audit_events=signal_audit_events or 0,
     )
 
 
@@ -277,6 +291,8 @@ async def _purge_expired_reports(
     now: datetime,
     batch_size: int,
 ) -> int:
+    from app.services.signals import detach_report_from_signals
+
     total = 0
     while True:
         async with session.begin():
@@ -303,6 +319,7 @@ async def _purge_expired_reports(
                         created_at=now,
                     )
                 )
+                await detach_report_from_signals(session, report.id, now=now)
                 await session.execute(delete(Report).where(Report.id == report.id))
             count = len(reports)
             total += count
@@ -387,6 +404,20 @@ async def purge_expired_data(
         RateLimitBucket.expires_at,
         batch_size=batch_size,
     )
+    signal_clusters_deleted = await _purge_rows(
+        session,
+        SignalCluster,
+        SignalCluster.purge_at <= current_time,
+        SignalCluster.purge_at,
+        batch_size=batch_size,
+    )
+    signal_audit_events_deleted = await _purge_rows(
+        session,
+        SignalAuditEvent,
+        SignalAuditEvent.purge_at <= current_time,
+        SignalAuditEvent.purge_at,
+        batch_size=batch_size,
+    )
     object_result = await process_object_deletion_jobs(
         session,
         attachment_store,
@@ -410,4 +441,6 @@ async def purge_expired_data(
         retry_waiting=retry_waiting or 0,
         agent_tokens_deleted=agent_tokens_deleted,
         rate_limit_buckets_deleted=rate_limit_buckets_deleted,
+        signal_clusters_deleted=signal_clusters_deleted,
+        signal_audit_events_deleted=signal_audit_events_deleted,
     )

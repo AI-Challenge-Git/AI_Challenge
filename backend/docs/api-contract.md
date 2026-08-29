@@ -91,7 +91,8 @@ ID, 잘못된 password, disabled account는 같은 `401` 외부 오류를 사용
 받는다. 유효한 `AGENT` token, report 보존기간과 카드 TTL을 모두 검증한다. 없는·삭제된·만료된
 카드는 동일한 `404`를 반환한다. 응답에는 비식별 기술 증상, 고객 확정 consultation 값,
 verification 상태, 안전 안내문과 `has_attachment`만 포함한다. 운영 signed URL과 장애 신호가 아직
-없으므로 attachment URL은 반환하지 않고 `related_signals`는 빈 배열이다.
+없으므로 attachment URL은 반환하지 않는다. `related_signals`에는 현재 카드의 제보가 속한
+`SIGNAL_DETECTED` 또는 `UNDER_REVIEW` 신호만 typed DTO로 포함되며 내부 `CANDIDATE`는 노출하지 않는다.
 
 `POST /api/consultation-cards/verifications`도 `reference_number | card_id` 중 하나와 UUID v4
 `client_request_id`를 받는다. `action`, 종목, 수량, 주문 방식, `price_krw`, 고객 진술 제출 상태와
@@ -123,3 +124,47 @@ fingerprint 기준 기본 10회/60초다. bucket은 PostgreSQL 원자적 upsert�
 
 기존 멱등 결과 replay는 최초 처리 결과를 그대로 반환하고 Master 교체로 소급 재검증하지 않는다.
 새 저장 row는 사용한 `symbol_master_version_id`를 보존한다.
+
+## 고객 제보 기반 장애 의심 신호
+
+`GET /api/signals/dashboard`는 고객 익명 Bearer token을 요구하며, 고객 제보로 감지한 활성
+`SIGNAL_DETECTED | UNDER_REVIEW` 신호만 최신순으로 반환한다. `CANDIDATE`, 원문, 세션 digest,
+주문 상세, embedding과 내부 유사도는 반환하지 않는다. 응답의 `official_incident`는 항상 `false`다.
+
+실운영 기준선이 아직 없으므로 `baseline_status=INSUFFICIENT_HISTORY`, `baseline_ratio=null`을
+명시적으로 반환한다. 합성 기준선을 운영값처럼 만들지 않는다. 규모 필드
+`reporting_unique_sessions`는 비식별 `session_digest`의 distinct count이며 실제 영향 고객 수가 아니다.
+
+자동 편입 hard gate는 동일한 `channel + feature_area + issue_type`이다. 양쪽 값이 알려진
+`submission_status` 또는 `error_code`가 충돌하면 같은 embedding이라도 합치지 않는다. 그 다음에만
+활성 policy와 metadata가 같은 embedding의 cosine similarity를 비교한다. 시간창은 server UTC
+`received_at` 기준 rolling window다.
+
+정책은 `clustering_policies`에서 version 관리한다. `window_seconds=600`,
+`similarity_threshold=0.80`, `min_unique_sessions=5`, `review_priority_threshold=10`은 법령·업계
+표준이 아니라 `EXPERIMENTAL` MVP 기본값이다. AI 담당의 locked-test와 팀 승인 전에는
+`APPROVED` 값으로 표현하지 않는다. 모델 metadata가 없으면 활성 policy를 임의 생성하지 않고
+신호 processing job을 호출하지 않는다.
+
+제보 확정 transaction은 `PENDING` signal processing job까지만 저장한다. embedding provider 호출은
+transaction 밖에서 실행하고, metadata·차원 불일치나 provider 실패는 job만 안전한 `FAILED`로 남긴다.
+기존 report와 consultation card는 롤백하거나 삭제하지 않는다. 재처리는 만료된 processing lease를
+포함해 `SKIP LOCKED`로 한 job씩 점유한다.
+
+운영자 mutation은 `OPERATOR` Bearer token과 UUID v4 `client_request_id`를 요구한다.
+
+| Method | Path | 의미 |
+|---|---|---|
+| POST | `/api/operator/signals/acknowledge` | `SIGNAL_DETECTED`를 `UNDER_REVIEW`로 전이 |
+| POST | `/api/operator/signals/close` | closure reason을 남기고 `CLOSED`로 전이 |
+| POST | `/api/operator/signals/merge` | 구조화 hard gate가 호환되는 두 신호를 수동 병합 |
+| POST | `/api/operator/signals/split` | 선택한 report membership을 새 신호로 분리 |
+| POST | `/api/operator/signals/official-notice` | HTTPS 공식 공지 metadata 연결 |
+
+공식 공지 연결은 상태가 아니며, `official_incident`를 자동으로 true로 바꾸지 않는다. 모든 mutation은
+기존 idempotency record와 row lock을 사용하고 상태 전이·merge·split·공지 연결을 비식별
+`signal_audit_events`에 기록한다.
+
+고객 삭제와 72시간 purge는 report 삭제 transaction 안에서 membership·embedding을 함께 제거하고
+distinct session count를 재계산한다. 기준 미달 신호는 `CLOSED/EVIDENCE_RECALCULATED`로 전이하며
+삭제된 원문에서 유래할 수 있는 대표 증상 FK는 null 처리한다.

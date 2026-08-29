@@ -767,6 +767,508 @@
           }
         ]
       }
+    },
+    "/api/signals/dashboard": {
+      "get": {
+        "tags": [
+          "signals"
+        ],
+        "summary": "Dashboard",
+        "operationId": "dashboard_api_signals_dashboard_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalDashboardResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/operator/signals/acknowledge": {
+      "post": {
+        "tags": [
+          "operator-signals"
+        ],
+        "summary": "Acknowledge",
+        "operationId": "acknowledge_api_operator_signals_acknowledge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorAcknowledgeSignalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorSignalMutationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Signal unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/operator/signals/close": {
+      "post": {
+        "tags": [
+          "operator-signals"
+        ],
+        "summary": "Close",
+        "operationId": "close_api_operator_signals_close_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorCloseSignalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorSignalMutationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Signal unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/operator/signals/official-notice": {
+      "post": {
+        "tags": [
+          "operator-signals"
+        ],
+        "summary": "Official Notice",
+        "operationId": "official_notice_api_operator_signals_official_notice_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorOfficialNoticeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorSignalMutationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Signal unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/operator/signals/merge": {
+      "post": {
+        "tags": [
+          "operator-signals"
+        ],
+        "summary": "Merge",
+        "operationId": "merge_api_operator_signals_merge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorMergeSignalsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorSignalMutationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Signal unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/operator/signals/split": {
+      "post": {
+        "tags": [
+          "operator-signals"
+        ],
+        "summary": "Split",
+        "operationId": "split_api_operator_signals_split_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorSplitSignalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorSignalMutationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Signal unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -1070,6 +1572,13 @@
         ],
         "title": "AttachmentResponse"
       },
+      "BaselineStatus": {
+        "type": "string",
+        "enum": [
+          "INSUFFICIENT_HISTORY"
+        ],
+        "title": "BaselineStatus"
+      },
       "CandidateField_IssueType_": {
         "properties": {
           "value": {
@@ -1368,8 +1877,7 @@
           },
           "related_signals": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/RelatedSignal"
             },
             "type": "array",
             "title": "Related Signals"
@@ -1705,6 +2213,224 @@
         ],
         "title": "IssueType"
       },
+      "OperatorAcknowledgeSignalRequest": {
+        "properties": {
+          "signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Signal Id"
+          },
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid4",
+            "title": "Client Request Id"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signal_id",
+          "client_request_id",
+          "reason"
+        ],
+        "title": "OperatorAcknowledgeSignalRequest"
+      },
+      "OperatorCloseSignalRequest": {
+        "properties": {
+          "signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Signal Id"
+          },
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid4",
+            "title": "Client Request Id"
+          },
+          "closure_reason": {
+            "$ref": "#/components/schemas/SignalClosureReason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signal_id",
+          "client_request_id",
+          "closure_reason"
+        ],
+        "title": "OperatorCloseSignalRequest"
+      },
+      "OperatorMergeSignalsRequest": {
+        "properties": {
+          "source_signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Source Signal Id"
+          },
+          "target_signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Target Signal Id"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+            "title": "Reason"
+          },
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid4",
+            "title": "Client Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_signal_id",
+          "target_signal_id",
+          "reason",
+          "client_request_id"
+        ],
+        "title": "OperatorMergeSignalsRequest"
+      },
+      "OperatorOfficialNoticeRequest": {
+        "properties": {
+          "signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Signal Id"
+          },
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid4",
+            "title": "Client Request Id"
+          },
+          "official_notice_url": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 8,
+            "pattern": "^https://[^\\s]+$",
+            "title": "Official Notice Url"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signal_id",
+          "client_request_id",
+          "official_notice_url"
+        ],
+        "title": "OperatorOfficialNoticeRequest"
+      },
+      "OperatorSignalMutationResponse": {
+        "properties": {
+          "signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Signal Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SignalStatus"
+          },
+          "closure_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalClosureReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reporting_unique_sessions": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Reporting Unique Sessions"
+          },
+          "raw_report_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Raw Report Count"
+          },
+          "official_notice_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Notice Url"
+          },
+          "changed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Changed At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signal_id",
+          "status",
+          "closure_reason",
+          "reporting_unique_sessions",
+          "raw_report_count",
+          "official_notice_url",
+          "changed_at"
+        ],
+        "title": "OperatorSignalMutationResponse"
+      },
+      "OperatorSplitSignalRequest": {
+        "properties": {
+          "signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Signal Id"
+          },
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid4",
+            "title": "Client Request Id"
+          },
+          "report_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Report Ids"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signal_id",
+          "client_request_id",
+          "report_ids",
+          "reason"
+        ],
+        "title": "OperatorSplitSignalRequest"
+      },
       "OrderAction": {
         "type": "string",
         "enum": [
@@ -1796,6 +2522,47 @@
           "status"
         ],
         "title": "ProblemDetails"
+      },
+      "RelatedSignal": {
+        "properties": {
+          "signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Signal Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SignalStatus"
+          },
+          "reported_symptom_type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "reporting_unique_sessions": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Reporting Unique Sessions"
+          },
+          "last_report_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Report At"
+          },
+          "official_incident": {
+            "type": "boolean",
+            "const": false,
+            "title": "Official Incident"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signal_id",
+          "status",
+          "reported_symptom_type",
+          "reporting_unique_sessions",
+          "last_report_at",
+          "official_incident"
+        ],
+        "title": "RelatedSignal"
       },
       "ReportAnalysisCompleteResponse": {
         "properties": {
@@ -2044,6 +2811,173 @@
           "code"
         ],
         "title": "SafeError"
+      },
+      "SignalClosureReason": {
+        "type": "string",
+        "enum": [
+          "WINDOW_EXPIRED",
+          "FALSE_POSITIVE",
+          "MERGED",
+          "OFFICIAL_INCIDENT_RESOLVED",
+          "EVIDENCE_RECALCULATED"
+        ],
+        "title": "SignalClosureReason"
+      },
+      "SignalDashboardItem": {
+        "properties": {
+          "signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Signal Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "SIGNAL_DETECTED",
+              "UNDER_REVIEW"
+            ],
+            "title": "Status"
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel"
+          },
+          "feature_area": {
+            "type": "string",
+            "title": "Feature Area"
+          },
+          "reported_symptom_type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "reporting_unique_sessions": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Reporting Unique Sessions"
+          },
+          "raw_report_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Raw Report Count"
+          },
+          "review_priority": {
+            "type": "boolean",
+            "title": "Review Priority"
+          },
+          "first_report_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Report At"
+          },
+          "last_report_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Report At"
+          },
+          "affected_features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Affected Features"
+          },
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          },
+          "policy_status": {
+            "type": "string",
+            "title": "Policy Status"
+          },
+          "baseline_status": {
+            "$ref": "#/components/schemas/BaselineStatus"
+          },
+          "baseline_ratio": {
+            "type": "null",
+            "title": "Baseline Ratio"
+          },
+          "official_incident": {
+            "type": "boolean",
+            "const": false,
+            "title": "Official Incident"
+          },
+          "official_notice_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Notice Url"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signal_id",
+          "status",
+          "channel",
+          "feature_area",
+          "reported_symptom_type",
+          "reporting_unique_sessions",
+          "raw_report_count",
+          "review_priority",
+          "first_report_at",
+          "last_report_at",
+          "affected_features",
+          "policy_version",
+          "policy_status",
+          "baseline_status",
+          "official_incident",
+          "official_notice_url"
+        ],
+        "title": "SignalDashboardItem"
+      },
+      "SignalDashboardResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SignalDashboardItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "baseline_status": {
+            "$ref": "#/components/schemas/BaselineStatus"
+          },
+          "baseline_ratio": {
+            "type": "null",
+            "title": "Baseline Ratio"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "baseline_status",
+          "limit",
+          "offset"
+        ],
+        "title": "SignalDashboardResponse"
+      },
+      "SignalStatus": {
+        "type": "string",
+        "enum": [
+          "CANDIDATE",
+          "SIGNAL_DETECTED",
+          "UNDER_REVIEW",
+          "CLOSED"
+        ],
+        "title": "SignalStatus"
       },
       "SubmissionStatus": {
         "type": "string",

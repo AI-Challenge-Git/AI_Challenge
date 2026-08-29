@@ -30,6 +30,8 @@ docker compose up --build
 - 상담카드 목록: `GET http://localhost:8000/api/agent/consultation-cards`
 - 상담카드 조회: `POST http://localhost:8000/api/consultation-cards/lookup`
 - 상담원 재확인: `POST http://localhost:8000/api/consultation-cards/verifications`
+- 장애 의심 신호 상황판: `GET http://localhost:8000/api/signals/dashboard`
+- 운영자 신호 변경: `/api/operator/signals/*`
 
 분석 API는 `pending`, `confirmation`, `failed`, `complete` 상태를 반환합니다. adapter 기본값은
 deterministic Fake이며 `AI_ADAPTER=nvidia`일 때 실제 provider adapter를 사용합니다. 백엔드
@@ -119,3 +121,13 @@ docker compose down
 ```
 
 `docker compose down -v`는 DB 데이터를 삭제하므로 사용하지 않습니다.
+
+## 장애 의심 신호 policy
+
+제보 확정 후 signal processing job은 생성되지만, 실제 embedding model metadata를 AI 담당에게 받기
+전에는 활성 policy를 임의 seed하지 않습니다. 따라서 현재 실제 provider 기반 자동 신호 생성은
+연결 대기 상태이고 typed contract·DB 규칙엔진·테스트 Fake까지만 구현돼 있습니다.
+
+실제 metadata를 받은 뒤 `scripts.register_signal_policy`로 `EXPERIMENTAL` policy를 등록합니다.
+기본 `600초·0.80·5건·10건`은 법령이나 업계 표준이 아니라 평가 전 MVP 실험값입니다. 자세한 근거와
+삭제 재계산 방식은 [incident signal ADR](docs/adr/incident-signal-policy.md)을 확인합니다.
