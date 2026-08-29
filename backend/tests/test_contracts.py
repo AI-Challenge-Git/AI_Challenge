@@ -78,6 +78,22 @@ def test_api_and_ai_dtos_canonicalize_placeholder_aliases() -> None:
     assert candidate.evidence_quote == "[ACCOUNT]"
 
 
+def test_ai_candidate_placeholder_normalization_preserves_str_enum_values() -> None:
+    issue_type = CandidateField[IssueType](
+        value=IssueType.ORDER_SUBMISSION_FAILURE,
+        status=FieldStatus.CONFIRMED_FROM_TEXT,
+        evidence_quote="주문 화면이 멈췄습니다.",
+    )
+    submission_status = CandidateField[SubmissionStatus](
+        value=SubmissionStatus.CUSTOMER_REPORTED_SUBMITTED,
+        status=FieldStatus.CONFIRMED_FROM_TEXT,
+        evidence_quote="주문을 제출했습니다.",
+    )
+
+    assert issue_type.value is IssueType.ORDER_SUBMISSION_FAILURE
+    assert submission_status.value is SubmissionStatus.CUSTOMER_REPORTED_SUBMITTED
+
+
 def test_pii_filter_masks_allowed_types_without_returning_values() -> None:
     text = "주문 오류입니다. 전화 010-1234-5678, 메일 test@example.com으로 연락했습니다."
     result = scan_and_mask(text)

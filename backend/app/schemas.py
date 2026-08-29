@@ -74,7 +74,10 @@ class CandidateField[T](StrictAiModel):
     @field_validator("value", "evidence_quote", mode="before")
     @classmethod
     def normalize_placeholder_aliases(cls, value: object) -> object:
-        return normalize_placeholders(value) if isinstance(value, str) else value
+        # StrEnum is also a str instance.  Enum values have already been
+        # converted by the adapter and must retain their runtime type for the
+        # strict CandidateField schema.
+        return normalize_placeholders(value) if type(value) is str else value
 
     @model_validator(mode="after")
     def validate_field_state(self) -> "CandidateField[T]":
