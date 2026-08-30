@@ -19,6 +19,8 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    literal_column,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -55,6 +57,15 @@ class Vector(UserDefinedType[list[float]]):
             return "[" + ",".join(format(item, ".17g") for item in value) + "]"
 
         return process
+
+
+class Vector1024(Vector):
+    """Full-precision vector type for the approved signal ANN query expression."""
+
+    cache_ok = True
+
+    def get_col_spec(self, **_: Any) -> str:
+        return "vector(1024)"
 
 
 class PolicySnapshot(Base):
@@ -661,6 +672,15 @@ class TechnicalEmbedding(Base):
             name="embedding_dimension_matches_vector",
         ),
         Index("ix_technical_embeddings_symptom_id", "technical_symptom_id"),
+        Index(
+            "ix_technical_embeddings_1024_hnsw_cosine",
+            literal_column("(embedding::vector(1024))").label("embedding_1024"),
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding_1024": "vector_cosine_ops"},
+            postgresql_where=text(
+                "embedding_dimension = 1024 AND normalization = 'L2' AND distance_metric = 'COSINE'"
+            ),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)

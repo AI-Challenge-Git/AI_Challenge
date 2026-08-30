@@ -1,11 +1,15 @@
 import csv
 import hashlib
 import io
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from uuid import UUID
 
 from sqlalchemy import func, or_, select, update
@@ -15,6 +19,9 @@ from app.errors import ServiceError
 from app.models import Symbol, SymbolMasterVersion
 
 KRX_SOURCE_URL = "https://data.krx.co.kr/contents/MDC/MAIN/main/index.cmd"
+KRX_LISTED_INFO_API_URL = (
+    "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo"
+)
 SYMBOL_SCHEMA_VERSION = "krx-all-symbols.v1"
 _IMPORT_LOCK_ID = 0x4D54534B5258
 _CODE_PATTERN = re.compile(r"^[0-9A-Z]{6}$")
@@ -57,6 +64,137 @@ class SymbolImportResult:
     version: str
     row_count: int
     created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ListedItem:
+    code: str
+    name_ko: str
+    market: str
+    source_as_of: date
+
+
+@dataclass(frozen=True, slots=True)
+class ListedSnapshot:
+    items: tuple[ListedItem, ...]
+    source_sha256: str
+    source_as_of: date
+
+
+def _parse_listed_page(raw: bytes) -> tuple[list[ListedItem], int, int]:
+    try:
+        payload: Any = json.loads(raw)
+        response = payload["response"]
+        header = response["header"]
+        body = response["body"]
+        result_code = str(header["resultCode"])
+        total_count = int(body["totalCount"])
+        raw_items = body.get("items", {}).get("item", [])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise SymbolImportError("listed-info API returned an invalid response") from exc
+    if result_code not in {"00", "0000"}:
+        raise SymbolImportError("listed-info API rejected the request")
+    if isinstance(raw_items, dict):
+        raw_items = [raw_items]
+    if not isinstance(raw_items, list):
+        raise SymbolImportError("listed-info API items are invalid")
+    raw_item_count = len(raw_items)
+
+    items: list[ListedItem] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            raise SymbolImportError("listed-info API item is invalid")
+        market = unicodedata.normalize("NFC", str(item.get("mrktCtg", "")).strip())
+        if market not in {"KOSPI", "KOSDAQ"}:
+            continue
+        source_code = str(item.get("srtnCd", "")).strip().upper()
+        code = (
+            source_code[1:]
+            if len(source_code) == 7 and source_code.startswith("A")
+            else source_code
+        )
+        name_ko = unicodedata.normalize("NFC", str(item.get("itmsNm", "")).strip())
+        bas_dt = str(item.get("basDt", "")).strip()
+        if not _CODE_PATTERN.fullmatch(code) or not name_ko:
+            raise SymbolImportError("listed-info API contains invalid target data")
+        try:
+            source_as_of = date.fromisoformat(f"{bas_dt[:4]}-{bas_dt[4:6]}-{bas_dt[6:8]}")
+        except ValueError as exc:
+            raise SymbolImportError("listed-info API basis date is invalid") from exc
+        items.append(
+            ListedItem(
+                code=code,
+                name_ko=name_ko,
+                market=market,
+                source_as_of=source_as_of,
+            )
+        )
+    return items, total_count, raw_item_count
+
+
+def fetch_listed_snapshot(
+    *,
+    api_url: str,
+    api_key: str,
+    source_as_of: date,
+    page_size: int = 1000,
+    timeout_seconds: float = 30.0,
+) -> ListedSnapshot:
+    if not api_key.strip():
+        raise SymbolImportError("KRX listed-info API key is not configured")
+    if not 1 <= page_size <= 10_000:
+        raise SymbolImportError("listed-info API page size is invalid")
+
+    page_no = 1
+    seen_raw = 0
+    pages: list[bytes] = []
+    items: list[ListedItem] = []
+    while True:
+        query = urlencode(
+            {
+                "serviceKey": api_key,
+                "resultType": "json",
+                "pageNo": page_no,
+                "numOfRows": page_size,
+                "basDt": source_as_of.strftime("%Y%m%d"),
+            }
+        )
+        request = Request(f"{api_url}?{query}", headers={"Accept": "application/json"})
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+                raw = response.read()
+        except OSError as exc:
+            raise SymbolImportError("listed-info API is unavailable") from exc
+        page_items, total_count, page_item_count = _parse_listed_page(raw)
+        pages.append(raw)
+        items.extend(page_items)
+        seen_raw += page_item_count
+        if seen_raw >= total_count:
+            break
+        if page_item_count == 0:
+            raise SymbolImportError("listed-info API pagination ended early")
+        page_no += 1
+
+    codes = [item.code for item in items]
+    if not items or len(codes) != len(set(codes)):
+        raise SymbolImportError("listed-info API target data is empty or duplicated")
+    if any(item.source_as_of != source_as_of for item in items):
+        raise SymbolImportError("listed-info API basis date does not match the requested date")
+    return ListedSnapshot(
+        items=tuple(items),
+        source_sha256=hashlib.sha256(b"".join(pages)).hexdigest(),
+        source_as_of=source_as_of,
+    )
+
+
+def verify_listed_snapshot(parsed: ParsedSymbolCsv, snapshot: ListedSnapshot) -> None:
+    listed_by_code = {item.code: item for item in snapshot.items}
+    for row in parsed.rows:
+        listed = listed_by_code.get(row.code)
+        if listed is None:
+            raise SymbolImportError("CSV target symbol is missing from listed-info API")
+        if listed.name_ko != row.name_ko or listed.market != row.market:
+            raise SymbolImportError("CSV and listed-info API symbol metadata do not match")
 
 
 def _decode_csv(raw: bytes) -> tuple[str, str]:

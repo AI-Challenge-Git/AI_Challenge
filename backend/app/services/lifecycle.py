@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.attachments import LocalAttachmentStore
+from app.attachments import AttachmentStore
 from app.codes import ObjectDeletionStatus
 from app.models import (
     AgentAccessToken,
@@ -179,7 +179,7 @@ def _retry_delay(attempt_count: int) -> timedelta:
 
 async def process_object_deletion_jobs(
     session: AsyncSession,
-    attachment_store: LocalAttachmentStore,
+    attachment_store: AttachmentStore,
     *,
     now: datetime | None = None,
     batch_size: int = 100,
@@ -359,7 +359,7 @@ async def _purge_rows(
 
 async def purge_expired_data(
     session: AsyncSession,
-    attachment_store: LocalAttachmentStore,
+    attachment_store: AttachmentStore,
     *,
     now: datetime | None = None,
     batch_size: int = 100,

@@ -1875,6 +1875,17 @@
             "type": "boolean",
             "title": "Has Attachment"
           },
+          "attachment_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Url"
+          },
           "related_signals": {
             "items": {
               "$ref": "#/components/schemas/RelatedSignal"
@@ -1894,6 +1905,7 @@
           "verification_status",
           "safety_notice",
           "has_attachment",
+          "attachment_url",
           "related_signals"
         ],
         "title": "ConsultationCardDetail"

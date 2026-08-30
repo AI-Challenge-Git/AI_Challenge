@@ -10,6 +10,7 @@ from app.api.dependencies import (
     get_clock,
     get_security_sleeper,
 )
+from app.attachments import AttachmentStore, get_attachment_store
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.schemas import (
@@ -113,6 +114,7 @@ async def lookup_card(
     settings: Annotated[Settings, Depends(get_settings)],
     clock: Annotated[Callable[[], datetime], Depends(get_clock)],
     sleeper: Annotated[Sleeper, Depends(get_security_sleeper)],
+    attachment_store: Annotated[AttachmentStore, Depends(get_attachment_store)],
 ) -> ConsultationCardDetail:
     response.headers["Cache-Control"] = "no-store"
     return await lookup_consultation_card(
@@ -121,6 +123,7 @@ async def lookup_card(
         request_body,
         _client_identifier(request),
         settings,
+        attachment_store,
         now=clock(),
         sleeper=sleeper,
     )

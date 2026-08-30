@@ -13,7 +13,7 @@ from pydantic import SecretStr
 from sqlalchemy import delete, func, select, update
 
 from app.api.dependencies import get_clock, get_security_sleeper
-from app.attachments import LocalAttachmentStore
+from app.attachments import LocalAttachmentStore, get_attachment_store
 from app.codes import AgentRole, ReportStatus
 from app.config import Settings, get_settings
 from app.db import engine, session_factory
@@ -416,7 +416,7 @@ async def test_card_list_exposes_only_minimal_data_and_time_boundaries() -> None
     assert all(forbidden.isdisjoint(item) for item in items.values())
 
 
-async def test_lookup_supports_reference_and_card_id_without_attachment_url() -> None:
+async def test_lookup_supports_reference_and_card_id_with_local_private_storage() -> None:
     card_id, _ = await _create_card(with_attachment=True)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -437,9 +437,51 @@ async def test_lookup_supports_reference_and_card_id_without_attachment_url() ->
     body = by_reference.json()
     assert body["card_id"] == str(card_id)
     assert body["has_attachment"] is True
+    assert body["attachment_url"] is None
     assert body["related_signals"] == []
-    assert {"reference_number", "reference_digest", "attachment_url", "object_key"}.isdisjoint(body)
+    assert {"reference_number", "reference_digest", "object_key"}.isdisjoint(body)
     assert by_reference.headers["cache-control"] == "no-store"
+
+
+class _SignedUrlStore(LocalAttachmentStore):
+    def signed_get_url(
+        self,
+        object_key: str,
+        *,
+        content_type: str,
+        expires_in: int,
+    ) -> str:
+        assert len(object_key) == 43
+        assert content_type == "image/png"
+        assert expires_in == 300
+        return "https://private.example.invalid/signed"
+
+
+async def test_lookup_returns_short_signed_url_only_after_agent_auth_and_ttl() -> None:
+    card_id, _ = await _create_card(with_attachment=True)
+    app.dependency_overrides[get_attachment_store] = lambda: _SignedUrlStore(
+        Path(".test-artifacts") / "signed-url"
+    )
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            unauthenticated = await client.post(
+                "/api/consultation-cards/lookup",
+                json={"card_id": str(card_id)},
+            )
+            token = await _login(client)
+            authorized = await client.post(
+                "/api/consultation-cards/lookup",
+                headers=_auth(token),
+                json={"card_id": str(card_id)},
+            )
+    finally:
+        app.dependency_overrides.pop(get_attachment_store, None)
+
+    assert unauthenticated.status_code == 401
+    assert authorized.status_code == 200
+    assert authorized.json()["attachment_url"] == "https://private.example.invalid/signed"
+    assert authorized.headers["cache-control"] == "no-store"
 
 
 async def test_missing_expired_and_deleted_cards_share_the_same_404() -> None:

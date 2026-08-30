@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.ai import DualExtractor, validate_evidence_quotes
 from app.attachments import (
     AttachmentStorageError,
-    LocalAttachmentStore,
+    AttachmentStore,
     PreparedAttachment,
     attachment_data_url,
 )
@@ -205,7 +205,7 @@ async def analyze_report(
     request: ReportCreateRequest,
     settings: Settings,
     extractor: DualExtractor,
-    attachment_store: LocalAttachmentStore,
+    attachment_store: AttachmentStore,
     prepared_attachment: PreparedAttachment | None = None,
     *,
     now: datetime | None = None,
@@ -415,7 +415,8 @@ async def include_attachment_preview(
     session: AsyncSession,
     principal_digest: bytes,
     response: ReportAnalysisResponse,
-    attachment_store: LocalAttachmentStore,
+    attachment_store: AttachmentStore,
+    settings: Settings,
 ) -> ReportAnalysisResponse:
     if not isinstance(response.root, ReportAnalysisConfirmationResponse):
         return response
@@ -432,16 +433,27 @@ async def include_attachment_preview(
     if attachment is None:
         return response
     try:
-        content = await attachment_store.read(attachment.object_key)
+        signed_url = attachment_store.signed_get_url(
+            attachment.object_key,
+            content_type=attachment.content_type,
+            expires_in=settings.attachment_signed_url_ttl_seconds,
+        )
+        if signed_url is None:
+            content = await attachment_store.read(attachment.object_key)
+            if not hmac.compare_digest(
+                hashlib.sha256(content).hexdigest(), attachment.content_sha256
+            ):
+                raise ServiceError(
+                    503, "ATTACHMENT_INTEGRITY_ERROR", "이미지를 불러오지 못했습니다."
+                )
+            signed_url = attachment_data_url(attachment.content_type, content)
     except AttachmentStorageError as exc:
         raise ServiceError(
             503, "ATTACHMENT_STORAGE_UNAVAILABLE", "이미지를 불러오지 못했습니다."
         ) from exc
-    if not hmac.compare_digest(hashlib.sha256(content).hexdigest(), attachment.content_sha256):
-        raise ServiceError(503, "ATTACHMENT_INTEGRITY_ERROR", "이미지를 불러오지 못했습니다.")
     response.root.attachment = AttachmentResponse(
         id=attachment.id,
-        url=attachment_data_url(attachment.content_type, content),
+        url=signed_url,
     )
     return response
 

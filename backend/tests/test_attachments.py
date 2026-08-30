@@ -3,7 +3,7 @@ from io import BytesIO
 import pytest
 from PIL import Image, PngImagePlugin
 
-from app.attachments import InvalidAttachmentError, sanitize_attachment
+from app.attachments import InvalidAttachmentError, S3AttachmentStore, sanitize_attachment
 
 
 def _png_bytes(*, width: int = 8, height: int = 8, metadata: bool = False) -> bytes:
@@ -38,3 +38,44 @@ def test_sanitizer_rejects_invalid_or_oversized_files(raw: bytes) -> None:
 def test_sanitizer_rejects_oversized_dimensions() -> None:
     with pytest.raises(InvalidAttachmentError):
         sanitize_attachment(_png_bytes(width=4097, height=1))
+
+
+class _FakeS3Client:
+    def __init__(self) -> None:
+        self.puts: list[dict[str, object]] = []
+        self.deletes: list[dict[str, object]] = []
+
+    def put_object(self, **kwargs: object) -> None:
+        self.puts.append(kwargs)
+
+    def delete_object(self, **kwargs: object) -> None:
+        self.deletes.append(kwargs)
+
+    def generate_presigned_url(self, operation: str, **kwargs: object) -> str:
+        assert operation == "get_object"
+        assert kwargs["ExpiresIn"] == 300
+        return "https://private.example.invalid/signed"
+
+
+async def test_s3_store_uses_private_object_operations_and_short_signed_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeS3Client()
+    monkeypatch.setattr("app.attachments.boto3.client", lambda *_args, **_kwargs: client)
+    store = S3AttachmentStore(
+        bucket="private-bucket",
+        endpoint="https://storage.example.invalid",
+        region="auto",
+        access_key_id="synthetic-id",
+        secret_access_key="synthetic-secret",
+        addressing_style="virtual",
+    )
+    object_key = "A" * 43
+
+    await store.put(object_key, b"image")
+    url = store.signed_get_url(object_key, content_type="image/png", expires_in=300)
+    await store.delete(object_key)
+
+    assert url == "https://private.example.invalid/signed"
+    assert client.puts == [{"Bucket": "private-bucket", "Key": object_key, "Body": b"image"}]
+    assert client.deletes == [{"Bucket": "private-bucket", "Key": object_key}]

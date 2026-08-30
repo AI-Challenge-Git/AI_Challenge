@@ -35,7 +35,7 @@ def test_settings_load_environment_variables(
 
 def test_fake_ai_adapter_is_the_safe_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AI_ADAPTER", raising=False)
-    settings = Settings(_env_file=None)
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
     assert settings.ai_adapter == "fake"
     assert settings.ai_timeout_seconds == 90
@@ -101,6 +101,36 @@ def test_openai_adapter_requires_a_masked_api_key() -> None:
 
     assert "OPENAI_API_KEY" in str(missing.value)
     assert secret not in repr(configured)
+
+
+def _production_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "app_env": "production",
+        "cors_origins": ["https://desk.example.com"],
+        "attachment_storage_backend": "s3",
+        "bucket": "private-bucket",
+        "access_key_id": SecretStr("synthetic-access-key"),
+        "secret_access_key": SecretStr("synthetic-secret-key"),
+        "region": "auto",
+        "endpoint": "https://storage.example.com",
+        "session_hmac_key": SecretStr("a" * 32),
+        "reference_hmac_key": SecretStr("b" * 32),
+        "agent_token_hmac_key": SecretStr("c" * 32),
+        "rate_limit_hmac_key": SecretStr("d" * 32),
+    }
+    values.update(overrides)
+    return Settings.model_validate(values)
+
+
+def test_production_requires_private_storage_and_exact_https_cors() -> None:
+    assert _production_settings().attachment_storage_backend == "s3"
+
+    with pytest.raises(ValidationError, match="private object storage"):
+        _production_settings(attachment_storage_backend="local")
+    with pytest.raises(ValidationError, match="credentials"):
+        _production_settings(secret_access_key=None)
+    with pytest.raises(ValidationError, match="exact HTTPS origins"):
+        _production_settings(cors_origins=["https://*.example.com"])
 
 
 def test_extractor_dependency_uses_fake_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
