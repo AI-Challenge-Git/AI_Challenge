@@ -258,7 +258,7 @@ CASES = [
 ]
 
 THRESHOLD = SIMILARITY_THRESHOLD
-THRESHOLD_CANDIDATES = [value / 100 for value in range(65, 86)]
+THRESHOLD_CANDIDATES = [value / 100 for value in range(30, 71)]
 
 
 def describe(scores):

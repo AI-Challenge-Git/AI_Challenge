@@ -13,7 +13,7 @@ from evaluate_embedding_pairs import CASES
 
 EXCLUDED_ISSUE_TYPES = {"UNKNOWN", "UNRELATED_OR_AMBIGUOUS"}
 ORDER_SEEDS = range(10)
-THRESHOLD_CANDIDATES = [value / 100 for value in range(79, 86)]
+THRESHOLD_CANDIDATES = [value / 100 for value in range(50, 66)]
 
 
 def canonical_member_sets(groups):
