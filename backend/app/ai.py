@@ -62,9 +62,9 @@ class FakeDualExtractor:
         )
 
 
-class NvidiaDualExtractorAdapter:
+class OpenAIDualExtractorAdapter:
     """
-    DualExtractor Protocol에 RealDualExtractor(NVIDIA Build, 8B)를 연결하는 어댑터.
+    DualExtractor Protocol에 RealDualExtractor(OpenAI)를 연결하는 어댑터.
 
     - Protocol이 요구하는 클래스 속성(schema_version 등)을 노출한다.
     - extract_safe()의 ExtractOutcome(반환값 기반 성공/실패 표현)을
@@ -73,13 +73,13 @@ class NvidiaDualExtractorAdapter:
       FastAPI 이벤트 루프를 막지 않게 한다.
 
     주의: settings.ai_timeout_seconds의 기본 90초는 adapter 전체 호출 예산이다.
-    NVIDIA 내부 provider 호출과 correction retry도 이 전체 예산 안에 끝나야 한다.
+    OpenAI provider 호출과 correction retry도 이 전체 예산 안에 끝나야 한다.
     """
 
     schema_version = "dual-extraction.v1"
     taxonomy_version = "issue-type.v1"
-    adapter_name = "nvidia-build"
-    model_id: str | None = "openai/gpt-oss-20b"
+    adapter_name = "openai"
+    model_id: str | None = "gpt-4.1-mini"
 
     def __init__(self) -> None:
         self._inner = RealDualExtractor()
@@ -104,7 +104,7 @@ class NvidiaDualExtractorAdapter:
 def get_dual_extractor() -> DualExtractor:
     if get_settings().ai_adapter == "fake":
         return FakeDualExtractor()
-    return NvidiaDualExtractorAdapter()
+    return OpenAIDualExtractorAdapter()
 
 
 def validate_evidence_quotes(result: ExtractionResult, masked_text: str) -> None:

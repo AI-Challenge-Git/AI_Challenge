@@ -10,7 +10,7 @@ def test_api_image_runs_non_root_without_per_instance_migration() -> None:
     assert 'CMD ["uvicorn", "app.main:app"' in dockerfile
     assert "alembic upgrade head && exec uvicorn" in compose
     assert "AI_ADAPTER: ${AI_ADAPTER:-fake}" in compose
-    assert "NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}" in compose
+    assert "OPENAI_API_KEY: ${OPENAI_API_KEY:-}" in compose
     assert "attachment_data:/app/data/attachments" in compose
     assert "chown -R app:app /app/data" in dockerfile
     assert "COPY scripts ./scripts" in dockerfile

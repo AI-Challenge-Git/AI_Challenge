@@ -1,5 +1,5 @@
 """
-실제 LLM(NVIDIA Build)을 사용한 이중 구조화 구현.
+실제 OpenAI LLM을 사용한 이중 구조화 구현.
 FakeDualExtractor를 대체하되, 동일한 DualExtractor 프로토콜을 따른다.
 
 버전: v6 (2026-08-19)
@@ -293,9 +293,12 @@ status 값이 될 수 없습니다.
 ### ORDER_RESULT_UNCONFIRMED
 주문을 시도한 뒤 접수 여부, 주문번호, 처리 결과 또는 체결 여부를 확인할 수
 없는 증상입니다. 주문을 보내는 도중 멈춘 것과 구분하세요.
+- 체결·주문 내역 화면이 언급돼도, 일반적인 과거 내역 조회가 아니라 방금 보낸
+  특정 주문이 존재하는지 또는 접수됐는지 불확실한 것이 핵심이면 이 유형입니다.
 - 예: "주문했는데 접수됐는지 모르겠습니다."
 - 예: "주문번호가 표시되지 않아 결과를 확인할 수 없습니다."
 - 예: "매도 후 체결 여부를 확인할 수 없습니다."
+- 예: "체결 내역에서 방금 보낸 주문이 있는지 없는지 안 보입니다."
 
 ### LOGIN_ACCESS_FAILURE
 로그인·비밀번호·본인인증·인증번호와 관련된 명시적인 접속 실패입니다.
@@ -306,6 +309,8 @@ status 값이 될 수 없습니다.
 
 ### BALANCE_INQUIRY_ERROR
 잔고, 보유 종목·수량, 체결 내역 또는 주문 내역의 조회·표시·갱신 오류입니다.
+다만 방금 시도한 특정 주문의 존재·접수·처리 여부가 불확실한 경우는
+ORDER_RESULT_UNCONFIRMED를 우선합니다.
 - 예: "잔고 화면이 갱신되지 않습니다."
 - 예: "보유 주식 수량이 표시되지 않습니다."
 - 예: "체결 내역을 조회하면 빈 화면이 나옵니다."
@@ -324,6 +329,10 @@ DEVICE_NETWORK_SUSPECTED를 우선합니다.
 - 예: "해외주식 거래 수수료가 궁금합니다."
 - 예: "공모주 청약 일정을 알려주세요."
 - 예: "오늘 주가 전망이 궁금합니다."
+- 예: "보유 중인 종목이 있어서 그런데, 배당금 지급일이 언제인지 확인하고 싶어요."
+질문 앞에 상황이나 이유를 설명하는 구절이 붙어도, 핵심 요청이 정보성 질문이면
+UNRELATED_OR_AMBIGUOUS입니다. 이유 설명 구절 자체를 장애 근거로 오인해
+UNKNOWN으로 후퇴하지 마세요.
 
 ### UNKNOWN
 장애가 발생했다는 표현은 있지만 어느 기능이나 원인인지 분류할 근거가
@@ -566,20 +575,19 @@ class ExtractOutcome(NamedTuple):
 
 
 class RealDualExtractor:
-    """NVIDIA Build API를 사용해 실제로 이중 구조화를 수행하는 extractor."""
+    """OpenAI API를 사용해 실제로 이중 구조화를 수행하는 extractor."""
 
     def __init__(self) -> None:
-        api_key = os.environ.get("NVIDIA_API_KEY")
+        api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            raise RuntimeError(".env에 NVIDIA_API_KEY가 설정되어 있지 않습니다.")
+            raise RuntimeError(".env에 OPENAI_API_KEY가 설정되어 있지 않습니다.")
 
         self._client = OpenAI(
-            base_url="https://integrate.api.nvidia.com/v1",
             api_key=api_key,
             timeout=90.0,
             max_retries=1,
         )
-        self._model = "openai/gpt-oss-20b"
+        self._model = "gpt-4.1-mini"
 
     def _coerce_types(self, field_dict: dict[str, Any], value_type: type | None) -> dict[str, Any]:
         """
@@ -767,6 +775,28 @@ class RealDualExtractor:
         if has_failure and any(term in text for term in login_terms):
             return IssueType.LOGIN_ACCESS_FAILURE
 
+        result_terms = (
+            "접수됐는지",
+            "접수되었는지",
+            "접수 여부",
+            "주문번호",
+            "체결 여부",
+            "처리 결과",
+            "주문 결과",
+            "들어갔는지",
+            "접수 번호",
+            "체결된 건지",
+            "미체결",
+            "실제 주문",
+            "방금 보낸 주문",
+            "주문이 있는지",
+            "있는지 없는지",
+        )
+        if any(term in text for term in result_terms) and (
+            has_failure or "모르" in text or "확인" in text
+        ):
+            return IssueType.ORDER_RESULT_UNCONFIRMED
+
         balance_terms = (
             "잔고",
             "보유 주식",
@@ -787,25 +817,6 @@ class RealDualExtractor:
         )
         if has_failure and any(term in text for term in balance_terms):
             return IssueType.BALANCE_INQUIRY_ERROR
-
-        result_terms = (
-            "접수됐는지",
-            "접수되었는지",
-            "접수 여부",
-            "주문번호",
-            "체결 여부",
-            "처리 결과",
-            "주문 결과",
-            "들어갔는지",
-            "접수 번호",
-            "체결된 건지",
-            "미체결",
-            "실제 주문",
-        )
-        if any(term in text for term in result_terms) and (
-            has_failure or "모르" in text or "확인" in text
-        ):
-            return IssueType.ORDER_RESULT_UNCONFIRMED
 
         order_terms = ("주문", "매수", "매도")
         submission_terms = (
@@ -996,7 +1007,7 @@ class RealDualExtractor:
                 messages=cast("Iterable[ChatCompletionMessageParam]", messages),
                 temperature=0.0,
                 max_tokens=max_tokens,
-                extra_body={"reasoning_effort": "low"},
+                response_format={"type": "json_object"},
             )
         except APITimeoutError as e:
             return None, ExtractFailureReason.TIMEOUT, str(e)
@@ -1038,13 +1049,18 @@ class RealDualExtractor:
                     "ORDER_SUBMISSION_FAILURE: 주문 버튼·확정·전송 단계의 멈춤, "
                     "무반응, 로딩\n"
                     "ORDER_RESULT_UNCONFIRMED: 주문 후 접수·주문번호·체결 결과를 "
-                    "확인할 수 없음\n"
+                    "확인할 수 없음. 체결·주문 내역 화면이 언급돼도 방금 보낸 "
+                    "특정 주문의 존재·접수 여부가 불확실하면 이 값\n"
                     "LOGIN_ACCESS_FAILURE: 로그인·비밀번호·인증 과정의 실제 실패\n"
                     "BALANCE_INQUIRY_ERROR: 잔고·예수금·보유종목·체결내역·주문내역 "
-                    "조회 또는 표시 오류\n"
+                    "조회 또는 표시 오류. 단, 방금 시도한 특정 주문의 존재·접수 "
+                    "여부가 핵심이면 ORDER_RESULT_UNCONFIRMED를 우선\n"
                     "DEVICE_NETWORK_SUSPECTED: 네트워크나 특정 기기와 장애의 "
                     "연관성이 명시됨. 네트워크가 정상이라고 하면 선택하지 않음\n"
-                    "UNRELATED_OR_AMBIGUOUS: 장애가 아닌 수수료·일정·방법·전망 문의\n"
+                    "UNRELATED_OR_AMBIGUOUS: 장애가 아닌 수수료·일정·방법·전망 문의. "
+                    "질문 앞에 상황이나 이유를 설명하는 구절이 붙어도 핵심 요청이 "
+                    "정보성 질문이면 이 값입니다. 이유 설명 구절 자체를 장애 근거로 "
+                    "오인해 UNKNOWN으로 후퇴하지 마세요\n"
                     "UNKNOWN: 장애는 있으나 기능과 원인을 특정할 근거가 부족함\n\n"
                     "evidence_quote는 사용자 메시지(원문)에서 분류 근거가 되는 "
                     "부분을 어미·조사까지 한 글자도 다르지 않게 그대로 복사한 "
@@ -1123,6 +1139,94 @@ class RealDualExtractor:
 
         current = (issue_type.value, issue_type.status, issue_type.evidence_quote)
         return 1, current != previous
+
+    def _compact_full_text_issue_evidence(
+        self,
+        masked_text: str,
+        result: ExtractionResult,
+    ) -> None:
+        """원문 전체인 issue_type 근거만 정확한 부분 문자열로 축소한다.
+
+        분류값이나 상태는 변경하지 않는다. LLM 근거가 이미 부분 문자열이면
+        그대로 유지하고, 원문 전체를 반환한 경우에만 확정된 유형의 명시적
+        단서부터 문장 끝까지를 사용한다. 따라서 새 근거도 항상 masked_text의
+        연속된 substring이다.
+        """
+        field = result.technical.issue_type
+        if (
+            field.status is not FieldStatus.CONFIRMED_FROM_TEXT
+            or field.value is None
+            or field.evidence_quote != masked_text
+        ):
+            return
+
+        cue_terms = {
+            IssueType.ORDER_SUBMISSION_FAILURE: (
+                "주문 버튼",
+                "주문 확인",
+                "주문 제출",
+                "매수 주문",
+                "매도 주문",
+                "주문",
+            ),
+            IssueType.ORDER_RESULT_UNCONFIRMED: (
+                "접수 여부",
+                "접수됐는지",
+                "주문번호",
+                "체결 여부",
+                "처리 결과",
+                "주문 결과",
+            ),
+            IssueType.LOGIN_ACCESS_FAILURE: (
+                "로그인",
+                "비밀번호",
+                "인증번호",
+                "인증",
+            ),
+            IssueType.BALANCE_INQUIRY_ERROR: (
+                "매매 내역",
+                "거래 내역",
+                "체결 내역",
+                "주문 내역",
+                "보유 종목",
+                "잔고",
+                "예수금",
+            ),
+            IssueType.DEVICE_NETWORK_SUSPECTED: (
+                "기기에서만",
+                "휴대폰에서만",
+                "스마트폰에서만",
+                "와이파이",
+                "Wi-Fi",
+                "네트워크",
+                "모바일 데이터",
+            ),
+            IssueType.UNRELATED_OR_AMBIGUOUS: (
+                "배당금",
+                "지급일",
+                "수수료",
+                "우대율",
+                "계좌를 새로 개설",
+                "개설하는 절차",
+                "절차를",
+                "방법을",
+                "일정을",
+                "전망",
+            ),
+        }
+        for cue in cue_terms.get(field.value, ()):
+            start = masked_text.find(cue)
+            if start > 0:
+                field.evidence_quote = masked_text[start:]
+                return
+
+        # 유형 단서가 문장 첫머리에만 있으면 쉼표 뒤의 실제 장애·질문 절을
+        # 사용할 수 있다. 적절한 부분 절이 없으면 검증 가능한 원문을 유지한다.
+        comma_index = masked_text.find(",")
+        if comma_index >= 0:
+            suffix = masked_text[comma_index + 1 :].lstrip()
+            if suffix and suffix in masked_text:
+                field.evidence_quote = suffix
 
     def _validate_evidence_quotes(self, masked_text: str, result: ExtractionResult) -> None:
         """모든 non-null evidence_quote가 실제 masked_text의 substring인지 검증한다."""
@@ -1247,7 +1351,7 @@ class RealDualExtractor:
             result = ExtractionResult(
                 schema_version="dual-extraction.v1",
                 taxonomy_version="issue-type.v1",
-                adapter_name="nvidia-build",
+                adapter_name="openai",
                 model_id=self._model,
                 technical=technical,
                 consultation=consultation,
@@ -1313,7 +1417,9 @@ class RealDualExtractor:
                 "issue_type 분류 경계를 다시 확인하세요. 주문 버튼·확인·제출 "
                 "단계의 멈춤이나 로딩은 ORDER_SUBMISSION_FAILURE, 주문 시도 후 "
                 "접수 여부·주문번호·체결 여부를 모르면 "
-                "ORDER_RESULT_UNCONFIRMED, 잔고·보유수량·체결내역·주문내역의 "
+                "ORDER_RESULT_UNCONFIRMED입니다. 체결·주문 내역 화면이 언급돼도 "
+                "방금 보낸 특정 주문의 존재 여부가 불확실하면 이 유형을 우선하세요. "
+                "잔고·보유수량·일반적인 체결내역·주문내역의 "
                 "조회 오류는 BALANCE_INQUIRY_ERROR입니다. 와이파이·모바일 "
                 "데이터·특정 기기와 장애의 연관성이 명시되면 "
                 "DEVICE_NETWORK_SUSPECTED입니다. 장애가 아닌 수수료·일정·전망 "
@@ -1382,6 +1488,7 @@ class RealDualExtractor:
                 masked_text,
                 result,
             )
+            self._compact_full_text_issue_evidence(masked_text, result)
             return ExtractOutcome(
                 result,
                 None,
@@ -1427,6 +1534,7 @@ class RealDualExtractor:
                 classifier_calls, classifier_override = self._apply_focused_issue_type(
                     masked_text, result_n
                 )
+                self._compact_full_text_issue_evidence(masked_text, result_n)
                 return ExtractOutcome(
                     result_n,
                     None,
