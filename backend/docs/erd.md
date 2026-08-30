@@ -284,8 +284,8 @@ erDiagram
 - `rate_limit_buckets`는 employee·agent·client의 raw 값을 저장하지 않고 전용 HMAC fingerprint와
   원자적 request count만 저장한다. 만료 token과 bucket은 purge CLI가 정리한다.
 - embedding은 무차원 pgvector `vector`로 저장하고 row의 model metadata와
-  `vector_dims(embedding)` CHECK가 일치해야 한다. AI 모델 확정 전에는 ANN index를 만들지 않고 exact
-  cosine scan만 사용한다.
+  `vector_dims(embedding)` CHECK가 일치해야 한다. 합의된 1024차원 L2·cosine embedding은
+  `vector(1024)` HNSW expression index를 사용하며 다른 dimension과 model metadata는 섞지 않는다.
 - `clustering_policies`는 시간창·최소 고유 세션·유사도·모델 metadata를 version 관리한다. 활성 policy는
   하나만 허용하며 확정 전 숫자는 `EXPERIMENTAL`이다.
 - `signal_members`는 `(signal_id, report_id)` UNIQUE로 편입 중복을 막고 규모는 report의
@@ -295,5 +295,5 @@ erDiagram
 - `signal_audit_events`에는 원문·PII·세션·주문 상세·embedding을 저장하지 않는다.
 
 향후 운영 Object Storage가 추가되면 해당 기능의 최초 migration과 service에 purge 계약과
-경계·동시성 테스트를 함께 등록한다. 실제 AI model·dimension 승인 뒤 ANN index가 필요하면 기존
-dimensionless vector를 덮어쓰지 않고 새 model version용 additive migration으로 검토한다.
+경계·동시성 테스트를 함께 등록한다. ANN index는 기존 dimensionless full-precision vector를
+덮어쓰지 않고 1024차원 대상 partial expression index로 유지한다.

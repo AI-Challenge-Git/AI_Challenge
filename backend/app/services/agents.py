@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.attachments import AttachmentStorageError, AttachmentStore
 from app.codes import (
     AgentRole,
     AuditOutcome,
@@ -511,6 +512,7 @@ def _card_detail(
     technical: TechnicalSymptom,
     verification_status: VerificationStatus | None,
     related_signals: list[RelatedSignal],
+    attachment_url: str | None,
 ) -> ConsultationCardDetail:
     if card.expires_at is None:
         raise ServiceError(404, "CARD_NOT_FOUND", "상담카드를 찾을 수 없습니다.")
@@ -537,6 +539,7 @@ def _card_detail(
         verification_status=verification_status,
         safety_notice=CONSULTATION_SAFETY_NOTICE,
         has_attachment=card.report.attachment is not None,
+        attachment_url=attachment_url,
         related_signals=related_signals,
     )
 
@@ -547,6 +550,7 @@ async def lookup_consultation_card(
     request: ConsultationCardLookupRequest,
     client_identifier: str,
     settings: Settings,
+    attachment_store: AttachmentStore,
     *,
     now: datetime,
     sleeper: Sleeper = asyncio.sleep,
@@ -602,11 +606,26 @@ async def lookup_consultation_card(
                     raise ServiceError(503, "CARD_UNAVAILABLE", "상담카드를 사용할 수 없습니다.")
                 verification_status = await _latest_verification_status(session, card.id)
                 related_signals = await related_signals_for_report(session, card.report_id)
+                attachment_url: str | None = None
+                if card.report.attachment is not None:
+                    try:
+                        attachment_url = attachment_store.signed_get_url(
+                            card.report.attachment.object_key,
+                            content_type=card.report.attachment.content_type,
+                            expires_in=settings.attachment_signed_url_ttl_seconds,
+                        )
+                    except AttachmentStorageError as exc:
+                        raise ServiceError(
+                            503,
+                            "ATTACHMENT_STORAGE_UNAVAILABLE",
+                            "이미지를 불러오지 못했습니다.",
+                        ) from exc
                 response = _card_detail(
                     card,
                     technical,
                     verification_status,
                     related_signals,
+                    attachment_url,
                 )
                 session.add(
                     _audit(

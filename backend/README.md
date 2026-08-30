@@ -34,7 +34,7 @@ docker compose up --build
 - 운영자 신호 변경: `/api/operator/signals/*`
 
 분석 API는 `pending`, `confirmation`, `failed`, `complete` 상태를 반환합니다. adapter 기본값은
-deterministic Fake이며 `AI_ADAPTER=nvidia`일 때 실제 provider adapter를 사용합니다. 백엔드
+deterministic Fake이며 `AI_ADAPTER=openai`일 때 실제 provider adapter를 사용합니다. 백엔드
 전체 호출 timeout은 90초이고 동기 provider 호출은 기본 4개로 제한됩니다.
 
 스크린샷 multipart 요청은 `screenshot_redacted_confirmed=true`가 필수입니다. 이미지가 없는
@@ -66,6 +66,7 @@ KOSDAQ GLOBAL이면서 `주식종류=보통주`인 행만 한 transaction으로 
 ```powershell
 cd backend
 uv run python -m scripts.import_krx_symbols "..\..\전종목기본정보.csv" --as-of 2026-08-28
+uv run python -m scripts.sync_krx_symbols "..\..\전종목기본정보.csv" --as-of 2026-08-28
 ```
 
 종목코드는 KRX 원천의 접두 `A`가 제외된 단축코드를 사용하며 정확히 6자리 대문자 영숫자
@@ -89,7 +90,8 @@ uv run python -m scripts.purge_data --execute --batch-size 100
 
 출력은 report·독립 기록·object 처리 개수만 포함하며 참조번호, 입력값, object key는 출력하지
 않습니다. 운영에서는 Railway scheduler가 위 `--execute` 명령을 단일 작업으로 주기 실행하게
-연결해야 합니다. scheduler와 운영 Object Storage 연결 자체는 아직 구현하지 않았습니다.
+연결해야 합니다. Railway service 설정과 private S3-compatible Object Storage 연결 방법은
+[deployment 문서](docs/deployment.md)에 정리되어 있습니다.
 
 로컬 Compose는 API 시작 전에 `alembic upgrade head`를 실행합니다. 운영 이미지의 기본
 명령은 API만 시작하며 migration은 단일 pre-deploy 단계에서 별도로 실행해야 합니다.
@@ -124,10 +126,28 @@ docker compose down
 
 ## 장애 의심 신호 policy
 
-제보 확정 후 signal processing job은 생성되지만, 실제 embedding model metadata를 AI 담당에게 받기
-전에는 활성 policy를 임의 seed하지 않습니다. 따라서 현재 실제 provider 기반 자동 신호 생성은
-연결 대기 상태이고 typed contract·DB 규칙엔진·테스트 Fake까지만 구현돼 있습니다.
+제보 확정 후 생성된 signal processing job은 `scripts.process_signal_jobs` worker가 처리합니다.
+AI 담당과 합의한 embedding 계약은 1024차원·L2·cosine·`passage` 입력이며, 모델 revision은
+`SIGNAL_EMBEDDING_MODEL_REVISION`으로 명시해야 합니다. revision을 추측하거나 자동 seed하지 않습니다.
 
-실제 metadata를 받은 뒤 `scripts.register_signal_policy`로 `EXPERIMENTAL` policy를 등록합니다.
-기본 `600초·0.80·5건·10건`은 법령이나 업계 표준이 아니라 평가 전 MVP 실험값입니다. 자세한 근거와
-삭제 재계산 방식은 [incident signal ADR](docs/adr/incident-signal-policy.md)을 확인합니다.
+AI 평가에서 선택한 `similarity_threshold=0.79`는 `scripts.register_signal_policy`로 immutable
+`EXPERIMENTAL` policy에 등록합니다. `600초·5건·10건`은 법령이나 업계 표준이 아닌 MVP 실험값입니다.
+
+```powershell
+uv run python -m scripts.register_signal_policy `
+  --policy-version signal-exp-v4 `
+  --model-id text-embedding-3-small `
+  --model-revision $env:SIGNAL_EMBEDDING_MODEL_REVISION `
+  --dimension 1024 `
+  --normalization L2 `
+  --input-format passage `
+  --taxonomy-version issue-type.v1 `
+  --similarity-threshold 0.79 `
+  --activate
+
+uv run python -m scripts.process_signal_jobs --max-jobs 100
+```
+
+provider timeout은 90초이며, timeout이 이미 실행 중인 thread를 중단하지 못하므로 adapter가 동시
+provider thread 수를 제한합니다. 자세한 근거와 삭제 재계산 방식은
+[incident signal ADR](docs/adr/incident-signal-policy.md)을 확인합니다.

@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window-seconds", type=_positive_int, default=600)
     parser.add_argument("--min-unique-sessions", type=_positive_int, default=5)
     parser.add_argument("--review-priority-threshold", type=_positive_int, default=10)
-    parser.add_argument("--similarity-threshold", type=_threshold, default=0.80)
+    parser.add_argument("--similarity-threshold", type=_threshold, default=0.79)
     parser.add_argument(
         "--activate",
         action="store_true",

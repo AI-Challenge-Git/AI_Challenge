@@ -9,8 +9,8 @@ from app.ai import DualExtractor, get_dual_extractor
 from app.api.dependencies import customer_principal
 from app.attachments import (
     MAX_ATTACHMENT_BYTES,
+    AttachmentStore,
     InvalidAttachmentError,
-    LocalAttachmentStore,
     PreparedAttachment,
     get_attachment_store,
     sanitize_attachment,
@@ -162,7 +162,7 @@ async def analyze(
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
     extractor: Annotated[DualExtractor, Depends(get_dual_extractor)],
-    attachment_store: Annotated[LocalAttachmentStore, Depends(get_attachment_store)],
+    attachment_store: Annotated[AttachmentStore, Depends(get_attachment_store)],
     response: Response,
 ) -> ReportAnalysisResponse:
     response.headers["Cache-Control"] = "no-store"
@@ -176,7 +176,7 @@ async def analyze(
         attachment_store,
         attachment,
     )
-    return await include_attachment_preview(session, principal, result, attachment_store)
+    return await include_attachment_preview(session, principal, result, attachment_store, settings)
 
 
 @router.post(
@@ -210,7 +210,7 @@ async def discard(
     request: DiscardReportRequest,
     principal: Annotated[bytes, Depends(customer_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    attachment_store: Annotated[LocalAttachmentStore, Depends(get_attachment_store)],
+    attachment_store: Annotated[AttachmentStore, Depends(get_attachment_store)],
 ) -> Response:
     job_id = await discard_report(session, principal, request)
     await process_object_deletion_jobs(
@@ -232,7 +232,7 @@ async def delete_card(
     principal: Annotated[bytes, Depends(customer_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
-    attachment_store: Annotated[LocalAttachmentStore, Depends(get_attachment_store)],
+    attachment_store: Annotated[AttachmentStore, Depends(get_attachment_store)],
 ) -> Response:
     job_id = await delete_report(session, principal, request, settings)
     await process_object_deletion_jobs(

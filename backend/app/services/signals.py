@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import Float, delete, func, select
+from sqlalchemy import Float, cast, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.codes import (
@@ -31,6 +31,7 @@ from app.models import (
     SignalProcessingJob,
     TechnicalEmbedding,
     TechnicalSymptom,
+    Vector1024,
 )
 from app.schemas import (
     OperatorAcknowledgeSignalRequest,
@@ -424,7 +425,12 @@ async def process_next_signal_job(
         )
 
         known_submission = _known_submission_filter(symptom.submission_status)
-        distance = TechnicalEmbedding.embedding.op("<=>", return_type=Float())(result.vector)
+        embedding_expression = (
+            cast(TechnicalEmbedding.embedding, Vector1024())
+            if policy.embedding_dimension == 1024
+            else TechnicalEmbedding.embedding
+        )
+        distance = embedding_expression.op("<=>", return_type=Float())(result.vector)
         candidate_filters = [
             SignalCluster.policy_id == policy.id,
             SignalCluster.status != SignalStatus.CLOSED.value,
@@ -433,6 +439,12 @@ async def process_next_signal_job(
             SignalCluster.reported_symptom_type == symptom.issue_type,
             SignalCluster.last_report_at
             >= report.received_at - timedelta(seconds=policy.window_seconds),
+            TechnicalEmbedding.model_id == policy.model_id,
+            TechnicalEmbedding.model_revision == policy.model_revision,
+            TechnicalEmbedding.embedding_dimension == policy.embedding_dimension,
+            TechnicalEmbedding.normalization == policy.normalization,
+            TechnicalEmbedding.input_format == policy.input_format,
+            TechnicalEmbedding.distance_metric == policy.distance_metric,
         ]
         if known_submission is not None:
             candidate_filters.append(
@@ -444,23 +456,23 @@ async def process_next_signal_job(
                 (SignalCluster.error_code_filter.is_(None))
                 | (SignalCluster.error_code_filter == symptom.error_code)
             )
-        candidates = (
+        if policy.embedding_dimension == 1024:
+            await session.execute(text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
+        candidate_row = (
             await session.execute(
-                select(SignalCluster, func.max(1.0 - distance).label("similarity"))
+                select(SignalCluster, (1.0 - distance).label("similarity"))
                 .join(SignalMember, SignalMember.signal_id == SignalCluster.id)
                 .join(TechnicalEmbedding, TechnicalEmbedding.id == SignalMember.embedding_id)
                 .where(*candidate_filters)
-                .group_by(SignalCluster.id)
-                .order_by(func.max(1.0 - distance).desc(), SignalCluster.id)
+                .order_by(distance, SignalCluster.id, SignalMember.id)
+                .limit(1)
             )
-        ).all()
-        selected = next(
-            (
-                (candidate, float(similarity))
-                for candidate, similarity in candidates
-                if float(similarity) >= policy.similarity_threshold - COSINE_COMPARISON_TOLERANCE
-            ),
-            None,
+        ).first()
+        selected = (
+            (candidate_row[0], float(candidate_row[1]))
+            if candidate_row is not None
+            and float(candidate_row[1]) >= policy.similarity_threshold - COSINE_COMPARISON_TOLERANCE
+            else None
         )
         if selected is None:
             cluster = SignalCluster(

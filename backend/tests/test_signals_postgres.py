@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 
 from app.attachments import LocalAttachmentStore
 from app.codes import (
@@ -38,22 +38,14 @@ from app.models import (
     TechnicalEmbedding,
     TechnicalSymptom,
 )
-from app.schemas import (
-    OperatorMergeSignalsRequest,
-    OperatorSplitSignalRequest,
-    SignalEmbeddingRequest,
-    SignalEmbeddingResult,
-)
+from app.schemas import SignalEmbeddingRequest, SignalEmbeddingResult
 from app.security import hash_password, make_opaque_token, opaque_token_digest
-from app.services.agents import AgentPrincipal
 from app.services.lifecycle import purge_expired_data
 from app.services.signals import (
     detach_report_from_signals,
     enqueue_signal_processing,
     list_dashboard_signals,
-    merge_signals,
     process_next_signal_job,
-    split_signal,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -100,11 +92,11 @@ class SequenceEmbeddingProvider:
         return SignalEmbeddingResult(
             model_id="fake-embed",
             model_revision="test-r1",
-            dimension=3,
+            dimension=len(vector := next(self.vectors)),
             normalization="L2",
             input_format="query.v1",
             distance_metric="COSINE",
-            vector=next(self.vectors),
+            vector=vector,
         )
 
 
@@ -155,7 +147,7 @@ async def clean_signal_data() -> AsyncIterator[None]:
     await engine.dispose()
 
 
-async def _policy(*, min_unique_sessions: int = 2) -> UUID:
+async def _policy(*, min_unique_sessions: int = 2, dimension: int = 3) -> UUID:
     async with session_factory() as session, session.begin():
         policy = ClusteringPolicy(
             policy_version=f"test-{uuid4()}",
@@ -164,11 +156,11 @@ async def _policy(*, min_unique_sessions: int = 2) -> UUID:
             window_seconds=600,
             min_unique_sessions=min_unique_sessions,
             review_priority_threshold=max(3, min_unique_sessions),
-            similarity_threshold=0.80,
+            similarity_threshold=0.79,
             structured_rules_version="hard-gate.v1",
             model_id="fake-embed",
             model_revision="test-r1",
-            embedding_dimension=3,
+            embedding_dimension=dimension,
             normalization="L2",
             input_format="query.v1",
             distance_metric="COSINE",
@@ -351,7 +343,7 @@ async def test_structured_conflict_prevents_merge_even_with_same_embedding() -> 
         assert await session.scalar(select(func.count()).select_from(SignalCluster)) == 2
 
 
-@pytest.mark.parametrize(("similarity", "expected_clusters"), [(0.80, 1), (0.79, 2)])
+@pytest.mark.parametrize(("similarity", "expected_clusters"), [(0.79, 1), (0.78, 2)])
 async def test_similarity_policy_boundary(
     similarity: float,
     expected_clusters: int,
@@ -371,6 +363,37 @@ async def test_similarity_policy_boundary(
             await session.scalar(select(func.count()).select_from(SignalCluster))
             == expected_clusters
         )
+
+
+async def test_1024_dimension_ann_expression_is_usable() -> None:
+    await _policy(min_unique_sessions=1, dimension=1024)
+    await _report(session_digest=b"a" * 32, received_at=NOW)
+    await _report(
+        session_digest=b"b" * 32,
+        received_at=NOW + timedelta(seconds=1),
+    )
+    first = [1.0, *([0.0] * 1023)]
+    second = [0.8, 0.6, *([0.0] * 1022)]
+    provider = SequenceEmbeddingProvider([first, second])
+
+    async with session_factory() as session:
+        await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
+        await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
+        assert await session.scalar(select(func.count()).select_from(SignalCluster)) == 1
+
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
+        vector_literal = "[" + ",".join(str(value) for value in first) + "]"
+        plan_rows = await session.execute(
+            text(
+                "EXPLAIN SELECT id FROM technical_embeddings "
+                "WHERE embedding_dimension = 1024 "
+                "AND normalization = 'L2' AND distance_metric = 'COSINE' "
+                "ORDER BY embedding::vector(1024) <=> CAST(:vector AS vector(1024)) LIMIT 1"
+            ),
+            {"vector": vector_literal},
+        )
+        plan = "\n".join(str(row[0]) for row in plan_rows)
+        assert "ix_technical_embeddings_1024_hnsw_cosine" in plan
 
 
 @pytest.mark.parametrize(("offset_seconds", "expected_clusters"), [(600, 1), (601, 2)])
@@ -637,7 +660,7 @@ async def test_operator_merge_and_split_are_transactional_and_audited() -> None:
         received_at=NOW + timedelta(seconds=1),
     )
     provider = SequenceEmbeddingProvider([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
-    await _agent_token(AgentRole.OPERATOR)
+    operator_token = await _agent_token(AgentRole.OPERATOR)
     async with session_factory() as session:
         await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
         await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
@@ -646,45 +669,43 @@ async def test_operator_merge_and_split_are_transactional_and_audited() -> None:
             (await session.scalars(select(SignalCluster).order_by(SignalCluster.id))).all()
         )
         assert len(clusters) == 2
-        account = await session.scalar(
-            select(AgentAccount).where(AgentAccount.role == AgentRole.OPERATOR.value)
-        )
-        assert account is not None
-        principal = AgentPrincipal(
-            agent_id=account.id,
-            agent_label=account.agent_label,
-            role=AgentRole.OPERATOR,
-        )
         source, target = clusters
         source_id = source.id
         target_id = target.id
-    async with session_factory() as session:
-        merged = await merge_signals(
-            session,
-            principal,
-            OperatorMergeSignalsRequest(
-                source_signal_id=source_id,
-                target_signal_id=target_id,
-                reason="MANUAL_REVIEW",
-                client_request_id=uuid4(),
-            ),
-            now=NOW + timedelta(minutes=2),
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        headers = {"Authorization": f"Bearer {operator_token}"}
+        merged = await client.post(
+            "/api/operator/signals/merge",
+            headers=headers,
+            json={
+                "source_signal_id": str(source_id),
+                "target_signal_id": str(target_id),
+                "reason": "MANUAL_REVIEW",
+                "client_request_id": str(uuid4()),
+            },
         )
-        assert merged.signal_id == target_id
-        assert merged.raw_report_count == 2
-    async with session_factory() as session:
-        split = await split_signal(
-            session,
-            principal,
-            OperatorSplitSignalRequest(
-                signal_id=target_id,
-                report_ids=[first_report],
-                reason="FALSE_GROUPING",
-                client_request_id=uuid4(),
-            ),
-            now=NOW + timedelta(minutes=3),
+        assert merged.status_code == 200
+        assert merged.headers["cache-control"] == "no-store"
+        assert merged.json()["signal_id"] == str(target_id)
+        assert merged.json()["raw_report_count"] == 2
+
+        split = await client.post(
+            "/api/operator/signals/split",
+            headers=headers,
+            json={
+                "signal_id": str(target_id),
+                "report_ids": [str(first_report)],
+                "reason": "FALSE_GROUPING",
+                "client_request_id": str(uuid4()),
+            },
         )
-        assert split.signal_id == target_id
+        assert split.status_code == 200
+        assert split.headers["cache-control"] == "no-store"
+        assert split.json()["signal_id"] == str(target_id)
+
+    async with session_factory() as session:
         member_counts = list(
             (
                 await session.execute(

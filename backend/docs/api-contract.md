@@ -71,7 +71,7 @@ job으로 재시도한다.
 보존기간은 서로 독립적이다. purge는 backend CLI로 수행하며 기본은 dry-run이다.
 
 실제 provider 사용 여부는 `AI_ADAPTER` 설정으로 선택하며 기본값은 deterministic Fake다.
-NVIDIA 내부 provider 호출과 correction retry는 AI 담당자가 백엔드의 전체 90초 예산 안에
+OpenAI 내부 provider 호출과 correction retry는 AI 담당자가 백엔드의 전체 90초 예산 안에
 끝나도록 구성해야 한다.
 
 ## 상담원 인증과 카드 조회
@@ -140,11 +140,11 @@ fingerprint 기준 기본 10회/60초다. bucket은 PostgreSQL 원자적 upsert�
 활성 policy와 metadata가 같은 embedding의 cosine similarity를 비교한다. 시간창은 server UTC
 `received_at` 기준 rolling window다.
 
-정책은 `clustering_policies`에서 version 관리한다. `window_seconds=600`,
-`similarity_threshold=0.80`, `min_unique_sessions=5`, `review_priority_threshold=10`은 법령·업계
-표준이 아니라 `EXPERIMENTAL` MVP 기본값이다. AI 담당의 locked-test와 팀 승인 전에는
-`APPROVED` 값으로 표현하지 않는다. 모델 metadata가 없으면 활성 policy를 임의 생성하지 않고
-신호 processing job을 호출하지 않는다.
+정책은 `clustering_policies`에서 version 관리한다. AI 담당의 threshold sweep 결과인
+`similarity_threshold=0.79`는 현재 `EXPERIMENTAL` policy 값이다. `window_seconds=600`,
+`min_unique_sessions=5`, `review_priority_threshold=10`도 법령·업계 표준이 아닌 MVP 실험값이다.
+팀 승인 전에는 `APPROVED`로 표현하지 않는다. model revision을 포함한 metadata가 없으면 활성 policy를
+임의 생성하지 않고 신호 processing job을 호출하지 않는다.
 
 제보 확정 transaction은 `PENDING` signal processing job까지만 저장한다. embedding provider 호출은
 transaction 밖에서 실행하고, metadata·차원 불일치나 provider 실패는 job만 안전한 `FAILED`로 남긴다.

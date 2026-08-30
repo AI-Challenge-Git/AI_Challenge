@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,8 +30,20 @@ class Settings(BaseSettings):
     ai_timeout_seconds: float = Field(default=90.0, gt=0, le=120)
     ai_max_concurrency: int = Field(default=4, ge=1, le=32)
     openai_api_key: SecretStr | None = None
-    attachment_storage_backend: Literal["local"] = "local"
+    signal_embedding_model_revision: str | None = None
+    krx_listed_info_api_url: str = (
+        "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo"
+    )
+    krx_listed_info_api_key: SecretStr | None = None
+    attachment_storage_backend: Literal["local", "s3"] = "local"
     attachment_storage_dir: Path = DEFAULT_ATTACHMENT_STORAGE_DIR
+    attachment_signed_url_ttl_seconds: int = Field(default=300, ge=60, le=900)
+    bucket: str | None = None
+    access_key_id: SecretStr | None = None
+    secret_access_key: SecretStr | None = None
+    region: str | None = None
+    endpoint: str | None = None
+    s3_addressing_style: Literal["virtual", "path"] = "virtual"
     session_hmac_key: SecretStr = SecretStr("development-session-hmac-key-change-me")
     reference_hmac_key: SecretStr = SecretStr("development-reference-hmac-key-change-me")
     agent_token_hmac_key: SecretStr = SecretStr("development-agent-token-hmac-key-change-me")
@@ -60,8 +73,32 @@ class Settings(BaseSettings):
             or len(set(hmac_keys)) != len(hmac_keys)
         ):
             raise ValueError("distinct production HMAC keys must be configured")
-        if self.app_env == "production":
+        if self.attachment_storage_backend == "s3" and not all(
+            (
+                self.bucket,
+                self.access_key_id,
+                self.secret_access_key,
+                self.region,
+                self.endpoint,
+            )
+        ):
+            raise ValueError("S3-compatible private object storage credentials are required")
+        if self.app_env == "production" and self.attachment_storage_backend != "s3":
             raise ValueError("production requires a private object storage backend")
+        if self.app_env == "production":
+            if not self.cors_origins:
+                raise ValueError("production requires an explicit CORS origin allowlist")
+            for origin in self.cors_origins:
+                parsed = urlsplit(origin)
+                if (
+                    parsed.scheme != "https"
+                    or not parsed.netloc
+                    or parsed.path not in ("", "/")
+                    or parsed.query
+                    or parsed.fragment
+                    or "*" in origin
+                ):
+                    raise ValueError("production CORS origins must be exact HTTPS origins")
         return self
 
 

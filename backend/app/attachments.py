@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
+from typing import Any, Protocol
 
+import boto3  # type: ignore[import-untyped]
+from botocore.config import Config  # type: ignore[import-untyped]
 from PIL import Image, UnidentifiedImageError
 
 from app.config import get_settings
@@ -31,6 +34,22 @@ class InvalidAttachmentError(ValueError):
 
 class AttachmentStorageError(RuntimeError):
     pass
+
+
+class AttachmentStore(Protocol):
+    async def put(self, object_key: str, content: bytes) -> None: ...
+
+    async def read(self, object_key: str) -> bytes: ...
+
+    async def delete(self, object_key: str) -> None: ...
+
+    def signed_get_url(
+        self,
+        object_key: str,
+        *,
+        content_type: str,
+        expires_in: int,
+    ) -> str | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,10 +166,128 @@ class LocalAttachmentStore:
         except OSError as exc:
             raise AttachmentStorageError("attachment delete failed") from exc
 
+    def signed_get_url(
+        self,
+        object_key: str,
+        *,
+        content_type: str,
+        expires_in: int,
+    ) -> str | None:
+        self._path(object_key)
+        return None
+
+
+class S3AttachmentStore:
+    def __init__(
+        self,
+        *,
+        bucket: str,
+        endpoint: str,
+        region: str,
+        access_key_id: str,
+        secret_access_key: str,
+        addressing_style: str,
+    ) -> None:
+        self.bucket = bucket
+        self.client: Any = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            region_name=region,
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
+            config=Config(s3={"addressing_style": addressing_style}, signature_version="s3v4"),
+        )
+
+    @staticmethod
+    def _validate_key(object_key: str) -> None:
+        if not OBJECT_KEY_PATTERN.fullmatch(object_key):
+            raise AttachmentStorageError("invalid attachment object key")
+
+    async def put(self, object_key: str, content: bytes) -> None:
+        self._validate_key(object_key)
+        try:
+            await asyncio.to_thread(
+                self.client.put_object,
+                Bucket=self.bucket,
+                Key=object_key,
+                Body=content,
+            )
+        except Exception as exc:
+            raise AttachmentStorageError("attachment write failed") from exc
+
+    async def read(self, object_key: str) -> bytes:
+        self._validate_key(object_key)
+        try:
+            response = await asyncio.to_thread(
+                self.client.get_object,
+                Bucket=self.bucket,
+                Key=object_key,
+            )
+            return bytes(await asyncio.to_thread(response["Body"].read))
+        except Exception as exc:
+            raise AttachmentStorageError("attachment read failed") from exc
+
+    async def delete(self, object_key: str) -> None:
+        self._validate_key(object_key)
+        try:
+            await asyncio.to_thread(
+                self.client.delete_object,
+                Bucket=self.bucket,
+                Key=object_key,
+            )
+        except Exception as exc:
+            raise AttachmentStorageError("attachment delete failed") from exc
+
+    def signed_get_url(
+        self,
+        object_key: str,
+        *,
+        content_type: str,
+        expires_in: int,
+    ) -> str:
+        self._validate_key(object_key)
+        try:
+            return str(
+                self.client.generate_presigned_url(
+                    "get_object",
+                    Params={
+                        "Bucket": self.bucket,
+                        "Key": object_key,
+                        "ResponseContentType": content_type,
+                        "ResponseCacheControl": "no-store",
+                    },
+                    ExpiresIn=expires_in,
+                )
+            )
+        except Exception as exc:
+            raise AttachmentStorageError("attachment URL signing failed") from exc
+
 
 @lru_cache
-def get_attachment_store() -> LocalAttachmentStore:
-    return LocalAttachmentStore(get_settings().attachment_storage_dir)
+def get_attachment_store() -> AttachmentStore:
+    settings = get_settings()
+    if settings.attachment_storage_backend == "local":
+        return LocalAttachmentStore(settings.attachment_storage_dir)
+    if not all(
+        (
+            settings.bucket,
+            settings.access_key_id,
+            settings.secret_access_key,
+            settings.region,
+            settings.endpoint,
+        )
+    ):
+        raise AttachmentStorageError("private object storage is not configured")
+    return S3AttachmentStore(
+        bucket=settings.bucket or "",
+        endpoint=settings.endpoint or "",
+        region=settings.region or "",
+        access_key_id=(settings.access_key_id.get_secret_value() if settings.access_key_id else ""),
+        secret_access_key=(
+            settings.secret_access_key.get_secret_value() if settings.secret_access_key else ""
+        ),
+        addressing_style=settings.s3_addressing_style,
+    )
 
 
 def attachment_data_url(content_type: str, content: bytes) -> str:
