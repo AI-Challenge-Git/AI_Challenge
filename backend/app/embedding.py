@@ -1,15 +1,18 @@
 """
 증상(symptom) 텍스트를 임베딩 벡터로 변환한다.
 
-AI-09 계약 (팀 확정):
-- model: nvidia/nemotron-3-embed-1b
-- dimension: 2048
+AI-09 계약 (2026-08-30 재확정):
+- provider: OpenAI
+- model: text-embedding-3-small
+- dimension: 1024 (공식 dimensions 파라미터 사용)
 - normalization: L2 정규화 적용
 - distance_metric: cosine
 
-모델 근거: 34개 언어(한국어 포함) 평가 완료, 2026-07-16 출시,
-RTEB 리더보드 기준 이전 세대 embedding 모델보다 성능 우수.
-참고: https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-embed-1b
+API 요청에서 dimensions=1024를 지정하며 클라이언트에서 벡터를 임의로 자르지
+않는다. 모델 변경으로 이전 NVIDIA 모델의 threshold는 승계하지 않고, 고정
+평가셋으로 threshold와 군집 품질을 다시 평가한다.
+
+참고: https://developers.openai.com/api/docs/models/text-embedding-3-small
 """
 
 import os
@@ -21,12 +24,11 @@ from openai import OpenAI
 load_dotenv()
 
 _client = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.environ["NVIDIA_API_KEY"],
+    api_key=os.environ["OPENAI_API_KEY"],
 )
 
-EMBEDDING_MODEL = "nvidia/nemotron-3-embed-1b"
-EMBEDDING_DIMENSION = 2048
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIMENSION = 1024
 NORMALIZATION = "l2"
 DISTANCE_METRIC = "cosine"
 
@@ -42,11 +44,16 @@ def _l2_normalize(vector: list[float]) -> list[float]:
 
 
 def get_symptom_embedding(symptom_text: str) -> list[float]:
-    """symptom 텍스트를 2048차원 L2 정규화된 임베딩 벡터로 변환한다."""
+    """symptom 텍스트를 1024차원 L2 정규화된 임베딩 벡터로 변환한다."""
     response = _client.embeddings.create(
         model=EMBEDDING_MODEL,
         input=[symptom_text],
-        extra_body={"input_type": "passage"},
+        dimensions=EMBEDDING_DIMENSION,
+        encoding_format="float",
     )
     raw_vector = response.data[0].embedding
+    if len(raw_vector) != EMBEDDING_DIMENSION:
+        raise ValueError(
+            f"임베딩 차원 불일치: expected={EMBEDDING_DIMENSION}, actual={len(raw_vector)}"
+        )
     return _l2_normalize(raw_vector)

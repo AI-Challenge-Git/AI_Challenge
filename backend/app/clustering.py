@@ -4,7 +4,7 @@ symptom 임베딩 벡터를 기반으로 유사한 제보끼리 묶는다.
 AI-10 정책:
 - 같은 issue_type 내부에서만 임베딩 유사도를 비교한다.
 - UNKNOWN/UNRELATED_OR_AMBIGUOUS는 자동 군집에서 제외한다.
-- 보강 평가 데이터 기준 threshold=0.79를 사용한다.
+- OpenAI 1024차원 임베딩 보강 평가 기준 threshold=0.58을 사용한다.
 - average-linkage로 두 군집 사이 모든 교차 유사도의 평균이 threshold
   이상일 때만 병합한다.
 - 완성된 군집 안에서 평균 유사도가 가장 높은 medoid를 대표로 선택한다.
@@ -15,8 +15,8 @@ from datetime import datetime
 
 import numpy as np
 
-CLUSTERING_POLICY_VERSION = "v4"
-SIMILARITY_THRESHOLD = 0.79
+CLUSTERING_POLICY_VERSION = "v5"
+SIMILARITY_THRESHOLD = 0.58
 EXCLUDED_ISSUE_TYPES = {
     "UNKNOWN",
     "UNRELATED_OR_AMBIGUOUS",
