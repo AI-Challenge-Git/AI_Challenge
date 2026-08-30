@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     agent_lookup_limit: int = Field(default=10, ge=1, le=1000)
     agent_lookup_window_seconds: int = Field(default=60, ge=1, le=3600)
     agent_lookup_failure_delay_ms: int = Field(default=250, ge=0, le=5000)
+    signal_dashboard_limit: int = Field(default=60, ge=1, le=1000)
+    signal_dashboard_window_seconds: int = Field(default=60, ge=1, le=3600)
 
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":

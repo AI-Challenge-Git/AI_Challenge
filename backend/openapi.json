@@ -836,6 +836,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -1796,6 +1806,15 @@
           "evidence_quote"
         ],
         "title": "CandidateField[str]"
+      },
+      "ClusteringPolicyStatus": {
+        "type": "string",
+        "enum": [
+          "EXPERIMENTAL",
+          "APPROVED",
+          "RETIRED"
+        ],
+        "title": "ClusteringPolicyStatus"
       },
       "ConsultationCandidate": {
         "properties": {
@@ -2948,12 +2967,34 @@
       },
       "SignalDashboardResponse": {
         "properties": {
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/SignalDashboardItem"
             },
             "type": "array",
             "title": "Items"
+          },
+          "hourly_volume": {
+            "items": {
+              "$ref": "#/components/schemas/SignalHourlyVolume"
+            },
+            "type": "array",
+            "title": "Hourly Volume"
+          },
+          "applied_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalPolicySnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "baseline_status": {
             "$ref": "#/components/schemas/BaselineStatus"
@@ -2974,12 +3015,107 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "updated_at",
           "items",
+          "hourly_volume",
+          "applied_policy",
           "baseline_status",
           "limit",
           "offset"
         ],
         "title": "SignalDashboardResponse"
+      },
+      "SignalHourlyVolume": {
+        "properties": {
+          "bucket_start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Bucket Start"
+          },
+          "raw_report_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Raw Report Count"
+          },
+          "reporting_unique_sessions": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Reporting Unique Sessions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "bucket_start",
+          "raw_report_count",
+          "reporting_unique_sessions"
+        ],
+        "title": "SignalHourlyVolume"
+      },
+      "SignalPolicySnapshot": {
+        "properties": {
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ClusteringPolicyStatus"
+          },
+          "window_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Window Seconds"
+          },
+          "min_unique_sessions": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Min Unique Sessions"
+          },
+          "review_priority_threshold": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Review Priority Threshold"
+          },
+          "similarity_threshold": {
+            "type": "number",
+            "maximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Similarity Threshold"
+          },
+          "structured_rules_version": {
+            "type": "string",
+            "title": "Structured Rules Version"
+          },
+          "taxonomy_version": {
+            "type": "string",
+            "title": "Taxonomy Version"
+          },
+          "baseline_policy_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Policy Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "policy_version",
+          "status",
+          "window_seconds",
+          "min_unique_sessions",
+          "review_priority_threshold",
+          "similarity_threshold",
+          "structured_rules_version",
+          "taxonomy_version",
+          "baseline_policy_version"
+        ],
+        "title": "SignalPolicySnapshot"
       },
       "SignalStatus": {
         "type": "string",

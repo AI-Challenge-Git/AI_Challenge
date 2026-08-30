@@ -93,6 +93,7 @@ def test_adapter_requires_secrets_and_model_revision(
     expected: str,
 ) -> None:
     settings = Settings(
+        ai_adapter="fake",
         openai_api_key=key,
         signal_embedding_model_revision=revision,
     )

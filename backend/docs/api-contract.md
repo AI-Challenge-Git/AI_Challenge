@@ -131,6 +131,12 @@ fingerprint 기준 기본 10회/60초다. bucket은 PostgreSQL 원자적 upsert�
 `SIGNAL_DETECTED | UNDER_REVIEW` 신호만 최신순으로 반환한다. `CANDIDATE`, 원문, 세션 digest,
 주문 상세, embedding과 내부 유사도는 반환하지 않는다. 응답의 `official_incident`는 항상 `false`다.
 
+응답은 조회 시각인 `updated_at`, 현재 노출 중인 신호 member를 report `received_at`의 UTC 시간 단위로
+집계한 `hourly_volume`, 현재 활성 `applied_policy` snapshot을 포함한다. 정책 rolling window가 지난
+`SIGNAL_DETECTED`는 조회에서 제외하지만, 사람이 검토를 시작한 `UNDER_REVIEW`는 자동으로 숨기지 않는다.
+조회 rate limit은 익명 session digest와 비식별 client fingerprint 조합별 PostgreSQL 원자적 bucket으로
+적용한다. 기본값은 60회/60초이며 환경변수로 조정하고 초과 시 `429`와 `Retry-After`를 반환한다.
+
 실운영 기준선이 아직 없으므로 `baseline_status=INSUFFICIENT_HISTORY`, `baseline_ratio=null`을
 명시적으로 반환한다. 합성 기준선을 운영값처럼 만들지 않는다. 규모 필드
 `reporting_unique_sessions`는 비식별 `session_digest`의 distinct count이며 실제 영향 고객 수가 아니다.
@@ -151,7 +157,8 @@ transaction 밖에서 실행하고, metadata·차원 불일치나 provider 실�
 기존 report와 consultation card는 롤백하거나 삭제하지 않는다. 재처리는 만료된 processing lease를
 포함해 `SKIP LOCKED`로 한 job씩 점유한다.
 
-운영자 mutation은 `OPERATOR` Bearer token과 UUID v4 `client_request_id`를 요구한다.
+기존 운영자 mutation은 `OPERATOR` Bearer token과 UUID v4 `client_request_id`를 요구한다. 현재 조회 MVP
+범위에서는 운영자 회원가입·로그인·인증 또는 mutation 흐름을 추가로 확장하지 않는다.
 
 | Method | Path | 의미 |
 |---|---|---|

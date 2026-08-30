@@ -2,10 +2,11 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import customer_principal, get_clock, operator_principal
+from app.config import Settings, get_settings
 from app.db import get_session
 from app.schemas import (
     OperatorAcknowledgeSignalRequest,
@@ -21,6 +22,7 @@ from app.services.agents import AgentPrincipal
 from app.services.signals import (
     acknowledge_signal,
     close_signal,
+    enforce_dashboard_rate_limit,
     link_official_notice,
     list_dashboard_signals,
     merge_signals,
@@ -41,17 +43,33 @@ SIGNAL_ERRORS: dict[int | str, dict[str, Any]] = {
     "/signals/dashboard",
     tags=["signals"],
     response_model=SignalDashboardResponse,
-    responses={401: SIGNAL_ERRORS[401], 422: SIGNAL_ERRORS[422]},
+    responses={
+        401: SIGNAL_ERRORS[401],
+        422: SIGNAL_ERRORS[422],
+        429: {"model": ProblemDetails, "description": "Rate limit exceeded"},
+    },
 )
 async def dashboard(
+    request: Request,
     response: Response,
-    _principal: Annotated[bytes, Depends(customer_principal)],
+    principal: Annotated[bytes, Depends(customer_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    clock: Annotated[Callable[[], datetime], Depends(get_clock)],
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
 ) -> SignalDashboardResponse:
     response.headers["Cache-Control"] = "no-store"
-    return await list_dashboard_signals(session, limit=limit, offset=offset)
+    now = clock()
+    client_identifier = request.client.host if request.client is not None else "unknown-client"
+    await enforce_dashboard_rate_limit(
+        session,
+        principal,
+        client_identifier,
+        settings,
+        now=now,
+    )
+    return await list_dashboard_signals(session, now=now, limit=limit, offset=offset)
 
 
 @router.post(

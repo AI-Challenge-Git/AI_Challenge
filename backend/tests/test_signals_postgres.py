@@ -11,6 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, func, select, text
 
+from app.api.dependencies import get_clock
 from app.attachments import LocalAttachmentStore
 from app.codes import (
     AgentRole,
@@ -19,7 +20,7 @@ from app.codes import (
     SignalProcessingStatus,
     SignalStatus,
 )
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db import engine, session_factory
 from app.main import app
 from app.models import (
@@ -30,6 +31,7 @@ from app.models import (
     ConsultationCard,
     IdempotencyRecord,
     PolicySnapshot,
+    RateLimitBucket,
     Report,
     SignalAuditEvent,
     SignalCluster,
@@ -128,6 +130,7 @@ class FailingEmbeddingProvider:
 
 async def _clean() -> None:
     async with session_factory() as session, session.begin():
+        await session.execute(delete(RateLimitBucket))
         await session.execute(delete(Report))
         await session.execute(delete(SignalAuditEvent))
         await session.execute(delete(SignalCluster))
@@ -142,9 +145,13 @@ async def _clean() -> None:
 @pytest.fixture(autouse=True)
 async def clean_signal_data() -> AsyncIterator[None]:
     await _clean()
-    yield
-    await _clean()
-    await engine.dispose()
+    app.dependency_overrides[get_clock] = lambda: lambda: NOW
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(get_clock, None)
+        await _clean()
+        await engine.dispose()
 
 
 async def _policy(*, min_unique_sessions: int = 2, dimension: int = 3) -> UUID:
@@ -304,7 +311,12 @@ async def test_same_session_is_not_double_counted_and_candidate_is_hidden() -> N
     async with session_factory() as session:
         assert await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
         assert await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
-        dashboard = await list_dashboard_signals(session, limit=50, offset=0)
+        dashboard = await list_dashboard_signals(
+            session,
+            now=NOW + timedelta(minutes=1),
+            limit=50,
+            offset=0,
+        )
         assert dashboard.items == []
         cluster = await session.scalar(select(SignalCluster))
         assert cluster is not None
@@ -320,12 +332,75 @@ async def test_same_session_is_not_double_counted_and_candidate_is_hidden() -> N
     )
     async with session_factory() as session:
         assert await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=2))
-        dashboard = await list_dashboard_signals(session, limit=50, offset=0)
+        dashboard = await list_dashboard_signals(
+            session,
+            now=NOW + timedelta(minutes=2),
+            limit=50,
+            offset=0,
+        )
         assert len(dashboard.items) == 1
         assert dashboard.items[0].status is SignalStatus.SIGNAL_DETECTED
         assert dashboard.items[0].reporting_unique_sessions == 2
         assert dashboard.items[0].baseline_ratio is None
         assert dashboard.items[0].official_incident is False
+        assert dashboard.updated_at == NOW + timedelta(minutes=2)
+        assert len(dashboard.hourly_volume) == 1
+        assert dashboard.hourly_volume[0].raw_report_count == 3
+        assert dashboard.hourly_volume[0].reporting_unique_sessions == 2
+        assert dashboard.applied_policy is not None
+        assert dashboard.applied_policy.window_seconds == 600
+        assert dashboard.applied_policy.status is ClusteringPolicyStatus.EXPERIMENTAL
+
+
+async def test_dashboard_hides_expired_detected_signal_but_keeps_reviewed_signal() -> None:
+    policy_id = await _policy(min_unique_sessions=1)
+    async with session_factory() as session, session.begin():
+        session.add_all(
+            (
+                SignalCluster(
+                    policy_id=policy_id,
+                    status=SignalStatus.SIGNAL_DETECTED.value,
+                    channel="MABLE",
+                    feature_area="DOMESTIC_STOCK_ORDER",
+                    reported_symptom_type="ORDER_SUBMISSION_FAILURE",
+                    raw_report_count=1,
+                    reporting_unique_sessions=1,
+                    review_priority=False,
+                    first_report_at=NOW,
+                    last_report_at=NOW,
+                    official_incident=False,
+                    created_at=NOW,
+                    updated_at=NOW,
+                    purge_at=NOW + timedelta(hours=72),
+                ),
+                SignalCluster(
+                    policy_id=policy_id,
+                    status=SignalStatus.UNDER_REVIEW.value,
+                    channel="MABLE",
+                    feature_area="DOMESTIC_STOCK_ORDER",
+                    reported_symptom_type="ORDER_SUBMISSION_FAILURE",
+                    raw_report_count=1,
+                    reporting_unique_sessions=1,
+                    review_priority=False,
+                    first_report_at=NOW,
+                    last_report_at=NOW,
+                    official_incident=False,
+                    created_at=NOW,
+                    updated_at=NOW,
+                    purge_at=NOW + timedelta(hours=72),
+                ),
+            )
+        )
+
+    async with session_factory() as session:
+        dashboard = await list_dashboard_signals(
+            session,
+            now=NOW + timedelta(seconds=601),
+            limit=50,
+            offset=0,
+        )
+
+    assert [item.status for item in dashboard.items] == [SignalStatus.UNDER_REVIEW]
 
 
 async def test_structured_conflict_prevents_merge_even_with_same_embedding() -> None:
@@ -615,6 +690,33 @@ async def test_dashboard_auth_and_operator_role_idempotency() -> None:
             )
             == 1
         )
+
+
+async def test_dashboard_rate_limit_is_atomic() -> None:
+    token = make_opaque_token()
+    settings = Settings(signal_dashboard_limit=2, signal_dashboard_window_seconds=60)
+    app.dependency_overrides[get_settings] = lambda: settings
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            responses = await asyncio.gather(
+                *(
+                    client.get(
+                        "/api/signals/dashboard",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    for _ in range(5)
+                )
+            )
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+    statuses = [response.status_code for response in responses]
+    assert statuses.count(200) == 2
+    assert statuses.count(429) == 3
+    assert {
+        response.headers["retry-after"] for response in responses if response.status_code == 429
+    } == {"60"}
 
 
 async def test_retention_purge_removes_signal_evidence_and_metadata(tmp_path: Path) -> None:

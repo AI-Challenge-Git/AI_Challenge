@@ -912,7 +912,7 @@ class RateLimitBucket(Base):
     __table_args__ = (
         UniqueConstraint("scope", "principal_fingerprint", "client_fingerprint"),
         CheckConstraint(
-            "scope IN ('AGENT_LOGIN_FAILURE', 'AGENT_CARD_LOOKUP')",
+            "scope IN ('AGENT_LOGIN_FAILURE', 'AGENT_CARD_LOOKUP', 'SIGNAL_DASHBOARD')",
             name="scope_value",
         ),
         CheckConstraint(

@@ -130,6 +130,11 @@ docker compose down
 AI 담당과 합의한 embedding 계약은 1024차원·L2·cosine·`passage` 입력이며, 모델 revision은
 `SIGNAL_EMBEDDING_MODEL_REVISION`으로 명시해야 합니다. revision을 추측하거나 자동 seed하지 않습니다.
 
+Docker Compose의 `${...}` 값은 저장소 루트의 `.env`에서 읽습니다. `backend/.env`를 재사용하려면
+모든 Compose 명령에 `--env-file backend/.env`를 붙여야 합니다. 실제 provider를 사용할 때는
+`AI_ADAPTER=openai`, `OPENAI_API_KEY`, 확정된 `SIGNAL_EMBEDDING_MODEL_REVISION`을 같은 환경에서
+주입하고 secret 값은 Git에 추가하지 않습니다.
+
 AI 평가에서 선택한 `similarity_threshold=0.79`는 `scripts.register_signal_policy`로 immutable
 `EXPERIMENTAL` policy에 등록합니다. `600초·5건·10건`은 법령이나 업계 표준이 아닌 MVP 실험값입니다.
 

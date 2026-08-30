@@ -21,6 +21,7 @@ from pydantic import (
 from app.codes import (
     AgentRole,
     BaselineStatus,
+    ClusteringPolicyStatus,
     FieldStatus,
     IssueType,
     OrderAction,
@@ -535,8 +536,29 @@ class SignalDashboardItem(ApiModel):
     official_notice_url: str | None
 
 
+class SignalHourlyVolume(ApiModel):
+    bucket_start: datetime
+    raw_report_count: int = Field(ge=1)
+    reporting_unique_sessions: int = Field(ge=1)
+
+
+class SignalPolicySnapshot(ApiModel):
+    policy_version: str
+    status: ClusteringPolicyStatus
+    window_seconds: int = Field(gt=0)
+    min_unique_sessions: int = Field(gt=0)
+    review_priority_threshold: int = Field(gt=0)
+    similarity_threshold: float = Field(gt=0, le=1)
+    structured_rules_version: str
+    taxonomy_version: str
+    baseline_policy_version: str | None
+
+
 class SignalDashboardResponse(ApiModel):
+    updated_at: datetime
     items: list[SignalDashboardItem]
+    hourly_volume: list[SignalHourlyVolume]
+    applied_policy: SignalPolicySnapshot | None
     baseline_status: BaselineStatus
     baseline_ratio: None = None
     limit: int

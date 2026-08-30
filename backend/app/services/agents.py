@@ -1,15 +1,13 @@
 import asyncio
 import hashlib
 import hmac
-import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import case, delete, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy.sql.elements import ColumnElement
@@ -69,6 +67,7 @@ from app.services.idempotency import (
     payload_sha256,
 )
 from app.services.lifecycle import card_is_accessible
+from app.services.rate_limits import RateLimitResult, consume_rate_limit, rate_limit_error
 from app.services.signals import related_signals_for_report
 from app.services.symbols import validate_symbol
 
@@ -90,12 +89,6 @@ class AgentPrincipal:
     agent_id: UUID
     agent_label: str
     role: AgentRole
-
-
-@dataclass(frozen=True, slots=True)
-class _RateLimitResult:
-    count: int
-    expires_at: datetime
 
 
 def _fingerprint(value: bytes) -> str:
@@ -178,7 +171,7 @@ async def _current_rate_limit(
     principal_fingerprint: bytes,
     client_fingerprint: bytes,
     now: datetime,
-) -> _RateLimitResult | None:
+) -> RateLimitResult | None:
     row = (
         await session.execute(
             select(RateLimitBucket.request_count, RateLimitBucket.expires_at).where(
@@ -191,48 +184,7 @@ async def _current_rate_limit(
     ).one_or_none()
     if row is None:
         return None
-    return _RateLimitResult(count=row.request_count, expires_at=row.expires_at)
-
-
-async def _consume_rate_limit(
-    session: AsyncSession,
-    *,
-    scope: RateLimitScope,
-    principal_fingerprint: bytes,
-    client_fingerprint: bytes,
-    now: datetime,
-    window_seconds: int,
-) -> _RateLimitResult:
-    expires_at = now + timedelta(seconds=window_seconds)
-    expired = RateLimitBucket.expires_at <= now
-    statement = (
-        insert(RateLimitBucket)
-        .values(
-            scope=scope.value,
-            principal_fingerprint=principal_fingerprint,
-            client_fingerprint=client_fingerprint,
-            window_started_at=now,
-            request_count=1,
-            expires_at=expires_at,
-            updated_at=now,
-        )
-        .on_conflict_do_update(
-            index_elements=[
-                RateLimitBucket.scope,
-                RateLimitBucket.principal_fingerprint,
-                RateLimitBucket.client_fingerprint,
-            ],
-            set_={
-                "window_started_at": case((expired, now), else_=RateLimitBucket.window_started_at),
-                "request_count": case((expired, 1), else_=RateLimitBucket.request_count + 1),
-                "expires_at": case((expired, expires_at), else_=RateLimitBucket.expires_at),
-                "updated_at": now,
-            },
-        )
-        .returning(RateLimitBucket.request_count, RateLimitBucket.expires_at)
-    )
-    row = (await session.execute(statement)).one()
-    return _RateLimitResult(count=row.request_count, expires_at=row.expires_at)
+    return RateLimitResult(count=row.request_count, expires_at=row.expires_at)
 
 
 async def _clear_rate_limit(
@@ -251,16 +203,6 @@ async def _clear_rate_limit(
     )
 
 
-def _rate_limit_error(expires_at: datetime, now: datetime) -> ServiceError:
-    retry_after = max(1, math.ceil((expires_at - now).total_seconds()))
-    return ServiceError(
-        429,
-        "RATE_LIMITED",
-        "잠시 후 다시 시도해 주세요.",
-        headers={"Retry-After": str(retry_after)},
-    )
-
-
 async def login_agent(
     session: AsyncSession,
     request: AgentLoginRequest,
@@ -274,7 +216,7 @@ async def login_agent(
     employee_fingerprint = keyed_fingerprint(request.employee_id, "agent-login-employee", rate_key)
     client_fingerprint = keyed_fingerprint(client_identifier, "agent-login-client", rate_key)
 
-    blocked: _RateLimitResult | None = None
+    blocked: RateLimitResult | None = None
     password_hash: str | None = None
     account_id: UUID | None = None
     account_active = False
@@ -307,7 +249,7 @@ async def login_agent(
 
     if blocked is not None:
         await sleeper(settings.agent_login_failure_delay_ms / 1000)
-        raise _rate_limit_error(blocked.expires_at, now)
+        raise rate_limit_error(blocked.expires_at, now)
 
     password_valid = await asyncio.to_thread(
         verify_password,
@@ -361,7 +303,7 @@ async def login_agent(
                 )
 
     async with session.begin():
-        rate = await _consume_rate_limit(
+        rate = await consume_rate_limit(
             session,
             scope=RateLimitScope.AGENT_LOGIN_FAILURE,
             principal_fingerprint=employee_fingerprint,
@@ -380,7 +322,7 @@ async def login_agent(
         )
     await sleeper(settings.agent_login_failure_delay_ms / 1000)
     if limited:
-        raise _rate_limit_error(rate.expires_at, now)
+        raise rate_limit_error(rate.expires_at, now)
     raise ServiceError(401, "INVALID_CREDENTIALS", "사번 또는 비밀번호를 확인해 주세요.")
 
 
@@ -563,7 +505,7 @@ async def lookup_consultation_card(
     error: ServiceError | None = None
     response: ConsultationCardDetail | None = None
     async with session.begin():
-        rate = await _consume_rate_limit(
+        rate = await consume_rate_limit(
             session,
             scope=RateLimitScope.AGENT_CARD_LOOKUP,
             principal_fingerprint=principal_fingerprint,
@@ -581,7 +523,7 @@ async def lookup_consultation_card(
                     now=now,
                 )
             )
-            error = _rate_limit_error(rate.expires_at, now)
+            error = rate_limit_error(rate.expires_at, now)
         else:
             card = await _load_card(session, request, settings, now=now)
             if card is None or not card_is_accessible(card.expires_at, now=now):
