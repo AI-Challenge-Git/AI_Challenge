@@ -33,8 +33,9 @@ def test_settings_load_environment_variables(
     assert settings.database_url.get_secret_value().endswith("@db:5432/test_db")
 
 
-def test_fake_ai_adapter_is_the_safe_default() -> None:
-    settings = Settings()
+def test_fake_ai_adapter_is_the_safe_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AI_ADAPTER", raising=False)
+    settings = Settings(_env_file=None)
 
     assert settings.ai_adapter == "fake"
     assert settings.ai_timeout_seconds == 90
@@ -92,13 +93,13 @@ async def test_backend_service_keeps_timed_out_ai_calls_bounded() -> None:
     assert extractor.max_active == 1
 
 
-def test_nvidia_adapter_requires_a_masked_api_key() -> None:
-    secret = "nvidia-secret-value"
+def test_openai_adapter_requires_a_masked_api_key() -> None:
+    secret = "openai-secret-value"
     with pytest.raises(ValidationError) as missing:
-        Settings(ai_adapter="nvidia", nvidia_api_key=None)
-    configured = Settings(ai_adapter="nvidia", nvidia_api_key=SecretStr(secret))
+        Settings(ai_adapter="openai", openai_api_key=None)
+    configured = Settings(ai_adapter="openai", openai_api_key=SecretStr(secret))
 
-    assert "NVIDIA_API_KEY" in str(missing.value)
+    assert "OPENAI_API_KEY" in str(missing.value)
     assert secret not in repr(configured)
 
 
@@ -113,13 +114,13 @@ def test_extractor_dependency_uses_fake_by_default(monkeypatch: pytest.MonkeyPat
         get_settings.cache_clear()
 
 
-def test_extractor_dependency_switches_to_nvidia_adapter(
+def test_extractor_dependency_switches_to_openai_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sentinel = FakeDualExtractor()
-    monkeypatch.setenv("AI_ADAPTER", "nvidia")
-    monkeypatch.setenv("NVIDIA_API_KEY", "synthetic-test-key")
-    monkeypatch.setattr("app.ai.NvidiaDualExtractorAdapter", lambda: sentinel)
+    monkeypatch.setenv("AI_ADAPTER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-test-key")
+    monkeypatch.setattr("app.ai.OpenAIDualExtractorAdapter", lambda: sentinel)
     get_settings.cache_clear()
     get_dual_extractor.cache_clear()
     try:

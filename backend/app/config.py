@@ -25,10 +25,10 @@ class Settings(BaseSettings):
     cors_origins: list[str] = []
     active_policy_version: str = "kb-trading-failure-guidance-2026-08-18"
     pii_policy_version: str = "pii-mask.v1"
-    ai_adapter: Literal["fake", "nvidia"] = "fake"
+    ai_adapter: Literal["fake", "openai"] = "fake"
     ai_timeout_seconds: float = Field(default=90.0, gt=0, le=120)
     ai_max_concurrency: int = Field(default=4, ge=1, le=32)
-    nvidia_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
     attachment_storage_backend: Literal["local"] = "local"
     attachment_storage_dir: Path = DEFAULT_ATTACHMENT_STORAGE_DIR
     session_hmac_key: SecretStr = SecretStr("development-session-hmac-key-change-me")
@@ -45,10 +45,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":
-        if self.ai_adapter == "nvidia" and (
-            self.nvidia_api_key is None or not self.nvidia_api_key.get_secret_value().strip()
+        if self.ai_adapter == "openai" and (
+            self.openai_api_key is None or not self.openai_api_key.get_secret_value().strip()
         ):
-            raise ValueError("NVIDIA_API_KEY must be configured for the nvidia AI adapter")
+            raise ValueError("OPENAI_API_KEY must be configured for the openai AI adapter")
         hmac_keys = (
             self.session_hmac_key.get_secret_value(),
             self.reference_hmac_key.get_secret_value(),
