@@ -9,17 +9,20 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import Float, cast, delete, func, select, text
+from sqlalchemy import Float, cast, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.codes import (
     BaselineStatus,
+    ClusteringPolicyStatus,
     IssueType,
+    RateLimitScope,
     SignalClosureReason,
     SignalProcessingStatus,
     SignalStatus,
     SubmissionStatus,
 )
+from app.config import Settings
 from app.errors import ServiceError
 from app.models import (
     ClusteringPolicy,
@@ -45,14 +48,18 @@ from app.schemas import (
     SignalDashboardResponse,
     SignalEmbeddingRequest,
     SignalEmbeddingResult,
+    SignalHourlyVolume,
+    SignalPolicySnapshot,
     SignalProcessingResult,
 )
+from app.security import keyed_fingerprint
 from app.services.idempotency import (
     completed_idempotency_record,
     lock_idempotency_key,
     payload_sha256,
 )
 from app.services.lifecycle import RETENTION_PERIOD
+from app.services.rate_limits import consume_rate_limit, rate_limit_error
 
 if TYPE_CHECKING:
     from app.services.agents import AgentPrincipal
@@ -545,20 +552,55 @@ async def process_next_signal_job(
 async def list_dashboard_signals(
     session: AsyncSession,
     *,
+    now: datetime,
     limit: int,
     offset: int,
 ) -> SignalDashboardResponse:
+    within_detection_window = (
+        SignalCluster.last_report_at + ClusteringPolicy.window_seconds * text("INTERVAL '1 second'")
+        >= now
+    )
+    visible_signal = or_(
+        SignalCluster.status == SignalStatus.UNDER_REVIEW.value,
+        within_detection_window,
+    )
     rows = (
         await session.execute(
             select(SignalCluster, ClusteringPolicy)
             .join(ClusteringPolicy, ClusteringPolicy.id == SignalCluster.policy_id)
-            .where(SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES))
+            .where(
+                SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES),
+                visible_signal,
+            )
             .order_by(SignalCluster.last_report_at.desc(), SignalCluster.id)
             .limit(limit)
             .offset(offset)
         )
     ).all()
+    hour_bucket = func.date_trunc("hour", Report.received_at).label("bucket_start")
+    hourly_rows = (
+        await session.execute(
+            select(
+                hour_bucket,
+                func.count(SignalMember.report_id).label("raw_report_count"),
+                func.count(func.distinct(Report.session_digest)).label("reporting_unique_sessions"),
+            )
+            .join(SignalMember, SignalMember.report_id == Report.id)
+            .join(SignalCluster, SignalCluster.id == SignalMember.signal_id)
+            .join(ClusteringPolicy, ClusteringPolicy.id == SignalCluster.policy_id)
+            .where(
+                SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES),
+                visible_signal,
+            )
+            .group_by("bucket_start")
+            .order_by("bucket_start")
+        )
+    ).all()
+    active_policy = await session.scalar(
+        select(ClusteringPolicy).where(ClusteringPolicy.is_active.is_(True))
+    )
     return SignalDashboardResponse(
+        updated_at=now,
         items=[
             SignalDashboardItem(
                 signal_id=cluster.id,
@@ -581,11 +623,60 @@ async def list_dashboard_signals(
             )
             for cluster, policy in rows
         ],
+        hourly_volume=[
+            SignalHourlyVolume(
+                bucket_start=bucket_start,
+                raw_report_count=raw_report_count,
+                reporting_unique_sessions=reporting_unique_sessions,
+            )
+            for bucket_start, raw_report_count, reporting_unique_sessions in hourly_rows
+        ],
+        applied_policy=(
+            SignalPolicySnapshot(
+                policy_version=active_policy.policy_version,
+                status=ClusteringPolicyStatus(active_policy.status),
+                window_seconds=active_policy.window_seconds,
+                min_unique_sessions=active_policy.min_unique_sessions,
+                review_priority_threshold=active_policy.review_priority_threshold,
+                similarity_threshold=active_policy.similarity_threshold,
+                structured_rules_version=active_policy.structured_rules_version,
+                taxonomy_version=active_policy.taxonomy_version,
+                baseline_policy_version=active_policy.baseline_policy_version,
+            )
+            if active_policy is not None
+            else None
+        ),
         baseline_status=BaselineStatus.INSUFFICIENT_HISTORY,
         baseline_ratio=None,
         limit=limit,
         offset=offset,
     )
+
+
+async def enforce_dashboard_rate_limit(
+    session: AsyncSession,
+    principal_digest: bytes,
+    client_identifier: str,
+    settings: Settings,
+    *,
+    now: datetime,
+) -> None:
+    client_fingerprint = keyed_fingerprint(
+        client_identifier,
+        "signal-dashboard-client",
+        settings.rate_limit_hmac_key.get_secret_value().encode(),
+    )
+    async with session.begin():
+        rate = await consume_rate_limit(
+            session,
+            scope=RateLimitScope.SIGNAL_DASHBOARD,
+            principal_fingerprint=principal_digest,
+            client_fingerprint=client_fingerprint,
+            now=now,
+            window_seconds=settings.signal_dashboard_window_seconds,
+        )
+    if rate.count > settings.signal_dashboard_limit:
+        raise rate_limit_error(rate.expires_at, now)
 
 
 async def related_signals_for_report(

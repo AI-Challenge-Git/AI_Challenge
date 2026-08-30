@@ -36,6 +36,8 @@ python -m scripts.sync_krx_symbols 전종목기본정보.CSV --as-of YYYY-MM-DD
 API와 worker에는 `DATABASE_URL`, 서로 다른 네 HMAC key와 `OPENAI_API_KEY`를 Secret으로 설정한다.
 `SIGNAL_EMBEDDING_MODEL_REVISION`은 재현성 metadata인 일반 환경변수로 명시한다. KRX worker에는
 `KRX_LISTED_INFO_API_KEY` Secret을 추가한다. 값을 Git·Railway start command·로그에 넣지 않는다.
+운영상황판 조회 제한은 기본 `SIGNAL_DASHBOARD_LIMIT=60`,
+`SIGNAL_DASHBOARD_WINDOW_SECONDS=60`이며 트래픽 측정 후 환경변수로 조정한다.
 
 Railway Bucket variable reference로 `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `REGION`,
 `ENDPOINT`를 주입하고 다음 값을 사용한다.

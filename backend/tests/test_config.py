@@ -45,6 +45,8 @@ def test_fake_ai_adapter_is_the_safe_default(monkeypatch: pytest.MonkeyPatch) ->
     assert settings.agent_login_failure_window_seconds == 300
     assert settings.agent_lookup_limit == 10
     assert settings.agent_lookup_window_seconds == 60
+    assert settings.signal_dashboard_limit == 60
+    assert settings.signal_dashboard_window_seconds == 60
 
 
 async def test_backend_service_keeps_timed_out_ai_calls_bounded() -> None:

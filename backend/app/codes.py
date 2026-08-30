@@ -71,6 +71,7 @@ class BaselineStatus(StrEnum):
 class RateLimitScope(StrEnum):
     AGENT_LOGIN_FAILURE = "AGENT_LOGIN_FAILURE"
     AGENT_CARD_LOOKUP = "AGENT_CARD_LOOKUP"
+    SIGNAL_DASHBOARD = "SIGNAL_DASHBOARD"
 
 
 class AuditOutcome(StrEnum):
