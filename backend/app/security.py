@@ -76,6 +76,14 @@ _PASSWORD_HASH = PasswordHash.recommended()
 _DUMMY_PASSWORD_HASH = _PASSWORD_HASH.hash(secrets.token_urlsafe(32))
 
 
+def assert_no_unmasked_pii(text: str) -> None:
+    """AI-11: masked_text에서 마스킹했던 PII 패턴이 AI 응답 값에 재등장하면 거부한다."""
+    if any(
+        pattern.search(text) for pattern in (*_REJECT_PATTERNS.values(), *_MASK_PATTERNS.values())
+    ):
+        raise SensitiveInputError("AI 응답 값에 마스킹 대상 PII 패턴이 재등장했습니다")
+
+
 def normalize_placeholders(text: str) -> str:
     for localized, canonical in _PLACEHOLDER_ALIASES.items():
         text = text.replace(localized, canonical)

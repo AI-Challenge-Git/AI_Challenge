@@ -12,7 +12,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.ai import DualExtractor, validate_evidence_quotes
+from app.ai import DualExtractor, validate_evidence_quotes, validate_no_restored_pii
 from app.attachments import (
     AttachmentStorageError,
     AttachmentStore,
@@ -327,6 +327,7 @@ async def analyze_report(
     try:
         extraction = await _extract_with_runtime_limits(extractor, scan.masked_text, settings)
         validate_evidence_quotes(extraction, scan.masked_text)
+        validate_no_restored_pii(extraction)
     except Exception as exc:
         if isinstance(exc, TimeoutError):
             safe_error_code = "TIMEOUT"
