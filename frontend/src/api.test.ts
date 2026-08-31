@@ -86,7 +86,10 @@ describe("백엔드 분석 DTO 연동", () => {
   it("고객 세션 토큰으로 실제 Dashboard API를 조회한다", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
     const response = {
+      updated_at: "2026-08-30T00:06:00Z",
       items: [],
+      hourly_volume: [],
+      applied_policy: null,
       baseline_status: "INSUFFICIENT_HISTORY",
       baseline_ratio: null,
       limit: 50,
@@ -99,7 +102,7 @@ describe("백엔드 분석 DTO 연동", () => {
     await expect(getSignalDashboard()).resolves.toEqual(response);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.example.com/api/signals/dashboard?limit=50&offset=0",
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: expect.stringMatching(/^Bearer /) }) }),
+      expect.objectContaining({ credentials: "omit", headers: expect.objectContaining({ Authorization: expect.stringMatching(/^Bearer /) }) }),
     );
   });
 
@@ -220,7 +223,7 @@ describe("백엔드 분석 DTO 연동", () => {
     const requestId = crypto.randomUUID();
     const reportText = "9시 3분쯤 주문 버튼 이후 계속 로딩되고 결과를 확인하지 못했습니다.";
 
-    await analyzeReport(reportText, requestId, screenshot);
+    await analyzeReport(reportText, requestId, screenshot, true);
 
     const body = fetchMock.mock.calls[0][1]?.body;
     expect(body).toBeInstanceOf(FormData);
@@ -228,6 +231,21 @@ describe("백엔드 분석 DTO 연동", () => {
     expect((body as FormData).get("screenshot")).toBe(screenshot);
     expect((body as FormData).get("text")).toBe(reportText);
     expect((body as FormData).get("screenshot_redacted_confirmed")).toBe("true");
+  });
+
+  it("이미지 가림 확인 전에는 분석 요청을 전송하지 않는다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { analyzeReport } = await import("./api");
+    const screenshot = new File(["image"], "error.png", { type: "image/png" });
+
+    await expect(analyzeReport(
+      "9시 3분쯤 주문 버튼 이후 계속 로딩되고 결과를 확인하지 못했습니다.",
+      crypto.randomUUID(),
+      screenshot,
+    )).rejects.toThrow("직접 가렸는지 확인");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("지정가 누락과 시장가 가격 입력은 네트워크 전송 전에 거부한다", async () => {
@@ -326,12 +344,38 @@ describe("백엔드 분석 DTO 연동", () => {
       "주문 버튼을 누른 뒤 계속 로딩되어 결과를 확인하지 못했습니다.",
       "44444444-4444-4444-8444-444444444444",
       new File(["image"], "error.png", { type: "image/png" }),
+      true,
     )).rejects.toMatchObject({ status: 422, code: "SCREENSHOT_REDACTION_REQUIRED" });
     await expect(getConsultationCards("agent-token")).rejects.toMatchObject({
       status: 429,
       retryAfterSeconds: 37,
       message: expect.stringContaining("37초"),
     });
+  });
+
+  it("AI 실패 코드를 안전한 사용자 문구로 구분한다", async () => {
+    const { analysisFailureMessage } = await import("./api");
+
+    expect(analysisFailureMessage("TIMEOUT")).toContain("시간이 초과");
+    expect(analysisFailureMessage("INVALID_SCHEMA")).toContain("처리하지 못했습니다");
+    expect(analysisFailureMessage("PROVIDER_UNAVAILABLE")).toContain("서비스를 이용할 수 없습니다");
+    expect(analysisFailureMessage("PROVIDER_UNAVAILABLE")).not.toMatch(/결제|크레딧|OpenAI/i);
+  });
+
+  it("관련성 확정 충돌은 자동 변경하지 않고 수동 검토로 안내한다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      code: "SIGNAL_RELEVANCE_CONFLICT",
+      detail: "내부 결과",
+    }), { status: 409 })));
+    const { saveAgentSignalVerification } = await import("./api");
+
+    await expect(saveAgentSignalVerification(
+      { card_id: "11111111-1111-4111-8111-111111111111" },
+      { signal_id: "33333333-3333-4333-8333-333333333333", decision: "NOT_RELATED" },
+      "agent-token",
+      "44444444-4444-4444-8444-444444444444",
+    )).rejects.toMatchObject({ code: "SIGNAL_RELEVANCE_CONFLICT", message: expect.stringContaining("수동 검토") });
   });
 
   it("종목 Master 오류를 사용자가 이해할 수 있는 문구로 변환한다", async () => {

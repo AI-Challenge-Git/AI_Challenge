@@ -106,6 +106,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/consultation-cards/signal-verifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Signal Relevance */
+        post: operations["verify_signal_relevance_api_consultation_cards_signal_verifications_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reports/analyze": {
         parameters: {
             query?: never;
@@ -297,6 +314,48 @@ export interface components {
          * @enum {string}
          */
         AgentRole: "AGENT" | "OPERATOR";
+        /**
+         * AgentSignalDecision
+         * @enum {string}
+         */
+        AgentSignalDecision: "RELATED" | "NOT_RELATED" | "UNCONFIRMED";
+        /** AgentSignalVerificationRequest */
+        AgentSignalVerificationRequest: {
+            /** Reference Number */
+            reference_number?: string | null;
+            /** Card Id */
+            card_id?: string | null;
+            /**
+             * Signal Id
+             * Format: uuid
+             */
+            signal_id: string;
+            decision: components["schemas"]["AgentSignalDecision"];
+            /**
+             * Client Request Id
+             * Format: uuid4
+             */
+            client_request_id: string;
+        };
+        /** AgentSignalVerificationResponse */
+        AgentSignalVerificationResponse: {
+            /**
+             * Signal Id
+             * Format: uuid
+             */
+            signal_id: string;
+            relevance_status: components["schemas"]["SignalRelevanceStatus"];
+            agent_decision: components["schemas"]["AgentSignalDecision"];
+            verification_status: components["schemas"]["VerificationStatus"];
+            /** Final Related */
+            final_related: boolean | null;
+            lock_decision: components["schemas"]["SignalLockDecision"];
+            /**
+             * Saved At
+             * Format: date-time
+             */
+            saved_at: string;
+        };
         /** AgentTechnicalDetail */
         AgentTechnicalDetail: {
             issue_type: components["schemas"]["IssueType"];
@@ -410,6 +469,21 @@ export interface components {
             /** Evidence Quote */
             evidence_quote: string | null;
         };
+        /**
+         * ClusterRepresentativeMethod
+         * @enum {string}
+         */
+        ClusterRepresentativeMethod: "NONE" | "MEDOID";
+        /**
+         * ClusteringLinkageMethod
+         * @enum {string}
+         */
+        ClusteringLinkageMethod: "SINGLE_MAX" | "AVERAGE";
+        /**
+         * ClusteringPolicyStatus
+         * @enum {string}
+         */
+        ClusteringPolicyStatus: "EXPERIMENTAL" | "APPROVED" | "RETIRED";
         /** ConsultationCandidate */
         ConsultationCandidate: {
             action: components["schemas"]["CandidateField_OrderAction_"];
@@ -444,6 +518,8 @@ export interface components {
             safety_notice: string;
             /** Has Attachment */
             has_attachment: boolean;
+            /** Attachment Url */
+            attachment_url: string | null;
             /** Related Signals */
             related_signals: components["schemas"]["RelatedSignal"][];
         };
@@ -716,6 +792,11 @@ export interface components {
              * @constant
              */
             official_incident: false;
+            relevance_status?: components["schemas"]["SignalRelevanceStatus"] | null;
+            /** Confirmation Questions */
+            confirmation_questions?: string[];
+            /** Locked Related */
+            locked_related?: boolean | null;
         };
         /** ReportAnalysisCompleteResponse */
         ReportAnalysisCompleteResponse: {
@@ -874,8 +955,16 @@ export interface components {
         };
         /** SignalDashboardResponse */
         SignalDashboardResponse: {
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
             /** Items */
             items: components["schemas"]["SignalDashboardItem"][];
+            /** Hourly Volume */
+            hourly_volume: components["schemas"]["SignalHourlyVolume"][];
+            applied_policy: components["schemas"]["SignalPolicySnapshot"] | null;
             baseline_status: components["schemas"]["BaselineStatus"];
             /** Baseline Ratio */
             baseline_ratio?: null;
@@ -884,6 +973,50 @@ export interface components {
             /** Offset */
             offset: number;
         };
+        /** SignalHourlyVolume */
+        SignalHourlyVolume: {
+            /**
+             * Bucket Start
+             * Format: date-time
+             */
+            bucket_start: string;
+            /** Raw Report Count */
+            raw_report_count: number;
+            /** Reporting Unique Sessions */
+            reporting_unique_sessions: number;
+        };
+        /**
+         * SignalLockDecision
+         * @enum {string}
+         */
+        SignalLockDecision: "ALLOW" | "BLOCK" | "IDEMPOTENT_REPLAY" | "CONFLICT";
+        /** SignalPolicySnapshot */
+        SignalPolicySnapshot: {
+            /** Policy Version */
+            policy_version: string;
+            status: components["schemas"]["ClusteringPolicyStatus"];
+            /** Window Seconds */
+            window_seconds: number;
+            /** Min Unique Sessions */
+            min_unique_sessions: number;
+            /** Review Priority Threshold */
+            review_priority_threshold: number;
+            /** Similarity Threshold */
+            similarity_threshold: number;
+            linkage_method: components["schemas"]["ClusteringLinkageMethod"];
+            representative_method: components["schemas"]["ClusterRepresentativeMethod"];
+            /** Structured Rules Version */
+            structured_rules_version: string;
+            /** Taxonomy Version */
+            taxonomy_version: string;
+            /** Baseline Policy Version */
+            baseline_policy_version: string | null;
+        };
+        /**
+         * SignalRelevanceStatus
+         * @enum {string}
+         */
+        SignalRelevanceStatus: "RELATED" | "NEEDS_CONFIRMATION" | "NOT_RELATED";
         /**
          * SignalStatus
          * @enum {string}
@@ -1237,6 +1370,93 @@ export interface operations {
             };
         };
     };
+    verify_signal_relevance_api_consultation_cards_signal_verifications_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentSignalVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSignalVerificationResponse"];
+                };
+            };
+            /** @description Invalid credentials or access token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Card or signal unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Locked result conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Signal relevance unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     analyze_api_reports_analyze_post: {
         parameters: {
             query?: never;
@@ -1573,6 +1793,15 @@ export interface operations {
             };
             /** @description Invalid request */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -92,6 +92,7 @@ export type AgentCardListItem = components["schemas"]["ConsultationCardListItem"
 export type AgentCardListResponse = components["schemas"]["ConsultationCardListResponse"];
 export type AgentCase = components["schemas"]["ConsultationCardDetail"];
 export type AgentVerificationResult = components["schemas"]["AgentVerificationResponse"];
+export type AgentSignalVerificationResult = components["schemas"]["AgentSignalVerificationResponse"];
 export type SignalDashboard = components["schemas"]["SignalDashboardResponse"];
 export type SignalDashboardItem = components["schemas"]["SignalDashboardItem"];
 
@@ -101,5 +102,10 @@ export type AgentCardSelector =
 
 export type AgentVerificationInput = Omit<
   components["schemas"]["AgentVerificationRequest"],
+  "reference_number" | "card_id" | "client_request_id"
+>;
+
+export type AgentSignalVerificationInput = Omit<
+  components["schemas"]["AgentSignalVerificationRequest"],
   "reference_number" | "card_id" | "client_request_id"
 >;

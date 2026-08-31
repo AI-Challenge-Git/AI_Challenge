@@ -34,6 +34,7 @@ const cardDetail = {
   verification_status: null,
   safety_notice: "공식 채널에서 주문 상태를 확인해 주세요.",
   has_attachment: true,
+  attachment_url: "https://storage.example.com/signed-image",
   related_signals: [{
     signal_id: "33333333-3333-4333-8333-333333333333",
     status: "SIGNAL_DETECTED",
@@ -41,6 +42,9 @@ const cardDetail = {
     reporting_unique_sessions: 3,
     last_report_at: "2026-08-30T00:04:00Z",
     official_incident: false,
+    relevance_status: "NEEDS_CONFIRMATION",
+    confirmation_questions: ["고객이 문제를 겪은 시각이 신호 발생 구간과 일치하나요?"],
+    locked_related: null,
   }],
 };
 
@@ -85,6 +89,21 @@ describe("상담원 API 계약", () => {
     expect(fetchMock.mock.calls[1][0]).toBe("https://api.example.com/api/agent/consultation-cards?limit=50&offset=0");
   });
 
+  it("카드 목록의 서버 만료·재확인 상태를 유지한다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    const serverList = {
+      ...listResponse,
+      items: [
+        { ...listResponse.items[0], expired: true, can_open: false },
+        { ...listResponse.items[0], card_id: "22222222-2222-4222-8222-222222222222", consultation_status: "VERIFIED" },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(serverList))));
+    const { getConsultationCards } = await import("./api");
+
+    await expect(getConsultationCards(token)).resolves.toEqual(serverList);
+  });
+
   it("card_id로 상세를 조회하고 새 ConsultationCardDetail을 반환한다", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(cardDetail)));
@@ -96,6 +115,7 @@ describe("상담원 API 계약", () => {
     expect(detail).toMatchObject({
       card_id: cardId,
       has_attachment: true,
+      attachment_url: "https://storage.example.com/signed-image",
       related_signals: [{ status: "SIGNAL_DETECTED", reporting_unique_sessions: 3, official_incident: false }],
     });
     expect(fetchMock).toHaveBeenCalledWith(
@@ -104,6 +124,40 @@ describe("상담원 API 계약", () => {
         method: "POST",
         body: JSON.stringify({ card_id: cardId }),
         headers: expect.objectContaining({ Authorization: `Bearer ${token}` }),
+      }),
+    );
+  });
+
+  it("관련 신호 확인은 card_id·signal_id·decision과 UUID를 Bearer token으로 전송한다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    const response = {
+      signal_id: cardDetail.related_signals[0].signal_id,
+      relevance_status: "NEEDS_CONFIRMATION",
+      agent_decision: "RELATED",
+      verification_status: "MATCHED",
+      final_related: true,
+      lock_decision: "ALLOW",
+      saved_at: "2026-08-27T00:10:00Z",
+    };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(response)));
+    vi.stubGlobal("fetch", fetchMock);
+    const { saveAgentSignalVerification } = await import("./api");
+    const requestId = "44444444-4444-4444-8444-444444444444";
+
+    await expect(saveAgentSignalVerification(
+      { card_id: cardId },
+      { signal_id: response.signal_id, decision: "RELATED" },
+      token,
+      requestId,
+    )).resolves.toEqual(response);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.com/api/consultation-cards/signal-verifications",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ card_id: cardId, signal_id: response.signal_id, decision: "RELATED", client_request_id: requestId }),
+        headers: expect.objectContaining({ Authorization: `Bearer ${token}` }),
+        credentials: "omit",
       }),
     );
   });

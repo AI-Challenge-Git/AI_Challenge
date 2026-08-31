@@ -5,8 +5,11 @@ import type {
   AgentCardSelector,
   AgentCase,
   AgentSession,
+  AgentSignalVerificationInput,
+  AgentSignalVerificationResult,
   AgentVerificationInput,
   AgentVerificationResult,
+  AnalysisFailedResponse,
   AnalysisResponse,
   AnalysisResult,
   ConsultationData,
@@ -26,6 +29,7 @@ type ApiAgentLoginRequest = components["schemas"]["AgentLoginRequest"];
 type ApiAgentLoginResponse = components["schemas"]["AgentLoginResponse"];
 type ApiAgentLookupRequest = components["schemas"]["ConsultationCardLookupRequest"];
 type ApiAgentVerificationRequest = components["schemas"]["AgentVerificationRequest"];
+type ApiAgentSignalVerificationRequest = components["schemas"]["AgentSignalVerificationRequest"];
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "");
 const SESSION_TOKEN_KEY = "mts-sos-session-token";
@@ -76,7 +80,10 @@ async function parseError(response: Response): Promise<ApiError> {
   if (code === "SYMBOL_MASTER_UNAVAILABLE") return new ApiError("종목 정보를 확인하는 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.", code, response.status);
   if (code === "UNSUPPORTED_SYMBOL") return new ApiError("지원하지 않는 종목코드입니다. 종목코드를 다시 확인해 주세요.", code, response.status);
   if (code === "SYMBOL_MISMATCH") return new ApiError("종목명과 종목코드가 일치하지 않습니다. 다시 확인해 주세요.", code, response.status);
+  if (code === "SIGNAL_RELEVANCE_CONFLICT") return new ApiError("기존 관련성 확정 결과와 충돌합니다. 자동으로 변경하지 않고 수동 검토가 필요합니다.", code, response.status);
+  if (code === "SIGNAL_RELEVANCE_UNAVAILABLE") return new ApiError("관련성 확인 결과를 현재 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.", code, response.status);
   if (response.status === 401) return new ApiError("로그인이 만료되었거나 인증 정보가 올바르지 않습니다. 다시 로그인해 주세요.", code, 401);
+  if (response.status === 403) return new ApiError("상담원 권한이 필요합니다. 다시 로그인해 주세요.", code, 403);
   if (response.status === 404) return new ApiError("요청한 상담 정보를 찾을 수 없습니다.", code, 404);
   if (response.status === 409) return new ApiError("같은 요청 ID로 다른 내용을 전송할 수 없습니다. 새로 시도해 주세요.", code, 409);
   if (response.status === 422) {
@@ -101,6 +108,7 @@ async function request<T>(path: string, init: RequestInit = {}, token: string | 
   if (!apiBaseUrl) throw new ApiError("API 주소가 설정되지 않았습니다. VITE_API_BASE_URL을 설정해 주세요.");
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
+    credentials: "omit",
     headers: {
       Accept: "application/json, application/problem+json",
       ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
@@ -277,11 +285,25 @@ export function validateScreenshot(file: File): void {
   if (file.size > 5 * 1024 * 1024) throw new Error("이미지는 5MB 이하만 첨부할 수 있습니다.");
 }
 
-export async function analyzeReport(rawText: string, clientRequestId: string = crypto.randomUUID(), screenshot?: File): Promise<AnalysisResult> {
+export function analysisFailureMessage(code: AnalysisFailedResponse["error"]["code"]): string {
+  if (code === "TIMEOUT") return "분석 시간이 초과되었습니다. 다시 시도해 주세요.";
+  if (code === "INVALID_SCHEMA") return "분석 결과를 처리하지 못했습니다. 다시 시도해 주세요.";
+  return "현재 AI 분석 서비스를 이용할 수 없습니다. 잠시 후 다시 시도해 주세요.";
+}
+
+export async function analyzeReport(
+  rawText: string,
+  clientRequestId: string = crypto.randomUUID(),
+  screenshot?: File,
+  screenshotRedactedConfirmed = false,
+): Promise<AnalysisResult> {
   const text = normalizeReportText(rawText);
   const requestBody = JSON.stringify({ text, client_request_id: clientRequestId });
   if (new TextEncoder().encode(requestBody).byteLength > 16 * 1024) throw new Error("입력 용량은 16KiB 이하여야 합니다.");
-  if (screenshot) validateScreenshot(screenshot);
+  if (screenshot) {
+    validateScreenshot(screenshot);
+    if (!screenshotRedactedConfirmed) throw new Error("이미지의 민감정보를 직접 가렸는지 확인해 주세요.");
+  }
   const clientMasked = maskSensitiveText(text);
   const analyzePayload: ApiAnalyzeJsonRequest = { text: clientMasked.text, client_request_id: clientRequestId };
   const body: BodyInit = screenshot
@@ -291,7 +313,7 @@ export async function analyzeReport(rawText: string, clientRequestId: string = c
     body.set("text", clientMasked.text);
     body.set("client_request_id", clientRequestId);
     body.set("screenshot", screenshot);
-    body.set("screenshot_redacted_confirmed", "true");
+    body.set("screenshot_redacted_confirmed", String(screenshotRedactedConfirmed));
   }
   // ponytail: 30초 동안 같은 멱등 요청을 폴링한다. 장기 작업이 필요해지면 전용 상태 조회 API로 교체.
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -460,6 +482,24 @@ export async function saveAgentVerification(
       method: "POST",
       body: JSON.stringify(verification),
     },
+    requireAgentToken(agentToken),
+  );
+}
+
+export async function saveAgentSignalVerification(
+  selector: AgentCardSelector | string,
+  payload: AgentSignalVerificationInput,
+  agentToken?: string,
+  clientRequestId: string = crypto.randomUUID(),
+): Promise<AgentSignalVerificationResult> {
+  const verification: ApiAgentSignalVerificationRequest = {
+    ...normalizedSelector(selector),
+    ...payload,
+    client_request_id: clientRequestId,
+  };
+  return request<AgentSignalVerificationResult>(
+    "/api/consultation-cards/signal-verifications",
+    { method: "POST", body: JSON.stringify(verification) },
     requireAgentToken(agentToken),
   );
 }

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import {
   analyzeReport,
+  analysisFailureMessage,
   ApiError,
   deleteConsultationCard,
   discardAnalysis,
@@ -135,6 +136,7 @@ export default function App() {
   const [occurredAtConfirmed, setOccurredAtConfirmed] = useState(false);
   const [screenshot, setScreenshot] = useState<File | null>(null);
   const [screenshotName, setScreenshotName] = useState("");
+  const [screenshotRedactedConfirmed, setScreenshotRedactedConfirmed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -176,11 +178,16 @@ export default function App() {
     setError(null);
     try {
       analyzeRequestId.current ||= crypto.randomUUID();
-      const result = await analyzeReport(reportText, analyzeRequestId.current, screenshot ?? undefined);
+      const result = await analyzeReport(
+        reportText,
+        analyzeRequestId.current,
+        screenshot ?? undefined,
+        screenshotRedactedConfirmed,
+      );
       if (result.status === "failed") {
         setAnalysisState("failed");
         analyzeRequestId.current = "";
-        setError("분석을 완료하지 못했습니다. 다시 시도해 주세요.");
+        setError(analysisFailureMessage(result.error.code));
         return;
       }
       if (result.status === "complete") {
@@ -193,6 +200,7 @@ export default function App() {
       setReportText("");
       setScreenshot(null);
       setScreenshotName("");
+      setScreenshotRedactedConfirmed(false);
       setAnalysis(result);
       setEditedFields(new Set());
       setOccurredAtConfirmed(false);
@@ -284,6 +292,7 @@ export default function App() {
     setOccurredAtConfirmed(false);
     setScreenshot(null);
     setScreenshotName("");
+    setScreenshotRedactedConfirmed(false);
     setError(null);
     setCopied(false);
     analyzeRequestId.current = "";
@@ -388,6 +397,7 @@ export default function App() {
                 <span>오류 화면 이미지 (선택)</span>
                 <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => {
                   const file = event.target.files?.[0] ?? null;
+                  setScreenshotRedactedConfirmed(false);
                   try {
                     if (file) validateScreenshot(file);
                     setScreenshot(file);
@@ -404,9 +414,15 @@ export default function App() {
                 }} />
                 <small>{screenshotName || "PNG·JPG·WebP, 최대 5MB · 계좌번호 등 개인정보가 보이지 않게 가려 주세요."}</small>
               </label>
+              {screenshot ? (
+                <label className="verification-check screenshot-confirmation">
+                  <input type="checkbox" checked={screenshotRedactedConfirmed} onChange={(event) => setScreenshotRedactedConfirmed(event.target.checked)} />
+                  이미지의 계좌번호·전화번호 등 민감정보를 직접 가렸습니다.
+                </label>
+              ) : null}
               {error ? <p id="report-error" className="error-message" role="alert"><TriangleAlert size={16} /> {error}</p> : null}
 
-              <button className="primary-button analyze-button" type="button" onClick={handleAnalyze} disabled={analysisState === "pending" || !isValidReport}>
+              <button className="primary-button analyze-button" type="button" onClick={handleAnalyze} disabled={analysisState === "pending" || !isValidReport || Boolean(screenshot && !screenshotRedactedConfirmed)}>
                   {analysisState === "pending" ? <><span className="spinner" /> 안전하게 분석 중...</> : analysisState === "failed" ? <>다시 분석하기 <ArrowRight size={18} /></> : <>AI로 내용 정리하기 <ArrowRight size={18} /></>}
               </button>
             </div>
@@ -534,7 +550,7 @@ export default function App() {
                 <strong>{savedCard.reference_number}</strong>
                 <button type="button" onClick={copyReference}>{copied ? <><Check size={16} /> 복사됨</> : <><Copy size={16} /> 번호 복사</>}</button>
               </div>
-              <div className="expiry"><Clock3 size={17} /> 상담 완료 이전까지 유효</div>
+              <div className="expiry"><Clock3 size={17} /> {new Date(savedCard.expires_at).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })}까지 유효</div>
               <div className="order-warning"><TriangleAlert size={19} /><p><strong>상담 준비카드는 주문 접수증이 아닙니다.</strong><span>실제 주문은 공식 고객센터 또는 영업점에서 본인확인과 주문내용 재확인을 거쳐야 합니다.</span></p></div>
               {error ? <p className="error-message" role="alert"><TriangleAlert size={16} /> {error}</p> : null}
               <button className="secondary-button" type="button" onClick={reset}>새 제보 작성하기</button>
