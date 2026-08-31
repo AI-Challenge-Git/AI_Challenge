@@ -44,6 +44,20 @@ def _signal(
     )
 
 
+def test_explicit_threshold_overrides_global_default() -> None:
+    customer = _customer(embedding=[1.0, 0.0])
+    signal = _signal(embedding=[1.0, 1.0])  # cosine similarity ≈ 0.7071
+
+    default_result = evaluate_signal_relevance(customer, signal)
+    assert default_result.status is SignalRelevanceStatus.RELATED
+    assert default_result.threshold == SIMILARITY_THRESHOLD
+
+    stricter_result = evaluate_signal_relevance(customer, signal, threshold=0.9)
+    assert stricter_result.status is SignalRelevanceStatus.NOT_RELATED
+    assert stricter_result.reasons == (SignalRelevanceReason.SIMILARITY_BELOW_THRESHOLD,)
+    assert stricter_result.threshold == 0.9
+
+
 def test_all_gates_pass_returns_related() -> None:
     result = evaluate_signal_relevance(_customer(), _signal())
 
