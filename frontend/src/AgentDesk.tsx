@@ -5,6 +5,7 @@ import {
   getConsultationCards,
   loginAgent,
   normalizeSymbolCode,
+  saveAgentSignalVerification,
   saveAgentVerification,
 } from "./api";
 import type {
@@ -12,6 +13,7 @@ import type {
   AgentCardSelector,
   AgentCase,
   AgentSession,
+  AgentSignalVerificationResult,
   AgentVerificationInput,
   AgentVerificationResult,
 } from "./types";
@@ -40,7 +42,11 @@ const VERIFICATION_LABEL: Record<NonNullable<AgentCase["verification_status"]>, 
   IMPORTANT: "중요 불일치",
 };
 
-const COMPLETED_CARDS_KEY = "mts-sos-completed-card-ids";
+const RELEVANCE_LABEL = {
+  RELATED: "관련 가능성 높음",
+  NEEDS_CONFIRMATION: "추가 확인 필요",
+  NOT_RELATED: "관련 가능성 낮음",
+} as const;
 
 const FIELD_LABEL: Record<AgentVerificationResult["fields"][number]["field"], string> = {
   action: "주문 구분",
@@ -74,15 +80,12 @@ export default function AgentDesk() {
   const [searching, setSearching] = useState(false);
   const [loadingCards, setLoadingCards] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingSignalId, setSavingSignalId] = useState("");
+  const [signalResults, setSignalResults] = useState<Record<string, AgentSignalVerificationResult>>({});
   const [loggingIn, setLoggingIn] = useState(false);
-  const [completedCardIds, setCompletedCardIds] = useState<Set<string>>(() => {
-    try {
-      return new Set(JSON.parse(localStorage.getItem(COMPLETED_CARDS_KEY) ?? "[]") as string[]);
-    } catch {
-      return new Set();
-    }
-  });
   const verificationRequestId = useRef("");
+  const refreshedAttachmentUrl = useRef("");
+  const signalVerificationRequest = useRef<{ key: string; id: string } | null>(null);
 
   const showAgentError = (reason: unknown, fallback: string) => {
     if (reason instanceof ApiError && reason.status === 401) {
@@ -90,6 +93,8 @@ export default function AgentDesk() {
       setCards([]);
       setCaseFile(null);
       setResult(null);
+      setSignalResults({});
+      signalVerificationRequest.current = null;
     }
     setError(reason instanceof Error ? reason.message : fallback);
   };
@@ -132,12 +137,9 @@ export default function AgentDesk() {
     setResult(null);
     try {
       const card = await getConsultationCard(selector, token);
-      if (completedCardIds.has(card.card_id)) {
-        setCaseFile(null);
-        setError("상담이 완료된 카드는 다시 조회할 수 없습니다.");
-        return;
-      }
       setCaseFile(card);
+      setSignalResults({});
+      signalVerificationRequest.current = null;
       verificationRequestId.current = "";
     } catch (reason) {
       setCaseFile(null);
@@ -151,6 +153,18 @@ export default function AgentDesk() {
     event.preventDefault();
     const referenceNumber = String(new FormData(event.currentTarget).get("reference")).trim();
     await openCard({ reference_number: referenceNumber });
+  };
+
+  const refreshAttachment = async () => {
+    const token = agent?.access_token;
+    const currentUrl = caseFile?.attachment_url;
+    if (!token || !caseFile || !currentUrl || refreshedAttachmentUrl.current === currentUrl) return;
+    refreshedAttachmentUrl.current = currentUrl;
+    try {
+      setCaseFile(await getConsultationCard({ card_id: caseFile.card_id }, token));
+    } catch (reason) {
+      showAgentError(reason, "첨부 이미지를 다시 불러오지 못했습니다.");
+    }
   };
 
   const verify = async (event: FormEvent<HTMLFormElement>) => {
@@ -185,21 +199,50 @@ export default function AgentDesk() {
     }
   };
 
+  const verifySignal = async (
+    signalId: string,
+    decision: "RELATED" | "NOT_RELATED" | "UNCONFIRMED",
+  ) => {
+    const token = agent?.access_token;
+    if (!caseFile || !token) return;
+    const key = `${caseFile.card_id}:${signalId}:${decision}`;
+    if (signalVerificationRequest.current?.key !== key) {
+      signalVerificationRequest.current = { key, id: crypto.randomUUID() };
+    }
+    setSavingSignalId(signalId);
+    setError("");
+    try {
+      const saved = await saveAgentSignalVerification(
+        { card_id: caseFile.card_id },
+        { signal_id: signalId, decision },
+        token,
+        signalVerificationRequest.current.id,
+      );
+      setSignalResults((current) => ({ ...current, [signalId]: saved }));
+      if (saved.lock_decision === "ALLOW" || saved.lock_decision === "IDEMPOTENT_REPLAY") {
+        setCaseFile((current) => current ? {
+          ...current,
+          related_signals: current.related_signals.map((signal) => signal.signal_id === signalId
+            ? { ...signal, locked_related: saved.final_related }
+            : signal),
+        } : current);
+      }
+      signalVerificationRequest.current = null;
+    } catch (reason) {
+      showAgentError(reason, "관련성 확인 결과를 저장하지 못했습니다.");
+    } finally {
+      setSavingSignalId("");
+    }
+  };
+
   const logout = () => {
     setAgent(null);
     setCards([]);
     setCaseFile(null);
     setResult(null);
+    setSignalResults({});
+    signalVerificationRequest.current = null;
     setError("");
-  };
-
-  const completeConsultation = () => {
-    if (!caseFile?.verification_status) return;
-    const next = new Set(completedCardIds).add(caseFile.card_id);
-    localStorage.setItem(COMPLETED_CARDS_KEY, JSON.stringify([...next]));
-    setCompletedCardIds(next);
-    setCaseFile(null);
-    setResult(null);
   };
 
   if (!agent) {
@@ -233,18 +276,18 @@ export default function AgentDesk() {
           </header>
           <div className="agent-card-items">
             {cards.length ? cards.map((card) => {
-              const completed = completedCardIds.has(card.card_id);
+              const unavailable = card.expired || !card.can_open;
               return (
                 <button
                   key={card.card_id}
                   type="button"
-                  className={completed ? "expired" : card.verification_status ? "verified" : ""}
-                  disabled={searching || completed}
+                  className={unavailable ? "expired" : card.consultation_status === "VERIFIED" ? "verified" : ""}
+                  disabled={searching || unavailable}
                   onClick={() => void openCard({ card_id: card.card_id })}
                 >
                   <span>{formatTime(card.received_at)}</span>
                   <strong>{card.technical_symptom ?? "기술 증상 미확인"}</strong>
-                  <small>{completed ? "상담 완료 · 조회 불가" : card.verification_status ? `재확인 ${VERIFICATION_LABEL[card.verification_status]} · 상담 완료 대기` : "상담 확인 대기"}</small>
+                  <small>{card.expired ? "만료됨 · 조회 불가" : !card.can_open ? "조회 불가" : card.consultation_status === "VERIFIED" ? "재확인 완료" : "상담 확인 대기"}</small>
                 </button>
               );
             }) : <p className="empty-copy">조회할 상담카드가 없습니다.</p>}
@@ -276,7 +319,12 @@ export default function AgentDesk() {
                   <div><dt>주문 방식</dt><dd>{ORDER_TYPE_LABEL[caseFile.consultation.order_type]}</dd></div>
                   <div><dt>제출 여부</dt><dd>{SUBMISSION_LABEL[caseFile.technical.submission_status]}</dd></div>
                 </dl>
-                {caseFile.has_attachment ? <p className="agent-attachment-note">첨부 이미지가 있습니다. 현재 상담원용 이미지 조회 URL은 제공되지 않습니다.</p> : null}
+                {caseFile.attachment_url ? (
+                  <figure className="agent-attachment">
+                    <img src={caseFile.attachment_url} alt="고객이 첨부한 오류 화면" referrerPolicy="no-referrer" onError={() => void refreshAttachment()} />
+                    <figcaption>보안 URL이 만료되면 자동으로 다시 조회합니다.</figcaption>
+                  </figure>
+                ) : caseFile.has_attachment ? <p className="agent-attachment-note">첨부 이미지가 있으나 현재 조회할 수 없습니다.</p> : null}
               </article>
 
               <aside className="dashboard-card incident-card">
@@ -287,7 +335,25 @@ export default function AgentDesk() {
                       <li key={signal.signal_id}>
                         <strong>{signal.reported_symptom_type}</strong>
                         <span>{signal.status === "UNDER_REVIEW" ? "운영 검토 중" : signal.status === "SIGNAL_DETECTED" ? "장애 의심 신호" : "상태 확인 필요"} · 제보 세션 {signal.reporting_unique_sessions}개</span>
+                        <span>AI 관련성: {signal.relevance_status ? RELEVANCE_LABEL[signal.relevance_status] : "평가 결과 없음"}</span>
                         <small>최근 제보 {formatTime(signal.last_report_at)} · 공식 장애 아님</small>
+                        {signal.confirmation_questions?.length ? (
+                          <ul className="signal-questions">
+                            {signal.confirmation_questions.map((question) => <li key={question}>{question}</li>)}
+                          </ul>
+                        ) : null}
+                        {signal.locked_related !== null && signal.locked_related !== undefined ? (
+                          <p className="signal-lock-result">{signalResults[signal.signal_id]?.lock_decision === "IDEMPOTENT_REPLAY" ? "기존 확정 결과 유지" : "관련성 확정 완료"} · {signal.locked_related ? "관련 있음" : "관련 없음"}</p>
+                        ) : (
+                          <>
+                            <div className="signal-verification-actions" aria-label="관련성 확인">
+                              <button type="button" disabled={savingSignalId === signal.signal_id} onClick={() => void verifySignal(signal.signal_id, "RELATED")}>관련 있음</button>
+                              <button type="button" disabled={savingSignalId === signal.signal_id} onClick={() => void verifySignal(signal.signal_id, "NOT_RELATED")}>관련 없음</button>
+                              <button type="button" disabled={savingSignalId === signal.signal_id} onClick={() => void verifySignal(signal.signal_id, "UNCONFIRMED")}>확인 보류</button>
+                            </div>
+                            {signalResults[signal.signal_id]?.lock_decision === "BLOCK" ? <p className="signal-block-result">확정되지 않았습니다. 추가 확인이 필요합니다.</p> : null}
+                          </>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -318,7 +384,7 @@ export default function AgentDesk() {
                   <ul>{result.fields.map((field) => <li key={field.field}><span className={`issue-${field.status.toLowerCase().replace("_", "-")}`}>{VERIFICATION_LABEL[field.status]}</span><strong>{FIELD_LABEL[field.field]}</strong><small>{formatValue(field.field, field.customer_value)} → {formatValue(field.field, field.agent_value)}</small></li>)}</ul>
                 </div>
               ) : null}
-              {caseFile.verification_status ? <button className="primary-button consultation-complete-button" type="button" onClick={completeConsultation}>상담 완료</button> : null}
+              {caseFile.verification_status ? <p className="verification-complete">재확인이 완료되었습니다.</p> : null}
               <p className="mismatch-note">{caseFile.safety_notice}</p>
             </section>
           </>
