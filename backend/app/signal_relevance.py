@@ -69,6 +69,7 @@ def _result(
     reason: SignalRelevanceReason,
     *,
     similarity: float | None,
+    threshold: float,
     confirmation_questions: tuple[str, ...] = (),
 ) -> SignalRelevanceResult:
     return SignalRelevanceResult(
@@ -77,7 +78,7 @@ def _result(
         signal_id=signal.signal_id,
         status=status,
         similarity=similarity,
-        threshold=SIMILARITY_THRESHOLD,
+        threshold=threshold,
         reasons=(reason,),
         confirmation_questions=confirmation_questions,
     )
@@ -86,8 +87,16 @@ def _result(
 def evaluate_signal_relevance(
     customer: CustomerSignalCandidate,
     signal: IncidentSignal,
+    *,
+    threshold: float = SIMILARITY_THRESHOLD,
 ) -> SignalRelevanceResult:
-    """Evaluate relevance without using customer order details or other PII."""
+    """Evaluate relevance without using customer order details or other PII.
+
+    threshold는 기본값으로 AI가 평가한 SIMILARITY_THRESHOLD(clustering.py)를 쓰지만,
+    호출자가 활성 ClusteringPolicy.similarity_threshold(DB)를 명시적으로 넘기면
+    그 값을 우선 사용한다. 전역 상수와 운영 DB 정책이 서로 다른 값을 갖는 문제를
+    막기 위한 파라미터화다.
+    """
     _require_aware_datetime(signal.started_at, "signal.started_at")
     if signal.ended_at is not None:
         _require_aware_datetime(signal.ended_at, "signal.ended_at")
@@ -109,6 +118,7 @@ def evaluate_signal_relevance(
             SignalRelevanceStatus.NOT_RELATED,
             SignalRelevanceReason.INELIGIBLE_ISSUE_TYPE,
             similarity=None,
+            threshold=threshold,
         )
 
     if customer.issue_type is not signal.issue_type:
@@ -118,19 +128,21 @@ def evaluate_signal_relevance(
             SignalRelevanceStatus.NOT_RELATED,
             SignalRelevanceReason.ISSUE_TYPE_MISMATCH,
             similarity=None,
+            threshold=threshold,
         )
 
     similarity = cosine_similarity(
         customer.symptom_embedding,
         signal.representative_embedding,
     )
-    if similarity < SIMILARITY_THRESHOLD:
+    if similarity < threshold:
         return _result(
             customer,
             signal,
             SignalRelevanceStatus.NOT_RELATED,
             SignalRelevanceReason.SIMILARITY_BELOW_THRESHOLD,
             similarity=similarity,
+            threshold=threshold,
         )
 
     if customer.reported_occurred_at is None:
@@ -140,6 +152,7 @@ def evaluate_signal_relevance(
             SignalRelevanceStatus.NEEDS_CONFIRMATION,
             SignalRelevanceReason.OCCURRED_AT_MISSING,
             similarity=similarity,
+            threshold=threshold,
             confirmation_questions=(OCCURRED_AT_CONFIRMATION_QUESTION,),
         )
 
@@ -153,6 +166,7 @@ def evaluate_signal_relevance(
             SignalRelevanceStatus.NOT_RELATED,
             SignalRelevanceReason.OUTSIDE_SIGNAL_WINDOW,
             similarity=similarity,
+            threshold=threshold,
         )
 
     return _result(
@@ -161,4 +175,5 @@ def evaluate_signal_relevance(
         SignalRelevanceStatus.RELATED,
         SignalRelevanceReason.ALL_GATES_PASSED,
         similarity=similarity,
+        threshold=threshold,
     )
