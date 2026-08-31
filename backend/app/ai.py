@@ -11,6 +11,7 @@ from app.schemas import (
     ExtractionResult,
     TechnicalCandidate,
 )
+from app.security import assert_no_unmasked_pii
 
 
 class DualExtractor(Protocol):
@@ -113,3 +114,12 @@ def validate_evidence_quotes(result: ExtractionResult, masked_text: str) -> None
             quote = getattr(section, field_name).evidence_quote
             if quote is not None and quote not in masked_text:
                 raise ValueError("AI evidence must be a substring of masked_text")
+
+
+def validate_no_restored_pii(result: ExtractionResult) -> None:
+    """AI-11: 마스킹 placeholder를 실제 값으로 추론·복원하지 않았는지 확인한다."""
+    for section in (result.technical, result.consultation):
+        for field_name in type(section).model_fields:
+            value = getattr(section, field_name).value
+            if isinstance(value, str):
+                assert_no_unmasked_pii(value)
