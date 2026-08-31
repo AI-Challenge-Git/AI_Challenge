@@ -42,6 +42,16 @@ class ClusteringPolicyStatus(StrEnum):
     RETIRED = "RETIRED"
 
 
+class ClusteringLinkageMethod(StrEnum):
+    SINGLE_MAX = "SINGLE_MAX"
+    AVERAGE = "AVERAGE"
+
+
+class ClusterRepresentativeMethod(StrEnum):
+    NONE = "NONE"
+    MEDOID = "MEDOID"
+
+
 class SignalStatus(StrEnum):
     CANDIDATE = "CANDIDATE"
     SIGNAL_DETECTED = "SIGNAL_DETECTED"

@@ -16,9 +16,10 @@ API process가 아니라 단일 pre-deploy command인 `alembic upgrade head`에�
 | Signal worker | `python -m scripts.process_signal_jobs --max-jobs 100` | `*/5 * * * *` |
 | Retention worker | `python -m scripts.purge_data --execute --batch-size 100` | `17 * * * *` |
 
-`/backend/railway.json`은 API service에만 연결한다. Signal·Retention worker는 Root Directory만
-`/backend`로 설정하고 Config File은 연결하지 않아 API용 pre-deploy migration을 반복 실행하지 않는다.
-두 worker의 Start command와 Cron Schedule은 각 service 설정에서 위 표대로 지정한다.
+`/backend/railway.json`은 API service에만 연결한다. Signal worker는
+`/backend/railway.signal-worker.json`, Retention worker는
+`/backend/railway.retention-worker.json`을 Config File로 지정한다. worker 설정에는 API용
+pre-deploy migration이 없으며 bounded command와 UTC cron schedule만 포함한다.
 
 Railway cron은 UTC 기준이며 5분보다 짧게 실행할 수 없다. 각 CLI는 한 bounded batch를 처리하고 DB
 connection을 닫은 뒤 종료한다. 이전 실행이 끝나지 않았으면 다음 실행은 Railway가 건너뛴다.
@@ -38,6 +39,9 @@ API와 worker에는 `DATABASE_URL`, 서로 다른 네 HMAC key와 `OPENAI_API_KE
 `KRX_LISTED_INFO_API_KEY` Secret을 추가한다. 값을 Git·Railway start command·로그에 넣지 않는다.
 운영상황판 조회 제한은 기본 `SIGNAL_DASHBOARD_LIMIT=60`,
 `SIGNAL_DASHBOARD_WINDOW_SECONDS=60`이며 트래픽 측정 후 환경변수로 조정한다.
+`APP_ENV=production`, `AI_ADAPTER=openai`를 명시한다. 네 HMAC key는 각각 32자 이상이어야 하며
+서로 같은 값을 재사용하지 않는다. production은 확정된 `SIGNAL_EMBEDDING_MODEL_REVISION`, exact HTTPS
+`CORS_ORIGINS`, S3-compatible private storage 설정이 하나라도 빠지면 시작을 거부한다.
 
 Railway Bucket variable reference로 `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `REGION`,
 `ENDPOINT`를 주입하고 다음 값을 사용한다.
@@ -49,6 +53,22 @@ S3_ADDRESSING_STYLE=virtual
 ```
 
 기존 bucket의 Credentials 탭이 path-style을 요구할 때만 `S3_ADDRESSING_STYLE=path`로 바꾼다.
+
+변수 연결 후 실제 private object write/read, signed GET, delete를 모두 검증한다. 이 명령은 임시
+object를 항상 삭제하며 signed URL이나 credential을 출력하지 않는다.
+
+```powershell
+python -m scripts.verify_object_storage
+```
+
+상담원 계정은 migration에서 자동 생성하지 않는다. 배포 환경의 일회성 secret으로 provision하고
+명령 종료 후 secret을 제거하거나 회전한다.
+
+```powershell
+$env:AGENT_INITIAL_PASSWORD='<strong-random-password>'
+python -m scripts.seed_agent --employee-id CS1024 --agent-label 'CS1024 상담원' --role AGENT
+Remove-Item Env:AGENT_INITIAL_PASSWORD
+```
 
 ## Vercel and CORS
 

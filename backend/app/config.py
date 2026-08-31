@@ -64,6 +64,13 @@ class Settings(BaseSettings):
             self.openai_api_key is None or not self.openai_api_key.get_secret_value().strip()
         ):
             raise ValueError("OPENAI_API_KEY must be configured for the openai AI adapter")
+        if self.app_env == "production" and self.ai_adapter != "openai":
+            raise ValueError("production requires the openai AI adapter")
+        if self.app_env == "production" and (
+            self.signal_embedding_model_revision is None
+            or not self.signal_embedding_model_revision.strip()
+        ):
+            raise ValueError("production requires SIGNAL_EMBEDDING_MODEL_REVISION")
         hmac_keys = (
             self.session_hmac_key.get_secret_value(),
             self.reference_hmac_key.get_secret_value(),
@@ -72,6 +79,7 @@ class Settings(BaseSettings):
         )
         if self.app_env == "production" and (
             any(key.startswith("development-") for key in hmac_keys)
+            or any(len(key) < 32 for key in hmac_keys)
             or len(set(hmac_keys)) != len(hmac_keys)
         ):
             raise ValueError("distinct production HMAC keys must be configured")

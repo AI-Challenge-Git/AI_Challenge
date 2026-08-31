@@ -3,8 +3,10 @@ AI-05, AI-11, FE-07 규칙이 실제로 코드에서 강제되는지 확인하�
 backend 폴더 안에서 실행: python test_manual.py
 """
 
+from typing import Any
 
-def test_1_issuetype_import():
+
+def test_1_issuetype_import() -> None:
     from app.codes import IssueType
 
     values = list(IssueType)
@@ -12,7 +14,7 @@ def test_1_issuetype_import():
     print("PASS [1] IssueType import 및 값 개수 확인:", values)
 
 
-async def test_2_fake_extractor():
+async def test_2_fake_extractor() -> None:
     from app.ai import FakeDualExtractor
 
     e = FakeDualExtractor()
@@ -21,7 +23,7 @@ async def test_2_fake_extractor():
     print(result.model_dump_json(indent=2))
 
 
-def test_3_out_of_scope_rejects_value():
+def test_3_out_of_scope_rejects_value() -> None:
     from app.codes import FieldStatus
     from app.schemas import CandidateField
 
@@ -36,7 +38,7 @@ def test_3_out_of_scope_rejects_value():
         print("PASS [3] AI-05:", e)
 
 
-def test_4_placeholder_cannot_resolve_to_value():
+def test_4_placeholder_cannot_resolve_to_value() -> None:
     from app.ai import validate_no_restored_pii
     from app.codes import FieldStatus
     from app.schemas import (
@@ -46,7 +48,7 @@ def test_4_placeholder_cannot_resolve_to_value():
         TechnicalCandidate,
     )
 
-    def unk():
+    def unk() -> CandidateField[Any]:
         return CandidateField(value=None, status=FieldStatus.UNKNOWN, evidence_quote=None)
 
     bad = ExtractionResult(
@@ -83,11 +85,11 @@ def test_4_placeholder_cannot_resolve_to_value():
         print("PASS [4] AI-11:", e)
 
 
-def test_5_dateless_time_cannot_be_confirmed():
+def test_5_dateless_time_cannot_be_confirmed() -> None:
     from app.codes import FieldStatus
     from app.schemas import CandidateField, TechnicalCandidate
 
-    def unk():
+    def unk() -> CandidateField[Any]:
         return CandidateField(value=None, status=FieldStatus.UNKNOWN, evidence_quote=None)
 
     try:

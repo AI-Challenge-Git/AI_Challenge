@@ -108,6 +108,9 @@ def test_openai_adapter_requires_a_masked_api_key() -> None:
 def _production_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "app_env": "production",
+        "ai_adapter": "openai",
+        "openai_api_key": SecretStr("synthetic-openai-key"),
+        "signal_embedding_model_revision": "synthetic-revision",
         "cors_origins": ["https://desk.example.com"],
         "attachment_storage_backend": "s3",
         "bucket": "private-bucket",
@@ -133,6 +136,15 @@ def test_production_requires_private_storage_and_exact_https_cors() -> None:
         _production_settings(secret_access_key=None)
     with pytest.raises(ValidationError, match="exact HTTPS origins"):
         _production_settings(cors_origins=["https://*.example.com"])
+
+
+def test_production_rejects_fake_ai_missing_revision_and_short_hmac_keys() -> None:
+    with pytest.raises(ValidationError, match="openai AI adapter"):
+        _production_settings(ai_adapter="fake")
+    with pytest.raises(ValidationError, match="SIGNAL_EMBEDDING_MODEL_REVISION"):
+        _production_settings(signal_embedding_model_revision=None)
+    with pytest.raises(ValidationError, match="distinct production HMAC"):
+        _production_settings(session_hmac_key=SecretStr("too-short"))
 
 
 def test_extractor_dependency_uses_fake_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -30,7 +31,9 @@ from app.codes import (
     AgentRole,
     AnalysisStatus,
     AuditOutcome,
+    ClusteringLinkageMethod,
     ClusteringPolicyStatus,
+    ClusterRepresentativeMethod,
     IdempotencyStatus,
     ObjectDeletionStatus,
     RateLimitScope,
@@ -55,6 +58,19 @@ class Vector(UserDefinedType[list[float]]):
             if value is None:
                 return None
             return "[" + ",".join(format(item, ".17g") for item in value) + "]"
+
+        return process
+
+    def result_processor(self, _: Any, __: Any) -> Any:
+        def process(value: object) -> list[float] | None:
+            if value is None:
+                return None
+            if isinstance(value, str):
+                parsed = json.loads(value)
+                return [float(item) for item in parsed]
+            if isinstance(value, (list, tuple)):
+                return [float(item) for item in value]
+            raise TypeError("unexpected vector result type")
 
         return process
 
@@ -606,6 +622,14 @@ class ClusteringPolicy(Base):
         CheckConstraint("normalization IN ('L2', 'NONE')", name="normalization_value"),
         CheckConstraint("distance_metric = 'COSINE'", name="distance_metric_cosine"),
         CheckConstraint(
+            "linkage_method IN ('SINGLE_MAX', 'AVERAGE')",
+            name="linkage_method_value",
+        ),
+        CheckConstraint(
+            "representative_method IN ('NONE', 'MEDOID')",
+            name="representative_method_value",
+        ),
+        CheckConstraint(
             "structured_rules_version = 'hard-gate.v1'",
             name="structured_rules_version_value",
         ),
@@ -633,6 +657,12 @@ class ClusteringPolicy(Base):
     normalization: Mapped[str] = mapped_column(String(16), nullable=False)
     input_format: Mapped[str] = mapped_column(String(64), nullable=False)
     distance_metric: Mapped[str] = mapped_column(String(16), nullable=False)
+    linkage_method: Mapped[str] = mapped_column(
+        String(16), default=ClusteringLinkageMethod.AVERAGE.value, nullable=False
+    )
+    representative_method: Mapped[str] = mapped_column(
+        String(16), default=ClusterRepresentativeMethod.MEDOID.value, nullable=False
+    )
     taxonomy_version: Mapped[str] = mapped_column(String(64), nullable=False)
     baseline_policy_version: Mapped[str | None] = mapped_column(String(64))
     approved_by: Mapped[UUID | None] = mapped_column(
@@ -868,6 +898,92 @@ class SignalMember(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class SignalRelevanceLock(Base):
+    __tablename__ = "signal_relevance_locks"
+    __table_args__ = (
+        UniqueConstraint("report_id", "signal_id"),
+        Index("ix_signal_relevance_locks_signal_id", "signal_id"),
+        Index("ix_signal_relevance_locks_locked_by", "locked_by"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    verification_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("agent_signal_verifications.id", ondelete="RESTRICT"),
+        unique=True,
+        nullable=False,
+    )
+    report_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("reports.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    signal_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("signal_clusters.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    final_related: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    relevance_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    verification_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    lock_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    locked_by: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("agent_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    locked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AgentSignalVerification(Base):
+    __tablename__ = "agent_signal_verifications"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "client_request_id"),
+        CheckConstraint(
+            "relevance_status IN ('RELATED', 'NEEDS_CONFIRMATION', 'NOT_RELATED')",
+            name="relevance_status_value",
+        ),
+        CheckConstraint(
+            "agent_decision IN ('RELATED', 'NOT_RELATED', 'UNCONFIRMED')",
+            name="agent_decision_value",
+        ),
+        CheckConstraint(
+            "verification_status IN ('MATCHED', 'NEEDS_CONFIRMATION', 'IMPORTANT')",
+            name="verification_status_value",
+        ),
+        CheckConstraint(
+            "lock_decision IN ('ALLOW', 'BLOCK', 'IDEMPOTENT_REPLAY', 'CONFLICT')",
+            name="lock_decision_value",
+        ),
+        Index("ix_agent_signal_verifications_report_signal", "report_id", "signal_id"),
+        Index("ix_agent_signal_verifications_agent_id", "agent_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    report_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("reports.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    signal_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("signal_clusters.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    agent_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("agent_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    client_request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    relevance_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    agent_decision: Mapped[str] = mapped_column(String(24), nullable=False)
+    verification_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    final_related: Mapped[bool | None] = mapped_column(Boolean)
+    lock_decision: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class SignalAuditEvent(Base):

@@ -16,6 +16,8 @@ from app.db import get_session
 from app.schemas import (
     AgentLoginRequest,
     AgentLoginResponse,
+    AgentSignalVerificationRequest,
+    AgentSignalVerificationResponse,
     AgentVerificationRequest,
     AgentVerificationResponse,
     ConsultationCardDetail,
@@ -29,6 +31,7 @@ from app.services.agents import (
     list_consultation_cards,
     login_agent,
     lookup_consultation_card,
+    save_agent_signal_verification,
     save_agent_verification,
 )
 
@@ -149,6 +152,35 @@ async def verify_card(
 ) -> AgentVerificationResponse:
     response.headers["Cache-Control"] = "no-store"
     return await save_agent_verification(
+        session,
+        principal,
+        request_body,
+        settings,
+        now=clock(),
+    )
+
+
+@router.post(
+    "/consultation-cards/signal-verifications",
+    tags=["agent-cards"],
+    response_model=AgentSignalVerificationResponse,
+    responses={
+        **AUTH_ERRORS,
+        404: {"model": ProblemDetails, "description": "Card or signal unavailable"},
+        409: {"model": ProblemDetails, "description": "Locked result conflict"},
+        503: {"model": ProblemDetails, "description": "Signal relevance unavailable"},
+    },
+)
+async def verify_signal_relevance(
+    request_body: AgentSignalVerificationRequest,
+    response: Response,
+    principal: Annotated[AgentPrincipal, Depends(agent_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    clock: Annotated[Callable[[], datetime], Depends(get_clock)],
+) -> AgentSignalVerificationResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return await save_agent_signal_verification(
         session,
         principal,
         request_body,

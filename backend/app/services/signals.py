@@ -11,10 +11,13 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlalchemy import Float, cast, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.codes import (
     BaselineStatus,
+    ClusteringLinkageMethod,
     ClusteringPolicyStatus,
+    ClusterRepresentativeMethod,
     IssueType,
     RateLimitScope,
     SignalClosureReason,
@@ -32,6 +35,7 @@ from app.models import (
     SignalCluster,
     SignalMember,
     SignalProcessingJob,
+    SignalRelevanceLock,
     TechnicalEmbedding,
     TechnicalSymptom,
     Vector1024,
@@ -60,6 +64,12 @@ from app.services.idempotency import (
 )
 from app.services.lifecycle import RETENTION_PERIOD
 from app.services.rate_limits import consume_rate_limit, rate_limit_error
+from app.signal_relevance import (
+    CustomerSignalCandidate,
+    IncidentSignal,
+    SignalRelevanceResult,
+    evaluate_signal_relevance,
+)
 
 if TYPE_CHECKING:
     from app.services.agents import AgentPrincipal
@@ -69,6 +79,10 @@ SAFE_PROCESSING_ERRORS = {
     "INVALID_EMBEDDING",
     "POLICY_MISMATCH",
     "EMBEDDING_INPUT_UNAVAILABLE",
+}
+AUTO_CLUSTER_EXCLUDED_ISSUE_TYPES = {
+    IssueType.UNKNOWN.value,
+    IssueType.UNRELATED_OR_AMBIGUOUS.value,
 }
 ACTIVE_SIGNAL_STATUSES = (
     SignalStatus.SIGNAL_DETECTED.value,
@@ -153,6 +167,10 @@ def enqueue_signal_processing(
         attempt_count=0,
         next_attempt_at=now,
     )
+
+
+def is_signal_processing_eligible(*, issue_type: str, symptom: str | None) -> bool:
+    return symptom is not None and issue_type not in AUTO_CLUSTER_EXCLUDED_ISSUE_TYPES
 
 
 async def _mark_job_failed(
@@ -248,6 +266,38 @@ async def _recalculate_cluster(
         unique_sessions >= policy.min_unique_sessions
     ):
         cluster.status = SignalStatus.SIGNAL_DETECTED.value
+
+    if (
+        raw_count > 0
+        and cluster.status != SignalStatus.CLOSED.value
+        and policy.representative_method == ClusterRepresentativeMethod.MEDOID.value
+    ):
+        left_member = aliased(SignalMember)
+        right_member = aliased(SignalMember)
+        left_embedding = aliased(TechnicalEmbedding)
+        right_embedding = aliased(TechnicalEmbedding)
+        left_vector = (
+            cast(left_embedding.embedding, Vector1024())
+            if policy.embedding_dimension == 1024
+            else left_embedding.embedding
+        )
+        right_vector = (
+            cast(right_embedding.embedding, Vector1024())
+            if policy.embedding_dimension == 1024
+            else right_embedding.embedding
+        )
+        distance = left_vector.op("<=>", return_type=Float())(right_vector)
+        average_similarity = func.avg(1.0 - distance)
+        cluster.representative_symptom_id = await session.scalar(
+            select(left_member.technical_symptom_id)
+            .join(left_embedding, left_embedding.id == left_member.embedding_id)
+            .join(right_member, right_member.signal_id == left_member.signal_id)
+            .join(right_embedding, right_embedding.id == right_member.embedding_id)
+            .where(left_member.signal_id == cluster.id)
+            .group_by(left_member.technical_symptom_id)
+            .order_by(average_similarity.desc(), left_member.technical_symptom_id)
+            .limit(1)
+        )
 
     if cluster.status != before:
         session.add(
@@ -465,16 +515,38 @@ async def process_next_signal_job(
             )
         if policy.embedding_dimension == 1024:
             await session.execute(text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
-        candidate_row = (
-            await session.execute(
-                select(SignalCluster, (1.0 - distance).label("similarity"))
-                .join(SignalMember, SignalMember.signal_id == SignalCluster.id)
+        similarity_expression = (1.0 - distance).label("similarity")
+        if policy.linkage_method == ClusteringLinkageMethod.AVERAGE.value:
+            cluster_scores = (
+                select(
+                    SignalMember.signal_id.label("signal_id"),
+                    func.avg(similarity_expression).label("similarity"),
+                )
+                .join(SignalCluster, SignalCluster.id == SignalMember.signal_id)
                 .join(TechnicalEmbedding, TechnicalEmbedding.id == SignalMember.embedding_id)
                 .where(*candidate_filters)
-                .order_by(distance, SignalCluster.id, SignalMember.id)
-                .limit(1)
+                .group_by(SignalMember.signal_id)
+                .subquery()
             )
-        ).first()
+            candidate_row = (
+                await session.execute(
+                    select(SignalCluster, cluster_scores.c.similarity)
+                    .join(cluster_scores, cluster_scores.c.signal_id == SignalCluster.id)
+                    .order_by(cluster_scores.c.similarity.desc(), SignalCluster.id)
+                    .limit(1)
+                )
+            ).first()
+        else:
+            candidate_row = (
+                await session.execute(
+                    select(SignalCluster, similarity_expression)
+                    .join(SignalMember, SignalMember.signal_id == SignalCluster.id)
+                    .join(TechnicalEmbedding, TechnicalEmbedding.id == SignalMember.embedding_id)
+                    .where(*candidate_filters)
+                    .order_by(distance, SignalCluster.id, SignalMember.id)
+                    .limit(1)
+                )
+            ).first()
         selected = (
             (candidate_row[0], float(candidate_row[1]))
             if candidate_row is not None
@@ -639,6 +711,10 @@ async def list_dashboard_signals(
                 min_unique_sessions=active_policy.min_unique_sessions,
                 review_priority_threshold=active_policy.review_priority_threshold,
                 similarity_threshold=active_policy.similarity_threshold,
+                linkage_method=ClusteringLinkageMethod(active_policy.linkage_method),
+                representative_method=ClusterRepresentativeMethod(
+                    active_policy.representative_method
+                ),
                 structured_rules_version=active_policy.structured_rules_version,
                 taxonomy_version=active_policy.taxonomy_version,
                 baseline_policy_version=active_policy.baseline_policy_version,
@@ -696,17 +772,94 @@ async def related_signals_for_report(
             )
         ).all()
     )
-    return [
-        RelatedSignal(
-            signal_id=cluster.id,
-            status=_public_signal_status(cluster.status),
-            reported_symptom_type=IssueType(cluster.reported_symptom_type),
-            reporting_unique_sessions=cluster.reporting_unique_sessions,
-            last_report_at=cluster.last_report_at,
-            official_incident=False,
+    related = []
+    for cluster in clusters:
+        relevance_and_lock = await signal_relevance_for_report(session, report_id, cluster.id)
+        relevance = relevance_and_lock[0] if relevance_and_lock is not None else None
+        locked = relevance_and_lock[1] if relevance_and_lock is not None else None
+        related.append(
+            RelatedSignal(
+                signal_id=cluster.id,
+                status=_public_signal_status(cluster.status),
+                reported_symptom_type=IssueType(cluster.reported_symptom_type),
+                reporting_unique_sessions=cluster.reporting_unique_sessions,
+                last_report_at=cluster.last_report_at,
+                official_incident=False,
+                relevance_status=relevance.status if relevance is not None else None,
+                confirmation_questions=(
+                    list(relevance.confirmation_questions) if relevance is not None else []
+                ),
+                locked_related=locked.final_related if locked is not None else None,
+            )
         )
-        for cluster in clusters
-    ]
+    return related
+
+
+async def signal_relevance_for_report(
+    session: AsyncSession,
+    report_id: UUID,
+    signal_id: UUID,
+) -> tuple[SignalRelevanceResult, SignalRelevanceLock | None] | None:
+    row = (
+        await session.execute(
+            select(
+                SignalCluster,
+                ClusteringPolicy,
+                TechnicalSymptom,
+                TechnicalEmbedding,
+            )
+            .join(ClusteringPolicy, ClusteringPolicy.id == SignalCluster.policy_id)
+            .join(SignalMember, SignalMember.signal_id == SignalCluster.id)
+            .join(TechnicalSymptom, TechnicalSymptom.id == SignalMember.technical_symptom_id)
+            .join(TechnicalEmbedding, TechnicalEmbedding.id == SignalMember.embedding_id)
+            .where(
+                SignalCluster.id == signal_id,
+                SignalMember.report_id == report_id,
+                SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES),
+            )
+        )
+    ).first()
+    if row is None:
+        return None
+    cluster, policy, symptom, customer_embedding = row
+    if cluster.representative_symptom_id is None:
+        return None
+    representative_embedding = await session.scalar(
+        select(TechnicalEmbedding).where(
+            TechnicalEmbedding.technical_symptom_id == cluster.representative_symptom_id,
+            TechnicalEmbedding.model_id == policy.model_id,
+            TechnicalEmbedding.model_revision == policy.model_revision,
+            TechnicalEmbedding.embedding_dimension == policy.embedding_dimension,
+            TechnicalEmbedding.normalization == policy.normalization,
+            TechnicalEmbedding.input_format == policy.input_format,
+            TechnicalEmbedding.distance_metric == policy.distance_metric,
+        )
+    )
+    if representative_embedding is None:
+        return None
+    relevance = evaluate_signal_relevance(
+        CustomerSignalCandidate(
+            report_id=str(report_id),
+            issue_type=IssueType(symptom.issue_type),
+            symptom_embedding=customer_embedding.embedding,
+            reported_occurred_at=symptom.reported_occurred_at,
+        ),
+        IncidentSignal(
+            signal_id=str(signal_id),
+            issue_type=IssueType(cluster.reported_symptom_type),
+            representative_embedding=representative_embedding.embedding,
+            started_at=cluster.first_report_at,
+            ended_at=cluster.last_report_at + timedelta(seconds=policy.window_seconds),
+        ),
+        threshold=policy.similarity_threshold,
+    )
+    locked = await session.scalar(
+        select(SignalRelevanceLock).where(
+            SignalRelevanceLock.report_id == report_id,
+            SignalRelevanceLock.signal_id == signal_id,
+        )
+    )
+    return relevance, locked
 
 
 def _mutation_response(cluster: SignalCluster, now: datetime) -> OperatorSignalMutationResponse:

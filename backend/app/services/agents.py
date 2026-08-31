@@ -34,11 +34,17 @@ from app.models import (
     IdempotencyRecord,
     RateLimitBucket,
     Report,
+    SignalRelevanceLock,
     TechnicalSymptom,
+)
+from app.models import (
+    AgentSignalVerification as AgentSignalVerificationRecord,
 )
 from app.schemas import (
     AgentLoginRequest,
     AgentLoginResponse,
+    AgentSignalVerificationRequest,
+    AgentSignalVerificationResponse,
     AgentTechnicalDetail,
     AgentVerificationRequest,
     AgentVerificationResponse,
@@ -68,8 +74,15 @@ from app.services.idempotency import (
 )
 from app.services.lifecycle import card_is_accessible
 from app.services.rate_limits import RateLimitResult, consume_rate_limit, rate_limit_error
-from app.services.signals import related_signals_for_report
+from app.services.signals import related_signals_for_report, signal_relevance_for_report
 from app.services.symbols import validate_symbol
+from app.signal_lock import (
+    LockedSignalResult,
+    SignalLockDecision,
+    evaluate_signal_lock,
+)
+from app.signal_relevance import SignalRelevanceStatus
+from app.signal_verification import AgentSignalDecision, verify_signal_relevance
 
 Sleeper = Callable[[float], Awaitable[None]]
 CONSULTATION_SAFETY_NOTICE = (
@@ -77,6 +90,7 @@ CONSULTATION_SAFETY_NOTICE = (
     "재주문 전 공식 채널에서 주문 상태를 확인해야 합니다."
 )
 _VERIFICATION_OPERATION = "VERIFY_CONSULTATION_CARD"
+_SIGNAL_VERIFICATION_OPERATION = "VERIFY_SIGNAL_RELEVANCE"
 _STATUS_PRIORITY = {
     VerificationStatus.MATCHED: 0,
     VerificationStatus.NEEDS_CONFIRMATION: 1,
@@ -400,7 +414,9 @@ async def list_consultation_cards(
 
 
 def _selector_conditions(
-    request: ConsultationCardLookupRequest | AgentVerificationRequest,
+    request: (
+        ConsultationCardLookupRequest | AgentVerificationRequest | AgentSignalVerificationRequest
+    ),
     settings: Settings,
 ) -> tuple[ColumnElement[bool], ...]:
     if request.card_id is not None:
@@ -416,7 +432,9 @@ def _selector_conditions(
 
 async def _load_card(
     session: AsyncSession,
-    request: ConsultationCardLookupRequest | AgentVerificationRequest,
+    request: (
+        ConsultationCardLookupRequest | AgentVerificationRequest | AgentSignalVerificationRequest
+    ),
     settings: Settings,
     *,
     now: datetime,
@@ -789,4 +807,184 @@ async def save_agent_verification(
         raise error
     if response is None:
         raise ServiceError(503, "VERIFICATION_UNAVAILABLE", "저장 결과를 사용할 수 없습니다.")
+    return response
+
+
+def _signal_verification_response(
+    record: AgentSignalVerificationRecord,
+) -> AgentSignalVerificationResponse:
+    return AgentSignalVerificationResponse(
+        signal_id=record.signal_id,
+        relevance_status=SignalRelevanceStatus(record.relevance_status),
+        agent_decision=AgentSignalDecision(record.agent_decision),
+        verification_status=VerificationStatus(record.verification_status),
+        final_related=record.final_related,
+        lock_decision=SignalLockDecision(record.lock_decision),
+        saved_at=record.created_at,
+    )
+
+
+async def save_agent_signal_verification(
+    session: AsyncSession,
+    principal: AgentPrincipal,
+    request: AgentSignalVerificationRequest,
+    settings: Settings,
+    *,
+    now: datetime,
+) -> AgentSignalVerificationResponse:
+    principal_digest = _agent_principal_digest(principal.agent_id)
+    request_digest = payload_sha256(request)
+    response: AgentSignalVerificationResponse | None = None
+    error: ServiceError | None = None
+    async with session.begin():
+        await lock_idempotency_key(
+            session,
+            principal_digest,
+            _SIGNAL_VERIFICATION_OPERATION,
+            request.client_request_id,
+        )
+        replay = await session.scalar(
+            select(IdempotencyRecord).where(
+                IdempotencyRecord.principal_digest == principal_digest,
+                IdempotencyRecord.operation == _SIGNAL_VERIFICATION_OPERATION,
+                IdempotencyRecord.client_request_id == request.client_request_id,
+            )
+        )
+        if replay is not None and not hmac.compare_digest(replay.payload_sha256, request_digest):
+            session.add(
+                _audit(
+                    actor_id=principal.agent_id,
+                    action="AGENT_SIGNAL_VERIFICATION_CONFLICT",
+                    outcome=AuditOutcome.CONFLICT,
+                    resource_fingerprint=_agent_resource(principal.agent_id),
+                    now=now,
+                )
+            )
+            error = ServiceError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 ID의 내용이 다릅니다.")
+        elif replay is not None:
+            record = await session.scalar(
+                select(AgentSignalVerificationRecord).where(
+                    AgentSignalVerificationRecord.agent_id == principal.agent_id,
+                    AgentSignalVerificationRecord.client_request_id == request.client_request_id,
+                )
+            )
+            if record is None:
+                raise ServiceError(
+                    503, "IDEMPOTENCY_UNAVAILABLE", "저장 결과를 사용할 수 없습니다."
+                )
+            response = _signal_verification_response(record)
+            if response.lock_decision is SignalLockDecision.CONFLICT:
+                error = ServiceError(
+                    409,
+                    "SIGNAL_RELEVANCE_CONFLICT",
+                    "기존에 확정된 관련성 결과와 다릅니다.",
+                )
+        else:
+            card = await _load_card(session, request, settings, now=now, for_update=True)
+            if card is None or not card_is_accessible(card.expires_at, now=now):
+                error = ServiceError(404, "CARD_NOT_FOUND", "상담카드를 찾을 수 없습니다.")
+            else:
+                relevance_and_lock = await signal_relevance_for_report(
+                    session,
+                    card.report_id,
+                    request.signal_id,
+                )
+                if relevance_and_lock is None:
+                    error = ServiceError(
+                        503,
+                        "SIGNAL_RELEVANCE_UNAVAILABLE",
+                        "관련성 확인 결과를 사용할 수 없습니다.",
+                    )
+                else:
+                    relevance, existing_record = relevance_and_lock
+                    verification = verify_signal_relevance(relevance, request.decision)
+                    existing = (
+                        LockedSignalResult(
+                            report_id=str(existing_record.report_id),
+                            signal_id=str(existing_record.signal_id),
+                            final_related=existing_record.final_related,
+                            verification_policy_version=(
+                                existing_record.verification_policy_version
+                            ),
+                        )
+                        if existing_record is not None
+                        else None
+                    )
+                    lock = evaluate_signal_lock(verification, existing)
+                    record = AgentSignalVerificationRecord(
+                        report_id=card.report_id,
+                        signal_id=request.signal_id,
+                        agent_id=principal.agent_id,
+                        client_request_id=request.client_request_id,
+                        relevance_status=relevance.status.value,
+                        agent_decision=request.decision.value,
+                        verification_status=verification.status.value,
+                        final_related=verification.final_related,
+                        lock_decision=lock.decision.value,
+                        created_at=now,
+                    )
+                    session.add(record)
+                    await session.flush()
+                    if lock.decision is SignalLockDecision.ALLOW:
+                        if lock.proposed_result is None:
+                            raise RuntimeError("allowed signal lock is missing a result")
+                        session.add(
+                            SignalRelevanceLock(
+                                verification_id=record.id,
+                                report_id=card.report_id,
+                                signal_id=request.signal_id,
+                                final_related=lock.proposed_result.final_related,
+                                relevance_policy_version=relevance.policy_version,
+                                verification_policy_version=(
+                                    lock.proposed_result.verification_policy_version
+                                ),
+                                lock_policy_version=lock.policy_version,
+                                locked_by=principal.agent_id,
+                                locked_at=now,
+                            )
+                        )
+                    outcome = (
+                        AuditOutcome.CONFLICT
+                        if lock.decision is SignalLockDecision.CONFLICT
+                        else AuditOutcome.SUCCESS
+                    )
+                    session.add_all(
+                        (
+                            completed_idempotency_record(
+                                principal_digest=principal_digest,
+                                operation=_SIGNAL_VERIFICATION_OPERATION,
+                                client_request_id=request.client_request_id,
+                                payload_sha256=request_digest,
+                                response_status=(
+                                    409 if lock.decision is SignalLockDecision.CONFLICT else 200
+                                ),
+                                now=now,
+                            ),
+                            _audit(
+                                actor_id=principal.agent_id,
+                                action=f"AGENT_SIGNAL_{lock.decision.value}",
+                                outcome=outcome,
+                                resource_fingerprint=_fingerprint(
+                                    b"signal-relevance:"
+                                    + card.report_id.bytes
+                                    + request.signal_id.bytes
+                                ),
+                                now=now,
+                            ),
+                        )
+                    )
+                    response = _signal_verification_response(record)
+                    if lock.decision is SignalLockDecision.CONFLICT:
+                        error = ServiceError(
+                            409,
+                            "SIGNAL_RELEVANCE_CONFLICT",
+                            "기존에 확정된 관련성 결과와 다릅니다.",
+                        )
+
+    if error is not None:
+        raise error
+    if response is None:
+        raise ServiceError(
+            503, "SIGNAL_VERIFICATION_UNAVAILABLE", "확인 결과를 사용할 수 없습니다."
+        )
     return response

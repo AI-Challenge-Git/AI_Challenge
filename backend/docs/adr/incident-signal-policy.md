@@ -26,8 +26,8 @@
 개인정보 보유 목적 종료 후 삭제 원칙은 공식 규정·제품 문서에서 참고한 구조다.
 
 반면 `600초`, 유사도 임계값, `5개 고유 세션`, `10개 검토 우선순위`를 정답으로 뒷받침하는 공통
-공식 기준은 없다. AI 담당은 저장소의 한국어 금융 VOC pair에 threshold sweep을 실행해 `0.79`를
-선택했다. 백엔드는 이 값을 immutable `EXPERIMENTAL` policy에 기록하며 법령·업계 표준 또는
+공식 기준은 없다. AI 담당자는 한국어 금융 VOC 평가 결과로 `0.58`, average linkage, medoid를
+전달했다. 백엔드는 이 값을 immutable `EXPERIMENTAL` policy에 기록하며 법령·업계 표준 또는
 `APPROVED` 값으로 표현하지 않는다.
 
 ## AI 경계
@@ -67,14 +67,16 @@ AI 담당이 제공한 metadata와 별도로 받은 model revision을 사용해 
 
 ```powershell
 uv run python -m scripts.register_signal_policy `
-  --policy-version signal-exp-v4 `
+  --policy-version signal-openai-embed-avg-medoid-v1 `
   --model-id text-embedding-3-small `
   --model-revision $env:SIGNAL_EMBEDDING_MODEL_REVISION `
   --dimension 1024 `
   --normalization L2 `
   --input-format passage `
   --taxonomy-version issue-type.v1 `
-  --similarity-threshold 0.79 `
+  --similarity-threshold 0.58 `
+  --linkage-method AVERAGE `
+  --representative-method MEDOID `
   --activate
 ```
 

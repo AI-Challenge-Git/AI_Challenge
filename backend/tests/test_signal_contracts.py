@@ -10,6 +10,7 @@ from app.schemas import (
     SignalDashboardItem,
     SignalEmbeddingResult,
 )
+from app.services.signals import is_signal_processing_eligible
 
 
 def test_embedding_contract_validates_dimension_and_finite_values() -> None:
@@ -60,6 +61,22 @@ def test_dashboard_contract_rejects_internal_candidate_state() -> None:
                 "official_notice_url": None,
             }
         )
+
+
+@pytest.mark.parametrize("issue_type", ["UNKNOWN", "UNRELATED_OR_AMBIGUOUS"])
+def test_signal_processing_excludes_non_actionable_issue_types(issue_type: str) -> None:
+    assert not is_signal_processing_eligible(issue_type=issue_type, symptom="technical symptom")
+
+
+def test_signal_processing_requires_a_confirmed_symptom() -> None:
+    assert not is_signal_processing_eligible(
+        issue_type="ORDER_SUBMISSION_FAILURE",
+        symptom=None,
+    )
+    assert is_signal_processing_eligible(
+        issue_type="ORDER_SUBMISSION_FAILURE",
+        symptom="order button remains loading",
+    )
 
 
 def test_operator_merge_rejects_same_source_and_target() -> None:

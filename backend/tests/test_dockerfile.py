@@ -9,7 +9,7 @@ def test_api_image_runs_non_root_without_per_instance_migration() -> None:
     assert "alembic upgrade head" not in dockerfile
     assert "exec uvicorn app.main:app" in dockerfile
     assert "alembic upgrade head && exec uvicorn" in compose
-    assert "AI_ADAPTER: ${AI_ADAPTER:-fake}" in compose
+    assert "AI_ADAPTER: ${AI_ADAPTER:-openai}" in compose
     assert "OPENAI_API_KEY: ${OPENAI_API_KEY:-}" in compose
     assert "SIGNAL_EMBEDDING_MODEL_REVISION: ${SIGNAL_EMBEDDING_MODEL_REVISION:-}" in compose
     assert "attachment_data:/app/data/attachments" in compose
