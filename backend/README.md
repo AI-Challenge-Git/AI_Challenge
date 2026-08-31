@@ -33,24 +33,25 @@ docker compose up --build
 - 장애 의심 신호 상황판: `GET http://localhost:8000/api/signals/dashboard`
 - 운영자 신호 변경: `/api/operator/signals/*`
 
-분석 API는 `pending`, `confirmation`, `failed`, `complete` 상태를 반환합니다. adapter 기본값은
-deterministic Fake이며 `AI_ADAPTER=openai`일 때 실제 provider adapter를 사용합니다. 백엔드
-전체 호출 timeout은 90초이고 동기 provider 호출은 기본 4개로 제한됩니다.
+분석 API는 `pending`, `confirmation`, `failed`, `complete` 상태를 반환합니다. Compose와 운영은
+`AI_ADAPTER=openai`로 실제 provider adapter를 사용하며 production에서 Fake 설정은 시작 단계에서
+거부됩니다. deterministic Fake는 외부 장애를 재현하는 테스트에서만 사용합니다. 백엔드 전체 호출
+timeout은 90초이고 동기 provider 호출은 기본 4개로 제한됩니다.
 
 스크린샷 multipart 요청은 `screenshot_redacted_confirmed=true`가 필수입니다. 이미지가 없는
 기존 JSON 요청에는 이 필드를 보내지 않습니다.
 
-## 로컬 데모 상담원 계정
+## 상담원 계정 provision
 
-운영 환경에서는 데모 계정을 자동 생성하지 않습니다. migration 후 아래 명령을 명시적으로 한 번
-실행하면 `CS1024 / demo` 계정을 만들거나 같은 사번의 기존 row를 갱신합니다. password 환경변수가
-CLI 인자보다 우선하며 password와 hash는 출력하지 않습니다.
+운영 환경에서는 계정을 자동 생성하지 않습니다. migration 후 아래 명령을 명시적으로 실행하면
+계정을 만들거나 같은 사번의 기존 row를 갱신합니다. password 환경변수가 CLI 인자보다 우선하며
+password와 hash는 출력하지 않습니다.
 
 ```powershell
 cd backend
-$env:DEMO_AGENT_PASSWORD='demo'
+$env:AGENT_INITIAL_PASSWORD='<strong-random-password>'
 uv run python -m scripts.seed_agent
-Remove-Item Env:DEMO_AGENT_PASSWORD
+Remove-Item Env:AGENT_INITIAL_PASSWORD
 ```
 
 로그인 성공 응답의 opaque token을 이후 상담원 API의
@@ -135,19 +136,22 @@ Docker Compose의 `${...}` 값은 저장소 루트의 `.env`에서 읽습니다.
 `AI_ADAPTER=openai`, `OPENAI_API_KEY`, 확정된 `SIGNAL_EMBEDDING_MODEL_REVISION`을 같은 환경에서
 주입하고 secret 값은 Git에 추가하지 않습니다.
 
-AI 평가에서 선택한 `similarity_threshold=0.79`는 `scripts.register_signal_policy`로 immutable
-`EXPERIMENTAL` policy에 등록합니다. `600초·5건·10건`은 법령이나 업계 표준이 아닌 MVP 실험값입니다.
+AI 담당자가 전달한 `similarity_threshold=0.58`, average linkage, medoid 계약은
+`scripts.register_signal_policy`로 immutable `EXPERIMENTAL` policy에 등록합니다.
+`600초·5건·10건`도 법령이나 업계 표준이 아닌 MVP 실험값입니다.
 
 ```powershell
 uv run python -m scripts.register_signal_policy `
-  --policy-version signal-exp-v4 `
+  --policy-version signal-openai-embed-avg-medoid-v1 `
   --model-id text-embedding-3-small `
   --model-revision $env:SIGNAL_EMBEDDING_MODEL_REVISION `
   --dimension 1024 `
   --normalization L2 `
   --input-format passage `
   --taxonomy-version issue-type.v1 `
-  --similarity-threshold 0.79 `
+  --similarity-threshold 0.58 `
+  --linkage-method AVERAGE `
+  --representative-method MEDOID `
   --activate
 
 uv run python -m scripts.process_signal_jobs --max-jobs 100

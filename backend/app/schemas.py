@@ -21,7 +21,9 @@ from pydantic import (
 from app.codes import (
     AgentRole,
     BaselineStatus,
+    ClusteringLinkageMethod,
     ClusteringPolicyStatus,
+    ClusterRepresentativeMethod,
     FieldStatus,
     IssueType,
     OrderAction,
@@ -34,6 +36,9 @@ from app.codes import (
     VerificationStatus,
 )
 from app.security import normalize_placeholders
+from app.signal_lock import SignalLockDecision
+from app.signal_relevance import SignalRelevanceStatus
+from app.signal_verification import AgentSignalDecision
 
 # FE-07 / AI-05: 원문에 날짜 없이 시각만 있으면(예: "09:03") CONFIRMED_FROM_TEXT로
 # 확정할 수 없다. 날짜+시각+UTC offset이 모두 있는 완전한 형식일 때만 허용한다.
@@ -421,6 +426,9 @@ class RelatedSignal(ApiModel):
     reporting_unique_sessions: int = Field(ge=1)
     last_report_at: datetime
     official_incident: Literal[False]
+    relevance_status: SignalRelevanceStatus | None = None
+    confirmation_questions: list[str] = Field(default_factory=list)
+    locked_related: bool | None = None
 
 
 class ConsultationCardDetail(ApiModel):
@@ -490,6 +498,22 @@ class AgentVerificationResponse(ApiModel):
     saved_at: datetime
 
 
+class AgentSignalVerificationRequest(ConsultationCardSelector):
+    signal_id: UUID
+    decision: AgentSignalDecision
+    client_request_id: UUID4
+
+
+class AgentSignalVerificationResponse(ApiModel):
+    signal_id: UUID
+    relevance_status: SignalRelevanceStatus
+    agent_decision: AgentSignalDecision
+    verification_status: VerificationStatus
+    final_related: bool | None
+    lock_decision: SignalLockDecision
+    saved_at: datetime
+
+
 class SignalEmbeddingRequest(StrictAiModel):
     schema_version: Literal["signal-embedding-request.v1"]
     input_format: str
@@ -549,6 +573,8 @@ class SignalPolicySnapshot(ApiModel):
     min_unique_sessions: int = Field(gt=0)
     review_priority_threshold: int = Field(gt=0)
     similarity_threshold: float = Field(gt=0, le=1)
+    linkage_method: ClusteringLinkageMethod
+    representative_method: ClusterRepresentativeMethod
     structured_rules_version: str
     taxonomy_version: str
     baseline_policy_version: str | None

@@ -6,27 +6,31 @@ import unicodedata
 from sqlalchemy import select
 
 from app.codes import AgentRole
+from app.config import get_settings
 from app.db import engine, session_factory
 from app.models import AgentAccount
 from app.security import hash_password
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Seed one local demo agent account")
+    parser = argparse.ArgumentParser(description="Provision one agent account")
     parser.add_argument("--employee-id", default="CS1024")
-    parser.add_argument("--agent-label", default="CS1024 데모 상담원")
+    parser.add_argument("--agent-label", default="CS1024 상담원")
     parser.add_argument("--role", choices=[role.value for role in AgentRole], default="AGENT")
     parser.add_argument(
         "--password",
-        help="fallback only; DEMO_AGENT_PASSWORD environment variable takes precedence",
+        help="development fallback only; AGENT_INITIAL_PASSWORD takes precedence",
     )
     return parser.parse_args()
 
 
 async def run(arguments: argparse.Namespace) -> None:
-    password = os.getenv("DEMO_AGENT_PASSWORD") or arguments.password
+    settings = get_settings()
+    password = os.getenv("AGENT_INITIAL_PASSWORD")
+    if not password and settings.app_env != "production":
+        password = os.getenv("DEMO_AGENT_PASSWORD") or arguments.password
     if not password:
-        raise SystemExit("DEMO_AGENT_PASSWORD must be set")
+        raise SystemExit("AGENT_INITIAL_PASSWORD must be set")
     employee_id = unicodedata.normalize("NFC", arguments.employee_id.strip()).upper()
     agent_label = unicodedata.normalize("NFC", arguments.agent_label.strip())
     if not employee_id or not agent_label:
@@ -47,7 +51,7 @@ async def run(arguments: argparse.Namespace) -> None:
             account.role = arguments.role
             account.password_hash = hash_password(password)
             account.is_active = True
-        print(f"demo_agent={'created' if created else 'updated'} role={arguments.role}")
+        print(f"agent={'created' if created else 'updated'} role={arguments.role}")
     finally:
         await engine.dispose()
 

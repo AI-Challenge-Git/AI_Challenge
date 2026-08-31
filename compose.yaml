@@ -26,7 +26,7 @@ services:
       CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:5173"]}'
       ACTIVE_POLICY_VERSION: ${ACTIVE_POLICY_VERSION:-kb-trading-failure-guidance-2026-08-18}
       PII_POLICY_VERSION: ${PII_POLICY_VERSION:-pii-mask.v1}
-      AI_ADAPTER: ${AI_ADAPTER:-fake}
+      AI_ADAPTER: ${AI_ADAPTER:-openai}
       AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-90}
       AI_MAX_CONCURRENCY: ${AI_MAX_CONCURRENCY:-4}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

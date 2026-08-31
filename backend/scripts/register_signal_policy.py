@@ -4,7 +4,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from app.codes import ClusteringPolicyStatus
+from app.codes import (
+    ClusteringLinkageMethod,
+    ClusteringPolicyStatus,
+    ClusterRepresentativeMethod,
+)
 from app.db import engine, session_factory
 from app.models import ClusteringPolicy
 
@@ -35,7 +39,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window-seconds", type=_positive_int, default=600)
     parser.add_argument("--min-unique-sessions", type=_positive_int, default=5)
     parser.add_argument("--review-priority-threshold", type=_positive_int, default=10)
-    parser.add_argument("--similarity-threshold", type=_threshold, default=0.79)
+    parser.add_argument("--similarity-threshold", type=_threshold, default=0.58)
+    parser.add_argument(
+        "--linkage-method",
+        choices=[method.value for method in ClusteringLinkageMethod],
+        default=ClusteringLinkageMethod.AVERAGE.value,
+    )
+    parser.add_argument(
+        "--representative-method",
+        choices=[method.value for method in ClusterRepresentativeMethod],
+        default=ClusterRepresentativeMethod.MEDOID.value,
+    )
     parser.add_argument(
         "--activate",
         action="store_true",
@@ -80,6 +94,8 @@ async def run(arguments: argparse.Namespace) -> None:
                 normalization=arguments.normalization,
                 input_format=arguments.input_format,
                 distance_metric="COSINE",
+                linkage_method=arguments.linkage_method,
+                representative_method=arguments.representative_method,
                 taxonomy_version=arguments.taxonomy_version,
                 created_at=datetime.now(UTC),
             )

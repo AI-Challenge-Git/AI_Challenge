@@ -158,4 +158,4 @@ def test_policy_cli_defaults_to_evaluated_threshold(monkeypatch: pytest.MonkeyPa
         ],
     )
 
-    assert parse_args().similarity_threshold == 0.79
+    assert parse_args().similarity_threshold == 0.58

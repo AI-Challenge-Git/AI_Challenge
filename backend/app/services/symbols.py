@@ -24,6 +24,7 @@ KRX_LISTED_INFO_API_URL = (
 )
 SYMBOL_SCHEMA_VERSION = "krx-all-symbols.v1"
 _IMPORT_LOCK_ID = 0x4D54534B5258
+_MIN_LISTED_CODE_COVERAGE = 0.99
 _CODE_PATTERN = re.compile(r"^[0-9A-Z]{6}$")
 _TARGET_MARKETS = {
     "KOSPI": "KOSPI",
@@ -189,12 +190,16 @@ def fetch_listed_snapshot(
 
 def verify_listed_snapshot(parsed: ParsedSymbolCsv, snapshot: ListedSnapshot) -> None:
     listed_by_code = {item.code: item for item in snapshot.items}
+    matched = 0
     for row in parsed.rows:
         listed = listed_by_code.get(row.code)
         if listed is None:
-            raise SymbolImportError("CSV target symbol is missing from listed-info API")
-        if listed.name_ko != row.name_ko or listed.market != row.market:
-            raise SymbolImportError("CSV and listed-info API symbol metadata do not match")
+            continue
+        matched += 1
+        if listed.market != row.market:
+            raise SymbolImportError("CSV and listed-info API markets do not match")
+    if matched / len(parsed.rows) < _MIN_LISTED_CODE_COVERAGE:
+        raise SymbolImportError("too many CSV target symbols are missing from listed-info API")
 
 
 def _decode_csv(raw: bytes) -> tuple[str, str]:

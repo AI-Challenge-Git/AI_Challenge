@@ -10,6 +10,7 @@ from app.db import engine, session_factory
 from app.errors import ServiceError
 from app.models import Symbol, SymbolMasterVersion
 from app.services.symbols import (
+    ListedItem,
     ListedSnapshot,
     SymbolImportError,
     fetch_listed_snapshot,
@@ -154,6 +155,35 @@ def test_listed_info_mismatch_rejects_whole_sync() -> None:
     )
     with pytest.raises(SymbolImportError, match="missing"):
         verify_listed_snapshot(parsed, snapshot)
+
+
+def test_listed_info_accepts_official_name_variants() -> None:
+    parsed = parse_symbol_csv(
+        _csv(
+            "005930,삼성전자,KOSPI,보통주",
+            "383220,F&F,KOSPI,보통주",
+        )
+    )
+    snapshot = ListedSnapshot(
+        items=(
+            ListedItem(
+                code="005930",
+                name_ko="삼성전자",
+                market="KOSPI",
+                source_as_of=date(2026, 8, 27),
+            ),
+            ListedItem(
+                code="383220",
+                name_ko="에프앤에프",
+                market="KOSPI",
+                source_as_of=date(2026, 8, 27),
+            ),
+        ),
+        source_sha256="0" * 64,
+        source_as_of=date(2026, 8, 27),
+    )
+
+    verify_listed_snapshot(parsed, snapshot)
 
 
 @pytest.mark.skipif(

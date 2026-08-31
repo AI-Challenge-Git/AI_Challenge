@@ -8,14 +8,16 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import delete, func, select, text
 
 from app.api.dependencies import get_clock
 from app.attachments import LocalAttachmentStore
 from app.codes import (
     AgentRole,
+    ClusteringLinkageMethod,
     ClusteringPolicyStatus,
+    ClusterRepresentativeMethod,
     SignalClosureReason,
     SignalProcessingStatus,
     SignalStatus,
@@ -26,6 +28,7 @@ from app.main import app
 from app.models import (
     AgentAccessToken,
     AgentAccount,
+    AgentSignalVerification,
     AuditLog,
     ClusteringPolicy,
     ConsultationCard,
@@ -37,6 +40,7 @@ from app.models import (
     SignalCluster,
     SignalMember,
     SignalProcessingJob,
+    SignalRelevanceLock,
     TechnicalEmbedding,
     TechnicalSymptom,
 )
@@ -154,7 +158,14 @@ async def clean_signal_data() -> AsyncIterator[None]:
         await engine.dispose()
 
 
-async def _policy(*, min_unique_sessions: int = 2, dimension: int = 3) -> UUID:
+async def _policy(
+    *,
+    min_unique_sessions: int = 2,
+    dimension: int = 3,
+    linkage_method: ClusteringLinkageMethod = ClusteringLinkageMethod.AVERAGE,
+    representative_method: ClusterRepresentativeMethod = ClusterRepresentativeMethod.MEDOID,
+    similarity_threshold: float = 0.79,
+) -> UUID:
     async with session_factory() as session, session.begin():
         policy = ClusteringPolicy(
             policy_version=f"test-{uuid4()}",
@@ -163,7 +174,7 @@ async def _policy(*, min_unique_sessions: int = 2, dimension: int = 3) -> UUID:
             window_seconds=600,
             min_unique_sessions=min_unique_sessions,
             review_priority_threshold=max(3, min_unique_sessions),
-            similarity_threshold=0.79,
+            similarity_threshold=similarity_threshold,
             structured_rules_version="hard-gate.v1",
             model_id="fake-embed",
             model_revision="test-r1",
@@ -171,6 +182,8 @@ async def _policy(*, min_unique_sessions: int = 2, dimension: int = 3) -> UUID:
             normalization="L2",
             input_format="query.v1",
             distance_metric="COSINE",
+            linkage_method=linkage_method.value,
+            representative_method=representative_method.value,
             taxonomy_version="taxonomy.test.v1",
             created_at=NOW,
         )
@@ -229,6 +242,10 @@ async def _report(
             report=report,
             action="UNKNOWN",
             order_type="UNKNOWN",
+            reference_digest=uuid4().bytes + uuid4().bytes,
+            expires_at=received_at + timedelta(hours=2),
+            confirmation_request_id=uuid4(),
+            confirmation_payload_sha256="c" * 64,
             created_at=received_at,
             updated_at=received_at,
         )
@@ -437,6 +454,134 @@ async def test_similarity_policy_boundary(
         assert (
             await session.scalar(select(func.count()).select_from(SignalCluster))
             == expected_clusters
+        )
+
+
+async def test_average_linkage_prevents_single_member_chaining() -> None:
+    await _policy(min_unique_sessions=1, similarity_threshold=0.7)
+    for index in range(3):
+        await _report(
+            session_digest=bytes([index + 1]) * 32,
+            received_at=NOW + timedelta(seconds=index),
+        )
+    angle_40 = math.radians(40)
+    angle_80 = math.radians(80)
+    provider = SequenceEmbeddingProvider(
+        [
+            [1.0, 0.0, 0.0],
+            [math.cos(angle_40), math.sin(angle_40), 0.0],
+            [math.cos(angle_80), math.sin(angle_80), 0.0],
+        ]
+    )
+
+    async with session_factory() as session:
+        for _ in range(3):
+            await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
+        member_counts = list(
+            await session.scalars(
+                select(func.count(SignalMember.id))
+                .group_by(SignalMember.signal_id)
+                .order_by(func.count(SignalMember.id).desc())
+            )
+        )
+
+    assert member_counts == [2, 1]
+
+
+async def test_medoid_is_recalculated_after_each_membership_change() -> None:
+    await _policy(min_unique_sessions=1, similarity_threshold=0.45)
+    report_ids = []
+    for index in range(3):
+        report_ids.append(
+            await _report(
+                session_digest=bytes([index + 1]) * 32,
+                received_at=NOW + timedelta(seconds=index),
+            )
+        )
+    angle_30 = math.radians(30)
+    angle_60 = math.radians(60)
+    provider = SequenceEmbeddingProvider(
+        [
+            [1.0, 0.0, 0.0],
+            [math.cos(angle_30), math.sin(angle_30), 0.0],
+            [math.cos(angle_60), math.sin(angle_60), 0.0],
+        ]
+    )
+
+    async with session_factory() as session:
+        for _ in range(3):
+            await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
+        cluster = await session.scalar(select(SignalCluster))
+        middle_symptom_id = await session.scalar(
+            select(TechnicalSymptom.id).where(TechnicalSymptom.report_id == report_ids[1])
+        )
+        assert cluster is not None
+        assert cluster.representative_symptom_id == middle_symptom_id
+
+
+async def test_agent_signal_verification_lock_flow_is_idempotent_and_conflict_safe() -> None:
+    await _policy(min_unique_sessions=1, similarity_threshold=0.58)
+    report_id = await _report(session_digest=b"v" * 32, received_at=NOW)
+    provider = FakeEmbeddingProvider()
+    async with session_factory() as session:
+        processed = await process_next_signal_job(
+            session,
+            provider,
+            now=NOW + timedelta(minutes=1),
+        )
+        assert processed is not None
+        assert processed.signal_id is not None
+        signal_id = processed.signal_id
+        card_id = await session.scalar(
+            select(ConsultationCard.id).where(ConsultationCard.report_id == report_id)
+        )
+        assert card_id is not None
+
+    token = await _agent_token(AgentRole.AGENT)
+    transport = ASGITransport(app=app)
+
+    async def verify(decision: str, request_id: str) -> Response:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/api/consultation-cards/signal-verifications",
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "card_id": str(card_id),
+                    "signal_id": str(signal_id),
+                    "decision": decision,
+                    "client_request_id": request_id,
+                },
+            )
+
+    blocked = await verify("UNCONFIRMED", str(uuid4()))
+    assert blocked.status_code == 200
+    assert blocked.json()["lock_decision"] == "BLOCK"
+
+    allow_id = str(uuid4())
+    allowed = await verify("RELATED", allow_id)
+    replay = await verify("RELATED", allow_id)
+    idempotent = await verify("RELATED", str(uuid4()))
+    conflict = await verify("NOT_RELATED", str(uuid4()))
+
+    assert allowed.status_code == replay.status_code == idempotent.status_code == 200
+    assert allowed.json()["lock_decision"] == replay.json()["lock_decision"] == "ALLOW"
+    assert idempotent.json()["lock_decision"] == "IDEMPOTENT_REPLAY"
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "SIGNAL_RELEVANCE_CONFLICT"
+
+    async with session_factory() as session:
+        lock = await session.scalar(select(SignalRelevanceLock))
+        assert lock is not None
+        assert lock.final_related is True
+        assert await session.scalar(select(func.count()).select_from(SignalRelevanceLock)) == 1
+        assert await session.scalar(select(func.count()).select_from(AgentSignalVerification)) == 4
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(AuditLog)
+                .where(AuditLog.action == "AGENT_SIGNAL_CONFLICT")
+            )
+            == 1
         )
 
 

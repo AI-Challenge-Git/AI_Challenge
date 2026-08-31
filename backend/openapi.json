@@ -382,6 +382,112 @@
         ]
       }
     },
+    "/api/consultation-cards/signal-verifications": {
+      "post": {
+        "tags": [
+          "agent-cards"
+        ],
+        "summary": "Verify Signal Relevance",
+        "operationId": "verify_signal_relevance_api_consultation_cards_signal_verifications_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentSignalVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSignalVerificationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials or access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Agent role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Card or signal unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Locked result conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Signal relevance unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/reports/analyze": {
       "post": {
         "tags": [
@@ -1353,6 +1459,113 @@
         ],
         "title": "AgentRole"
       },
+      "AgentSignalDecision": {
+        "type": "string",
+        "enum": [
+          "RELATED",
+          "NOT_RELATED",
+          "UNCONFIRMED"
+        ],
+        "title": "AgentSignalDecision"
+      },
+      "AgentSignalVerificationRequest": {
+        "properties": {
+          "reference_number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^KBSOS-[A-Z2-7]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Number"
+          },
+          "card_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Id"
+          },
+          "signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Signal Id"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/AgentSignalDecision"
+          },
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid4",
+            "title": "Client Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signal_id",
+          "decision",
+          "client_request_id"
+        ],
+        "title": "AgentSignalVerificationRequest"
+      },
+      "AgentSignalVerificationResponse": {
+        "properties": {
+          "signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Signal Id"
+          },
+          "relevance_status": {
+            "$ref": "#/components/schemas/SignalRelevanceStatus"
+          },
+          "agent_decision": {
+            "$ref": "#/components/schemas/AgentSignalDecision"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          },
+          "final_related": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Related"
+          },
+          "lock_decision": {
+            "$ref": "#/components/schemas/SignalLockDecision"
+          },
+          "saved_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Saved At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signal_id",
+          "relevance_status",
+          "agent_decision",
+          "verification_status",
+          "final_related",
+          "lock_decision",
+          "saved_at"
+        ],
+        "title": "AgentSignalVerificationResponse"
+      },
       "AgentTechnicalDetail": {
         "properties": {
           "issue_type": {
@@ -1806,6 +2019,22 @@
           "evidence_quote"
         ],
         "title": "CandidateField[str]"
+      },
+      "ClusterRepresentativeMethod": {
+        "type": "string",
+        "enum": [
+          "NONE",
+          "MEDOID"
+        ],
+        "title": "ClusterRepresentativeMethod"
+      },
+      "ClusteringLinkageMethod": {
+        "type": "string",
+        "enum": [
+          "SINGLE_MAX",
+          "AVERAGE"
+        ],
+        "title": "ClusteringLinkageMethod"
       },
       "ClusteringPolicyStatus": {
         "type": "string",
@@ -2581,6 +2810,34 @@
             "type": "boolean",
             "const": false,
             "title": "Official Incident"
+          },
+          "relevance_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalRelevanceStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmation_questions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Confirmation Questions"
+          },
+          "locked_related": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locked Related"
           }
         },
         "additionalProperties": false,
@@ -3052,6 +3309,16 @@
         ],
         "title": "SignalHourlyVolume"
       },
+      "SignalLockDecision": {
+        "type": "string",
+        "enum": [
+          "ALLOW",
+          "BLOCK",
+          "IDEMPOTENT_REPLAY",
+          "CONFLICT"
+        ],
+        "title": "SignalLockDecision"
+      },
       "SignalPolicySnapshot": {
         "properties": {
           "policy_version": {
@@ -3082,6 +3349,12 @@
             "exclusiveMinimum": 0.0,
             "title": "Similarity Threshold"
           },
+          "linkage_method": {
+            "$ref": "#/components/schemas/ClusteringLinkageMethod"
+          },
+          "representative_method": {
+            "$ref": "#/components/schemas/ClusterRepresentativeMethod"
+          },
           "structured_rules_version": {
             "type": "string",
             "title": "Structured Rules Version"
@@ -3111,11 +3384,22 @@
           "min_unique_sessions",
           "review_priority_threshold",
           "similarity_threshold",
+          "linkage_method",
+          "representative_method",
           "structured_rules_version",
           "taxonomy_version",
           "baseline_policy_version"
         ],
         "title": "SignalPolicySnapshot"
+      },
+      "SignalRelevanceStatus": {
+        "type": "string",
+        "enum": [
+          "RELATED",
+          "NEEDS_CONFIRMATION",
+          "NOT_RELATED"
+        ],
+        "title": "SignalRelevanceStatus"
       },
       "SignalStatus": {
         "type": "string",

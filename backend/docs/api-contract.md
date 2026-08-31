@@ -70,9 +70,9 @@ job으로 재시도한다.
 관련 업무 데이터는 서버 `received_at + 72시간`에 물리 삭제 대상이 된다. 접근 TTL과 물리
 보존기간은 서로 독립적이다. purge는 backend CLI로 수행하며 기본은 dry-run이다.
 
-실제 provider 사용 여부는 `AI_ADAPTER` 설정으로 선택하며 기본값은 deterministic Fake다.
-OpenAI 내부 provider 호출과 correction retry는 AI 담당자가 백엔드의 전체 90초 예산 안에
-끝나도록 구성해야 한다.
+실제 provider 사용 여부는 `AI_ADAPTER` 설정으로 선택한다. Compose와 production은 `openai`를
+사용하고 production의 Fake 설정은 시작 단계에서 거부한다. deterministic Fake는 테스트 격리에만
+사용한다. OpenAI 내부 provider 호출과 correction retry는 백엔드의 전체 90초 예산 안에 끝나야 한다.
 
 ## 상담원 인증과 카드 조회
 
@@ -146,8 +146,8 @@ fingerprint 기준 기본 10회/60초다. bucket은 PostgreSQL 원자적 upsert�
 활성 policy와 metadata가 같은 embedding의 cosine similarity를 비교한다. 시간창은 server UTC
 `received_at` 기준 rolling window다.
 
-정책은 `clustering_policies`에서 version 관리한다. AI 담당의 threshold sweep 결과인
-`similarity_threshold=0.79`는 현재 `EXPERIMENTAL` policy 값이다. `window_seconds=600`,
+정책은 `clustering_policies`에서 version 관리한다. AI 담당자가 전달한
+`similarity_threshold=0.58`, average linkage, medoid는 현재 `EXPERIMENTAL` policy 값이다. `window_seconds=600`,
 `min_unique_sessions=5`, `review_priority_threshold=10`도 법령·업계 표준이 아닌 MVP 실험값이다.
 팀 승인 전에는 `APPROVED`로 표현하지 않는다. model revision을 포함한 metadata가 없으면 활성 policy를
 임의 생성하지 않고 신호 processing job을 호출하지 않는다.

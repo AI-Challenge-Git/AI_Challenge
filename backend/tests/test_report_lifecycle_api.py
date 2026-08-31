@@ -128,6 +128,7 @@ async def _clean_business_data() -> None:
 async def clean_business_data(tmp_path: Path) -> AsyncIterator[None]:
     store = LocalAttachmentStore(tmp_path / "attachments")
     app.dependency_overrides[get_attachment_store] = lambda: store
+    app.dependency_overrides[get_dual_extractor] = FakeDualExtractor
     await _clean_business_data()
     async with session_factory() as session, session.begin():
         master = SymbolMasterVersion(
@@ -154,6 +155,7 @@ async def clean_business_data(tmp_path: Path) -> AsyncIterator[None]:
     await _clean_business_data()
     await engine.dispose()
     app.dependency_overrides.pop(get_attachment_store, None)
+    app.dependency_overrides.pop(get_dual_extractor, None)
 
 
 def _screenshot_bytes() -> bytes:

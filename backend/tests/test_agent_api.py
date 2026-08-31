@@ -729,10 +729,10 @@ async def test_audit_and_error_surfaces_do_not_expose_secrets_or_order_details()
         assert secret not in failure.text
 
 
-async def test_seed_is_idempotent_and_environment_password_takes_precedence(
+async def test_agent_provision_is_idempotent_and_environment_password_takes_precedence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DEMO_AGENT_PASSWORD", "demo")
+    monkeypatch.setenv("AGENT_INITIAL_PASSWORD", "demo")
     arguments = Namespace(
         employee_id="CS1024",
         agent_label="갱신된 데모 상담원",

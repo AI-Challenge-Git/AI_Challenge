@@ -18,6 +18,20 @@
 - 운영자 변경 API는 `OPERATOR` Bearer token이 필요하다. 일반 상담원 token으로 호출하면 `403`이다.
 - 이번 조회 MVP에서는 운영자 회원가입·로그인·인증 및 상태변경 UI 연동은 작업 범위에서 제외한다.
 - `official_incident=false`인 항목을 확정 장애로 표현하면 안 된다.
+- `applied_policy.linkage_method`는 `SINGLE_MAX | AVERAGE`,
+  `representative_method`는 `NONE | MEDOID`다. 현재 활성 정책은 `EXPERIMENTAL`이므로 승인 정책으로
+  표시하지 않는다.
+
+## 상담원 신호 관련성 확인
+
+- 상담카드 `related_signals[]`에 `relevance_status`, `confirmation_questions`,
+  `locked_related`가 추가됐다.
+- `POST /api/consultation-cards/signal-verifications`는 상담원 Bearer token으로 호출한다.
+- 요청은 `reference_number | card_id` 중 정확히 하나, `signal_id`,
+  `decision=RELATED | NOT_RELATED | UNCONFIRMED`, UUID v4 `client_request_id`를 보낸다.
+- `BLOCK`은 최종 결과를 저장하지 않은 상태, `IDEMPOTENT_REPLAY`는 기존 lock 유지다.
+- `409 SIGNAL_RELEVANCE_CONFLICT`는 자동 덮어쓰기하지 말고 수동 검토 상태로 표시한다.
+- 최신 `backend/openapi.json`에서 generated TypeScript를 다시 생성한다.
 
 ## KRX 종목코드
 
