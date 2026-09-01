@@ -70,9 +70,9 @@ job으로 재시도한다.
 관련 업무 데이터는 서버 `received_at + 72시간`에 물리 삭제 대상이 된다. 접근 TTL과 물리
 보존기간은 서로 독립적이다. purge는 backend CLI로 수행하며 기본은 dry-run이다.
 
-실제 provider 사용 여부는 `AI_ADAPTER` 설정으로 선택한다. Compose와 production은 `openai`를
-사용하고 production의 Fake 설정은 시작 단계에서 거부한다. deterministic Fake는 테스트 격리에만
-사용한다. OpenAI 내부 provider 호출과 correction retry는 백엔드의 전체 90초 예산 안에 끝나야 한다.
+runtime은 `AI_ADAPTER=openai`만 허용해 실제 provider를 사용한다. Fake는 dependency를 명시적으로
+교체하는 테스트 격리에만 사용하며 runtime 설정으로 선택할 수 없다. OpenAI 내부 provider 호출과
+correction retry는 백엔드의 전체 90초 예산 안에 끝나야 한다.
 
 ## 상담원 인증과 카드 조회
 
