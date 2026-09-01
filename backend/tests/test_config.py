@@ -2,10 +2,12 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from fastapi import Request
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr, ValidationError
 
 from app.ai import FakeDualExtractor, get_dual_extractor
+from app.api.dependencies import rate_limit_client_identifier
 from app.config import Settings, get_settings
 from app.main import create_app
 from app.schemas import ExtractionResult
@@ -40,6 +42,10 @@ def test_openai_is_the_only_runtime_adapter(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.ai_adapter == "openai"
     assert settings.ai_timeout_seconds == 90
     assert settings.ai_max_concurrency == 4
+    assert settings.analysis_pending_stale_seconds == 180
+    assert settings.report_analyze_limit == 5
+    assert settings.report_analyze_window_seconds == 60
+    assert settings.signal_worker_max_attempts == 5
     assert settings.agent_access_token_ttl_minutes == 30
     assert settings.agent_login_failure_limit == 5
     assert settings.agent_login_failure_window_seconds == 300
@@ -47,6 +53,37 @@ def test_openai_is_the_only_runtime_adapter(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.agent_lookup_window_seconds == 60
     assert settings.signal_dashboard_limit == 60
     assert settings.signal_dashboard_window_seconds == 60
+
+
+def test_pending_analysis_lease_must_exceed_provider_timeout() -> None:
+    with pytest.raises(ValidationError, match="ANALYSIS_PENDING_STALE_SECONDS"):
+        Settings(ai_timeout_seconds=90, analysis_pending_stale_seconds=90)
+
+
+def test_rate_limit_client_identifier_uses_railway_ip_only_in_production() -> None:
+    request = Request(
+        {
+            "type": "http",
+            "headers": [(b"x-real-ip", b"2001:0db8:0:0:0:0:0:1")],
+            "client": ("127.0.0.1", 1234),
+        }
+    )
+
+    assert rate_limit_client_identifier(request, app_env="development") == "127.0.0.1"
+    assert rate_limit_client_identifier(request, app_env="production") == "2001:db8::1"
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [([], "missing-railway-client"), ([(b"x-real-ip", b"not-an-ip")], "invalid-railway-client")],
+)
+def test_rate_limit_client_identifier_fails_closed_for_bad_railway_headers(
+    headers: list[tuple[bytes, bytes]],
+    expected: str,
+) -> None:
+    request = Request({"type": "http", "headers": headers, "client": ("10.0.0.1", 1234)})
+
+    assert rate_limit_client_identifier(request, app_env="production") == expected
 
 
 async def test_backend_service_keeps_timed_out_ai_calls_bounded() -> None:

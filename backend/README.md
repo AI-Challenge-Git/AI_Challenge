@@ -142,13 +142,14 @@ AI 담당자가 전달한 `similarity_threshold=0.58`, average linkage, medoid �
 
 ```powershell
 uv run python -m scripts.register_signal_policy `
-  --policy-version signal-openai-embed-avg-medoid-v1 `
+  --policy-version signal-openai-embed-avg-medoid-baseline-v1 `
   --model-id text-embedding-3-small `
   --model-revision $env:SIGNAL_EMBEDDING_MODEL_REVISION `
   --dimension 1024 `
   --normalization L2 `
   --input-format passage `
   --taxonomy-version issue-type.v1 `
+  --baseline-policy-version previous-window-distinct-sessions.v1 `
   --similarity-threshold 0.58 `
   --linkage-method AVERAGE `
   --representative-method MEDOID `
@@ -157,9 +158,18 @@ uv run python -m scripts.register_signal_policy `
 uv run python -m scripts.process_signal_jobs --max-jobs 100
 ```
 
+기존 policy row는 immutable이므로 `baseline_policy_version=null`인 활성 policy를 migration에서
+수정하지 않습니다. 배포 후 위와 같이 새 `policy-version`으로 등록·활성화해야 baseline이
+`INSUFFICIENT_HISTORY`에서 실제 계산 상태로 전환됩니다.
+
 `--activate`와 worker 시작 시 활성 policy의 model ID·revision·dimension·normalization·input
 format·distance metric을 실제 embedding adapter 계약과 비교합니다. 불일치하면 provider 호출과 job
 상태 변경 전에 non-zero로 종료하므로 policy와 환경변수를 먼저 맞춘 뒤 다시 실행합니다.
+
+worker의 영구 오류는 즉시 `DEAD_LETTER`, 일시 오류는 `SIGNAL_WORKER_MAX_ATTEMPTS`까지 재시도한 뒤
+`DEAD_LETTER/RETRY_EXHAUSTED`로 전이합니다. 한 건이라도 실패 또는 dead-letter 처리한 실행은
+non-zero로 종료합니다. 공개 분석은 client fingerprint별 기본 5회/60초로 제한하고, 기본 180초보다
+오래 갱신되지 않은 `PENDING`은 동일 report에서 재처리합니다.
 
 provider timeout은 90초이며, timeout이 이미 실행 중인 thread를 중단하지 못하므로 adapter가 동시
 provider thread 수를 제한합니다. 자세한 근거와 삭제 재계산 방식은

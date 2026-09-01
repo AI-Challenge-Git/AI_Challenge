@@ -63,6 +63,42 @@ def test_dashboard_contract_rejects_internal_candidate_state() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("status", "ratio"),
+    [
+        (BaselineStatus.AVAILABLE, None),
+        (BaselineStatus.INSUFFICIENT_HISTORY, 1.0),
+        (BaselineStatus.ZERO_BASELINE, 1.0),
+    ],
+)
+def test_dashboard_contract_keeps_baseline_status_and_ratio_consistent(
+    status: BaselineStatus,
+    ratio: float | None,
+) -> None:
+    with pytest.raises(ValidationError):
+        SignalDashboardItem.model_validate(
+            {
+                "signal_id": uuid4(),
+                "status": SignalStatus.SIGNAL_DETECTED,
+                "channel": "MABLE",
+                "feature_area": "DOMESTIC_STOCK_ORDER",
+                "reported_symptom_type": IssueType.ORDER_SUBMISSION_FAILURE,
+                "reporting_unique_sessions": 1,
+                "raw_report_count": 1,
+                "review_priority": False,
+                "first_report_at": datetime.now(UTC),
+                "last_report_at": datetime.now(UTC),
+                "affected_features": ["DOMESTIC_STOCK_ORDER"],
+                "policy_version": "experimental.v1",
+                "policy_status": "EXPERIMENTAL",
+                "baseline_status": status,
+                "baseline_ratio": ratio,
+                "official_incident": False,
+                "official_notice_url": None,
+            }
+        )
+
+
 @pytest.mark.parametrize("issue_type", ["UNKNOWN", "UNRELATED_OR_AMBIGUOUS"])
 def test_signal_processing_excludes_non_actionable_issue_types(issue_type: str) -> None:
     assert not is_signal_processing_eligible(issue_type=issue_type, symptom="technical symptom")

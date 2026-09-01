@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     ai_adapter: Literal["openai"] = "openai"
     ai_timeout_seconds: float = Field(default=90.0, gt=0, le=120)
     ai_max_concurrency: int = Field(default=4, ge=1, le=32)
+    analysis_pending_stale_seconds: int = Field(default=180, ge=30, le=3600)
+    report_analyze_limit: int = Field(default=5, ge=1, le=1000)
+    report_analyze_window_seconds: int = Field(default=60, ge=1, le=3600)
+    signal_worker_max_attempts: int = Field(default=5, ge=1, le=100)
     openai_api_key: SecretStr | None = None
     signal_embedding_model_revision: str | None = None
     krx_listed_info_api_url: str = (
@@ -60,6 +64,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":
+        if self.analysis_pending_stale_seconds <= self.ai_timeout_seconds:
+            raise ValueError("ANALYSIS_PENDING_STALE_SECONDS must exceed AI_TIMEOUT_SECONDS")
         if self.app_env == "production" and (
             self.openai_api_key is None or not self.openai_api_key.get_secret_value().strip()
         ):

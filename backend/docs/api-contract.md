@@ -31,6 +31,11 @@ principal·작업·요청 ID의 재시도는 기존 결과를 반환하고 paylo
 상태는 `pending`, `confirmation`, `failed`, `complete` 중 하나다. 실패 code는 `TIMEOUT`,
 `INVALID_SCHEMA`, `PROVIDER_UNAVAILABLE`만 외부에 노출한다.
 
+새 분석 호출과 stale 분석 재처리는 비식별 client fingerprint별 PostgreSQL 원자적 bucket으로
+제한한다. 기본값은 5회/60초이며 초과 시 `429`와 `Retry-After`를 반환한다. 멱등 replay는 AI를
+호출하지 않으므로 이 제한을 소비하지 않는다. `PENDING`이 기본 180초 이상 갱신되지 않으면 같은
+report와 analysis를 lease 방식으로 점유해 재처리한다. stale 기준은 AI timeout보다 길어야 한다.
+
 AI timeout·schema 오류·provider 오류가 나면 미완성 report, analysis, attachment metadata와
 저장된 이미지는 즉시 삭제한다. 같은 principal·요청 ID·payload의 재전송에는 독립된 안전한
 실패 멱등 기록으로 최초 `failed` 응답을 재생해 AI를 다시 호출하지 않는다. 실패 응답의
@@ -137,9 +142,12 @@ fingerprint 기준 기본 10회/60초다. bucket은 PostgreSQL 원자적 upsert�
 조회 rate limit은 익명 session digest와 비식별 client fingerprint 조합별 PostgreSQL 원자적 bucket으로
 적용한다. 기본값은 60회/60초이며 환경변수로 조정하고 초과 시 `429`와 `Retry-After`를 반환한다.
 
-실운영 기준선이 아직 없으므로 `baseline_status=INSUFFICIENT_HISTORY`, `baseline_ratio=null`을
-명시적으로 반환한다. 합성 기준선을 운영값처럼 만들지 않는다. 규모 필드
-`reporting_unique_sessions`는 비식별 `session_digest`의 distinct count이며 실제 영향 고객 수가 아니다.
+`previous-window-distinct-sessions.v1` 기준선은 신호의 최신 `received_at`을 끝점으로 한 현재 rolling
+window의 고유 세션 수를 바로 앞의 동일 길이 window 고유 세션 수로 나눈 값이다. 두 window가
+정책 생성 이후에 온전히 존재하지 않으면 `INSUFFICIENT_HISTORY`, 직전 window가 0이면
+`ZERO_BASELINE`, 그 외에는 `AVAILABLE`과 0 이상의 `baseline_ratio`를 반환한다. 규모 필드
+`reporting_unique_sessions`와 기준선은 비식별 `session_digest`의 distinct count이며 실제 영향 고객
+수가 아니다.
 
 자동 편입 hard gate는 동일한 `channel + feature_area + issue_type`이다. 양쪽 값이 알려진
 `submission_status` 또는 `error_code`가 충돌하면 같은 embedding이라도 합치지 않는다. 그 다음에만
@@ -153,9 +161,11 @@ fingerprint 기준 기본 10회/60초다. bucket은 PostgreSQL 원자적 upsert�
 임의 생성하지 않고 신호 processing job을 호출하지 않는다.
 
 제보 확정 transaction은 `PENDING` signal processing job까지만 저장한다. embedding provider 호출은
-transaction 밖에서 실행하고, metadata·차원 불일치나 provider 실패는 job만 안전한 `FAILED`로 남긴다.
-기존 report와 consultation card는 롤백하거나 삭제하지 않는다. 재처리는 만료된 processing lease를
-포함해 `SKIP LOCKED`로 한 job씩 점유한다.
+transaction 밖에서 실행한다. metadata·차원·입력 불일치는 재시도해도 복구되지 않으므로 즉시
+`DEAD_LETTER`로 보낸다. provider 일시 실패는 기본 최대 5회까지 `FAILED`로 재시도하고 소진되면
+`DEAD_LETTER/RETRY_EXHAUSTED`가 된다. 기존 report와 consultation card는 롤백하거나 삭제하지 않는다.
+재처리는 만료된 processing lease를 포함해 `SKIP LOCKED`로 한 job씩 점유하며, worker CLI는 해당
+실행에서 실패 또는 dead-letter가 하나라도 발생하면 non-zero로 종료한다.
 
 기존 운영자 mutation은 `OPERATOR` Bearer token과 UUID v4 `client_request_id`를 요구한다. 현재 조회 MVP
 범위에서는 운영자 회원가입·로그인·인증 또는 mutation 흐름을 추가로 확장하지 않는다.

@@ -9,7 +9,9 @@
   `hourly_volume`은 현재 노출 중인 신호의 제보를 server UTC `received_at` 시간 단위로 집계한 값이다.
 - 정책 rolling window가 지난 `SIGNAL_DETECTED`는 목록에서 빠지며 `UNDER_REVIEW`는 계속 노출된다.
 - 조회가 `429`이면 `Retry-After` 이후 재시도하며 polling을 즉시 반복하지 않는다.
-- `baseline_status=INSUFFICIENT_HISTORY`, `baseline_ratio=null`은 정상적인 초기 운영 응답이다.
+- `baseline_status`는 `INSUFFICIENT_HISTORY | ZERO_BASELINE | AVAILABLE`이다.
+  `baseline_ratio`는 `AVAILABLE`일 때만 number이고 나머지는 `null`이다. `AVAILABLE` 값은 현재
+  600초 rolling window 고유 세션 수 / 직전 600초 window 고유 세션 수다.
 - `reporting_unique_sessions`는 고객 제보 기반 비식별 세션 수이며 실제 영향 고객 수로 표시하면 안 된다.
 - 상담카드 상세 `related_signals`는 더 이상 무조건 빈 배열이 아니며 같은 typed 활성 신호가 포함될 수 있다.
 - 상담카드 상세의 새 `attachment_url: string | null`은 인증·2시간 TTL 검증 후 발급된 짧은 signed
@@ -21,6 +23,12 @@
 - `applied_policy.linkage_method`는 `SINGLE_MAX | AVERAGE`,
   `representative_method`는 `NONE | MEDOID`다. 현재 활성 정책은 `EXPERIMENTAL`이므로 승인 정책으로
   표시하지 않는다.
+
+## 고객 제보 분석
+
+- `POST /api/reports/analyze`가 `429`이면 `Retry-After` 이후 새 분석을 재시도한다.
+- 같은 `client_request_id`의 `pending` replay는 계속 polling할 수 있으며, 서버는 stale lease를
+  넘긴 요청을 같은 report로 자동 재처리한다. 새 request ID로 중복 제보를 만들지 않는다.
 
 ## 상담원 신호 관련성 확인
 

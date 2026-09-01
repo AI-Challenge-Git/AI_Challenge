@@ -14,7 +14,9 @@ from sqlalchemy import delete, func, select, text
 from app.api.dependencies import get_clock
 from app.attachments import LocalAttachmentStore
 from app.codes import (
+    SUPPORTED_BASELINE_POLICY_VERSION,
     AgentRole,
+    BaselineStatus,
     ClusteringLinkageMethod,
     ClusteringPolicyStatus,
     ClusterRepresentativeMethod,
@@ -187,6 +189,7 @@ async def _policy(
             linkage_method=linkage_method.value,
             representative_method=representative_method.value,
             taxonomy_version="taxonomy.test.v1",
+            baseline_policy_version=SUPPORTED_BASELINE_POLICY_VERSION,
             created_at=NOW,
         )
         session.add(policy)
@@ -360,6 +363,7 @@ async def test_same_session_is_not_double_counted_and_candidate_is_hidden() -> N
         assert len(dashboard.items) == 1
         assert dashboard.items[0].status is SignalStatus.SIGNAL_DETECTED
         assert dashboard.items[0].reporting_unique_sessions == 2
+        assert dashboard.items[0].baseline_status is BaselineStatus.INSUFFICIENT_HISTORY
         assert dashboard.items[0].baseline_ratio is None
         assert dashboard.items[0].official_incident is False
         assert dashboard.updated_at == NOW + timedelta(minutes=2)
@@ -647,6 +651,81 @@ async def test_rolling_window_boundary(
         )
 
 
+async def test_rolling_counts_exclude_old_members_from_signal_threshold() -> None:
+    await _policy(min_unique_sessions=3)
+    for index, offset in enumerate((0, 600, 1200), start=1):
+        await _report(
+            session_digest=bytes([index]) * 32,
+            received_at=NOW + timedelta(seconds=offset),
+        )
+    provider = FakeEmbeddingProvider()
+
+    async with session_factory() as session:
+        for _ in range(3):
+            await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=21))
+        cluster = await session.scalar(select(SignalCluster))
+        assert cluster is not None
+        assert cluster.status == SignalStatus.CANDIDATE.value
+        assert cluster.raw_report_count == 2
+        assert cluster.reporting_unique_sessions == 2
+        assert await session.scalar(select(func.count()).select_from(SignalMember)) == 3
+
+
+async def test_previous_window_baseline_becomes_available() -> None:
+    await _policy(min_unique_sessions=1)
+    for index, offset in enumerate((0, 600, 1200), start=1):
+        await _report(
+            session_digest=bytes([index]) * 32,
+            received_at=NOW + timedelta(seconds=offset),
+        )
+    provider = FakeEmbeddingProvider()
+
+    async with session_factory() as session:
+        for _ in range(3):
+            await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=21))
+        dashboard = await list_dashboard_signals(
+            session,
+            now=NOW + timedelta(minutes=20),
+            limit=50,
+            offset=0,
+        )
+
+    assert len(dashboard.items) == 1
+    assert dashboard.items[0].raw_report_count == 2
+    assert dashboard.items[0].reporting_unique_sessions == 2
+    assert dashboard.items[0].baseline_status is BaselineStatus.AVAILABLE
+    assert dashboard.items[0].baseline_ratio == 2.0
+    assert dashboard.baseline_status is BaselineStatus.AVAILABLE
+    assert dashboard.baseline_ratio == 2.0
+    assert sum(bucket.raw_report_count for bucket in dashboard.hourly_volume) == 2
+
+
+async def test_previous_window_baseline_distinguishes_zero_history() -> None:
+    await _policy(min_unique_sessions=1)
+    await _report(
+        session_digest=b"z" * 32,
+        received_at=NOW + timedelta(seconds=1200),
+    )
+
+    async with session_factory() as session:
+        await process_next_signal_job(
+            session,
+            FakeEmbeddingProvider(),
+            now=NOW + timedelta(minutes=21),
+        )
+        dashboard = await list_dashboard_signals(
+            session,
+            now=NOW + timedelta(minutes=20),
+            limit=50,
+            offset=0,
+        )
+
+    assert dashboard.items[0].baseline_status is BaselineStatus.ZERO_BASELINE
+    assert dashboard.items[0].baseline_ratio is None
+    assert dashboard.baseline_status is BaselineStatus.ZERO_BASELINE
+    assert dashboard.baseline_ratio is None
+
+
 async def test_policy_metadata_mismatch_fails_without_deleting_report_or_card() -> None:
     await _policy()
     report_id = await _report(session_digest=b"a" * 32, received_at=NOW)
@@ -655,7 +734,7 @@ async def test_policy_metadata_mismatch_fails_without_deleting_report_or_card() 
     async with session_factory() as session:
         result = await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
         assert result is not None
-        assert result.status is SignalProcessingStatus.FAILED
+        assert result.status is SignalProcessingStatus.DEAD_LETTER
         assert result.safe_error_code == "POLICY_MISMATCH"
         assert await session.get(Report, report_id) is not None
         assert (
@@ -703,30 +782,111 @@ async def test_worker_preflight_leaves_jobs_pending_on_runtime_policy_mismatch(
 
 
 @pytest.mark.parametrize(
-    ("provider", "expected_code"),
+    ("provider", "expected_code", "expected_status"),
     [
-        (InvalidEmbeddingProvider(), "INVALID_EMBEDDING"),
-        (FailingEmbeddingProvider(TimeoutError()), "EMBEDDING_UNAVAILABLE"),
-        (FailingEmbeddingProvider(OSError()), "EMBEDDING_UNAVAILABLE"),
+        (
+            InvalidEmbeddingProvider(),
+            "INVALID_EMBEDDING",
+            SignalProcessingStatus.DEAD_LETTER,
+        ),
+        (
+            FailingEmbeddingProvider(TimeoutError()),
+            "EMBEDDING_UNAVAILABLE",
+            SignalProcessingStatus.FAILED,
+        ),
+        (
+            FailingEmbeddingProvider(OSError()),
+            "EMBEDDING_UNAVAILABLE",
+            SignalProcessingStatus.FAILED,
+        ),
     ],
 )
 async def test_embedding_failures_are_safe_and_retryable(
     provider: InvalidEmbeddingProvider | FailingEmbeddingProvider,
     expected_code: str,
+    expected_status: SignalProcessingStatus,
 ) -> None:
     await _policy()
     report_id = await _report(session_digest=b"a" * 32, received_at=NOW)
     async with session_factory() as session:
         result = await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
         assert result is not None
-        assert result.status is SignalProcessingStatus.FAILED
+        assert result.status is expected_status
         assert result.safe_error_code == expected_code
         assert await session.get(Report, report_id) is not None
         job = await session.scalar(
             select(SignalProcessingJob).where(SignalProcessingJob.report_id == report_id)
         )
         assert job is not None
-        assert job.next_attempt_at == NOW + timedelta(minutes=6)
+        assert job.next_attempt_at == (
+            NOW + timedelta(minutes=6)
+            if expected_status is SignalProcessingStatus.FAILED
+            else NOW + timedelta(minutes=1)
+        )
+
+
+async def test_worker_dead_letters_retryable_failure_after_max_attempts() -> None:
+    await _policy()
+    await _report(session_digest=b"a" * 32, received_at=NOW)
+    provider = FailingEmbeddingProvider(TimeoutError())
+
+    async with session_factory() as session:
+        first = await process_next_signal_job(
+            session,
+            provider,
+            now=NOW + timedelta(minutes=1),
+            max_attempts=2,
+        )
+        second = await process_next_signal_job(
+            session,
+            provider,
+            now=NOW + timedelta(minutes=6),
+            max_attempts=2,
+        )
+        exhausted = await process_next_signal_job(
+            session,
+            provider,
+            now=NOW + timedelta(minutes=11),
+            max_attempts=2,
+        )
+        job = await session.scalar(select(SignalProcessingJob))
+
+    assert first is not None and first.status is SignalProcessingStatus.FAILED
+    assert second is not None and second.status is SignalProcessingStatus.DEAD_LETTER
+    assert second.safe_error_code == "RETRY_EXHAUSTED"
+    assert exhausted is None
+    assert job is not None and job.attempt_count == 2
+
+
+async def test_worker_cli_returns_nonzero_when_a_job_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _policy()
+    await _report(session_digest=b"a" * 32, received_at=NOW)
+    monkeypatch.setattr(
+        process_signal_jobs_script,
+        "load_signal_embedding_contract",
+        lambda: SignalEmbeddingContract(
+            model_id="fake-embed",
+            model_revision="test-r1",
+            dimension=3,
+            normalization="L2",
+            input_format="query.v1",
+            distance_metric="COSINE",
+        ),
+    )
+    monkeypatch.setattr(
+        process_signal_jobs_script,
+        "OpenAiSignalEmbeddingAdapter",
+        lambda: FailingEmbeddingProvider(TimeoutError()),
+    )
+    monkeypatch.setattr(
+        process_signal_jobs_script,
+        "utc_now",
+        lambda: NOW + timedelta(minutes=1),
+    )
+
+    assert await process_signal_jobs_script.run(max_jobs=1) == 1
 
 
 async def test_concurrent_workers_create_one_cluster() -> None:

@@ -5,7 +5,12 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import customer_principal, get_clock, operator_principal
+from app.api.dependencies import (
+    customer_principal,
+    get_clock,
+    operator_principal,
+    rate_limit_client_identifier,
+)
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.schemas import (
@@ -61,7 +66,7 @@ async def dashboard(
 ) -> SignalDashboardResponse:
     response.headers["Cache-Control"] = "no-store"
     now = clock()
-    client_identifier = request.client.host if request.client is not None else "unknown-client"
+    client_identifier = rate_limit_client_identifier(request, app_env=settings.app_env)
     await enforce_dashboard_rate_limit(
         session,
         principal,

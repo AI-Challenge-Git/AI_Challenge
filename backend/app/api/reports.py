@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request, Response, status
@@ -6,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
 
 from app.ai import DualExtractor, get_dual_extractor
-from app.api.dependencies import customer_principal
+from app.api.dependencies import customer_principal, get_clock, rate_limit_client_identifier
 from app.attachments import (
     MAX_ATTACHMENT_BYTES,
     AttachmentStore,
@@ -153,6 +155,7 @@ async def _parse_analyze_request(
         **COMMON_ERRORS,
         413: {"model": ProblemDetails, "description": "Body too large"},
         415: {"model": ProblemDetails, "description": "Unsupported media type"},
+        429: {"model": ProblemDetails, "description": "Rate limit exceeded"},
     },
     openapi_extra={"requestBody": ANALYZE_REQUEST_BODY},
 )
@@ -163,6 +166,7 @@ async def analyze(
     settings: Annotated[Settings, Depends(get_settings)],
     extractor: Annotated[DualExtractor, Depends(get_dual_extractor)],
     attachment_store: Annotated[AttachmentStore, Depends(get_attachment_store)],
+    clock: Annotated[Callable[[], datetime], Depends(get_clock)],
     response: Response,
 ) -> ReportAnalysisResponse:
     response.headers["Cache-Control"] = "no-store"
@@ -175,6 +179,8 @@ async def analyze(
         extractor,
         attachment_store,
         attachment,
+        client_identifier=rate_limit_client_identifier(request, app_env=settings.app_env),
+        now=clock(),
     )
     return await include_attachment_preview(session, principal, result, attachment_store, settings)
 
