@@ -157,6 +157,10 @@ uv run python -m scripts.register_signal_policy `
 uv run python -m scripts.process_signal_jobs --max-jobs 100
 ```
 
+`--activate`와 worker 시작 시 활성 policy의 model ID·revision·dimension·normalization·input
+format·distance metric을 실제 embedding adapter 계약과 비교합니다. 불일치하면 provider 호출과 job
+상태 변경 전에 non-zero로 종료하므로 policy와 환경변수를 먼저 맞춘 뒤 다시 실행합니다.
+
 provider timeout은 90초이며, timeout이 이미 실행 중인 thread를 중단하지 못하므로 adapter가 동시
 provider thread 수를 제한합니다. 자세한 근거와 삭제 재계산 방식은
 [incident signal ADR](docs/adr/incident-signal-policy.md)을 확인합니다.

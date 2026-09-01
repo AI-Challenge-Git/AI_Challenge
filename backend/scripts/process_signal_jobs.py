@@ -1,9 +1,16 @@
 import argparse
 import asyncio
 
+from sqlalchemy import select
+
 from app.db import engine, session_factory
+from app.models import ClusteringPolicy
 from app.services.lifecycle import utc_now
-from app.services.signal_embeddings import OpenAiSignalEmbeddingAdapter
+from app.services.signal_embeddings import (
+    OpenAiSignalEmbeddingAdapter,
+    embedding_contract_mismatches,
+    load_signal_embedding_contract,
+)
 from app.services.signals import process_next_signal_job
 
 
@@ -21,10 +28,31 @@ def parse_args() -> argparse.Namespace:
 
 
 async def run(*, max_jobs: int) -> None:
-    provider = OpenAiSignalEmbeddingAdapter()
     completed = 0
     failed = 0
     try:
+        async with session_factory() as session:
+            policy = await session.scalar(
+                select(ClusteringPolicy).where(ClusteringPolicy.is_active.is_(True))
+            )
+        if policy is None:
+            print("processed=0 completed=0 failed=0")
+            return
+        mismatches = embedding_contract_mismatches(
+            load_signal_embedding_contract(),
+            model_id=policy.model_id,
+            model_revision=policy.model_revision,
+            dimension=policy.embedding_dimension,
+            normalization=policy.normalization,
+            input_format=policy.input_format,
+            distance_metric=policy.distance_metric,
+        )
+        if mismatches:
+            raise RuntimeError(
+                "active signal policy does not match runtime embedding contract: "
+                + ", ".join(mismatches)
+            )
+        provider = OpenAiSignalEmbeddingAdapter()
         for _ in range(max_jobs):
             async with session_factory() as session:
                 result = await process_next_signal_job(session, provider, now=utc_now())

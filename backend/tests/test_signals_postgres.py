@@ -47,12 +47,14 @@ from app.models import (
 from app.schemas import SignalEmbeddingRequest, SignalEmbeddingResult
 from app.security import hash_password, make_opaque_token, opaque_token_digest
 from app.services.lifecycle import purge_expired_data
+from app.services.signal_embeddings import SignalEmbeddingContract
 from app.services.signals import (
     detach_report_from_signals,
     enqueue_signal_processing,
     list_dashboard_signals,
     process_next_signal_job,
 )
+from scripts import process_signal_jobs as process_signal_jobs_script
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_POSTGRES_TESTS") != "1",
@@ -665,6 +667,39 @@ async def test_policy_metadata_mismatch_fails_without_deleting_report_or_card() 
             == 1
         )
         assert await session.scalar(select(func.count()).select_from(SignalCluster)) == 0
+
+
+async def test_worker_preflight_leaves_jobs_pending_on_runtime_policy_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _policy()
+    await _report(session_digest=b"a" * 32, received_at=NOW)
+    monkeypatch.setattr(
+        process_signal_jobs_script,
+        "load_signal_embedding_contract",
+        lambda: SignalEmbeddingContract(
+            model_id="fake-embed",
+            model_revision="different-revision",
+            dimension=3,
+            normalization="L2",
+            input_format="query.v1",
+            distance_metric="COSINE",
+        ),
+    )
+    monkeypatch.setattr(
+        process_signal_jobs_script,
+        "OpenAiSignalEmbeddingAdapter",
+        lambda: pytest.fail("provider must not be initialized"),
+    )
+
+    with pytest.raises(RuntimeError, match="model_revision"):
+        await process_signal_jobs_script.run(max_jobs=1)
+
+    async with session_factory() as session:
+        job = await session.scalar(select(SignalProcessingJob))
+        assert job is not None
+        assert job.status == SignalProcessingStatus.PENDING.value
+        assert job.attempt_count == 0
 
 
 @pytest.mark.parametrize(
