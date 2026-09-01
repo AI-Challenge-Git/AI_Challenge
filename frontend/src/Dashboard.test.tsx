@@ -55,6 +55,15 @@ describe("운영 상황판", () => {
     expect(dashboardRetryDelay(new ApiError("요청이 너무 많습니다.", "RATE_LIMITED", 429, 37))).toBe(37_000);
   });
 
+  it("기준선 상태에 따라 직전 시간대 또는 증가 배율을 표시한다", () => {
+    const zeroBaseline = renderToStaticMarkup(<DashboardData snapshot={{ ...snapshot, baseline_status: "ZERO_BASELINE" }} />);
+    const available = renderToStaticMarkup(<DashboardData snapshot={{ ...snapshot, baseline_status: "AVAILABLE", baseline_ratio: 2 }} />);
+
+    expect(zeroBaseline).toContain("직전 시간대 제보 없음");
+    expect(available).toContain("2배");
+    expect(available).toContain("직전 시간대 대비 증가 배율");
+  });
+
   it("활성 실험 정책의 군집 방식을 승인 완료로 과장하지 않는다", () => {
     const html = renderToStaticMarkup(<DashboardData snapshot={{
       ...snapshot,

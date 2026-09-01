@@ -402,7 +402,11 @@ export async function discardAnalysis(analysisId: string, clientRequestId: strin
 }
 
 export async function getSignalDashboard(limit = 50, offset = 0): Promise<SignalDashboard> {
-  return request<SignalDashboard>(`/api/signals/dashboard?limit=${limit}&offset=${offset}`);
+  const dashboard = await request<SignalDashboard>(`/api/signals/dashboard?limit=${limit}&offset=${offset}`);
+  if (dashboard.baseline_status === "AVAILABLE" && dashboard.baseline_ratio == null) {
+    throw new ApiError("운영 상황판 기준선 응답 형식이 올바르지 않습니다.", "INVALID_DASHBOARD_CONTRACT");
+  }
+  return dashboard;
 }
 
 export async function loginAgent(employeeId: string, password: string): Promise<AgentSession> {
