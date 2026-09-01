@@ -11,6 +11,10 @@ from app.codes import (
 )
 from app.db import engine, session_factory
 from app.models import ClusteringPolicy
+from app.services.signal_embeddings import (
+    embedding_contract_mismatches,
+    load_signal_embedding_contract,
+)
 
 
 def _positive_int(value: str) -> int:
@@ -61,6 +65,20 @@ def parse_args() -> argparse.Namespace:
 async def run(arguments: argparse.Namespace) -> None:
     if arguments.review_priority_threshold < arguments.min_unique_sessions:
         raise ValueError("review threshold cannot be below minimum unique sessions")
+    if arguments.activate:
+        mismatches = embedding_contract_mismatches(
+            load_signal_embedding_contract(),
+            model_id=arguments.model_id,
+            model_revision=arguments.model_revision,
+            dimension=arguments.dimension,
+            normalization=arguments.normalization,
+            input_format=arguments.input_format,
+            distance_metric="COSINE",
+        )
+        if mismatches:
+            raise ValueError(
+                "active policy does not match runtime embedding contract: " + ", ".join(mismatches)
+            )
     try:
         async with session_factory() as session, session.begin():
             await session.execute(select(ClusteringPolicy.id).with_for_update())

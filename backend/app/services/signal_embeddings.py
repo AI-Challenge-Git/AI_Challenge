@@ -22,6 +22,16 @@ class RawEmbedding:
     vector: list[float]
 
 
+@dataclass(frozen=True, slots=True)
+class SignalEmbeddingContract:
+    model_id: str
+    model_revision: str
+    dimension: int
+    normalization: str
+    input_format: str
+    distance_metric: str
+
+
 EmbeddingCall = Callable[[str], RawEmbedding]
 
 
@@ -32,6 +42,45 @@ class AiEmbeddingModule(Protocol):
     DISTANCE_METRIC: str
 
     def get_symptom_embedding(self, symptom_text: str) -> list[float]: ...
+
+
+def load_signal_embedding_contract(
+    settings: Settings | None = None,
+) -> SignalEmbeddingContract:
+    configured = settings or get_settings()
+    revision = configured.signal_embedding_model_revision
+    if revision is None or not revision.strip():
+        raise RuntimeError("SIGNAL_EMBEDDING_MODEL_REVISION is required")
+    ai_embedding = cast(AiEmbeddingModule, importlib.import_module("app.embedding"))
+    return SignalEmbeddingContract(
+        model_id=ai_embedding.EMBEDDING_MODEL,
+        model_revision=revision.strip(),
+        dimension=ai_embedding.EMBEDDING_DIMENSION,
+        normalization=ai_embedding.NORMALIZATION.upper(),
+        input_format=EXPECTED_INPUT_FORMAT,
+        distance_metric=ai_embedding.DISTANCE_METRIC.upper(),
+    )
+
+
+def embedding_contract_mismatches(
+    contract: SignalEmbeddingContract,
+    *,
+    model_id: str,
+    model_revision: str,
+    dimension: int,
+    normalization: str,
+    input_format: str,
+    distance_metric: str,
+) -> tuple[str, ...]:
+    supplied = {
+        "model_id": model_id,
+        "model_revision": model_revision,
+        "dimension": dimension,
+        "normalization": normalization,
+        "input_format": input_format,
+        "distance_metric": distance_metric,
+    }
+    return tuple(field for field, actual in supplied.items() if actual != getattr(contract, field))
 
 
 def _call_ai_embedding(technical_symptom: str) -> RawEmbedding:
