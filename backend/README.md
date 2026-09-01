@@ -33,9 +33,9 @@ docker compose up --build
 - 장애 의심 신호 상황판: `GET http://localhost:8000/api/signals/dashboard`
 - 운영자 신호 변경: `/api/operator/signals/*`
 
-분석 API는 `pending`, `confirmation`, `failed`, `complete` 상태를 반환합니다. Compose와 운영은
-`AI_ADAPTER=openai`로 실제 provider adapter를 사용하며 production에서 Fake 설정은 시작 단계에서
-거부됩니다. deterministic Fake는 외부 장애를 재현하는 테스트에서만 사용합니다. 백엔드 전체 호출
+분석 API는 `pending`, `confirmation`, `failed`, `complete` 상태를 반환합니다. runtime adapter는
+`AI_ADAPTER=openai`만 허용하며 실제 provider를 사용합니다. deterministic Fake는 dependency를
+명시적으로 교체하는 테스트에서만 사용하며 runtime 설정으로 선택할 수 없습니다. 백엔드 전체 호출
 timeout은 90초이고 동기 provider 호출은 기본 4개로 제한됩니다.
 
 스크린샷 multipart 요청은 `screenshot_redacted_confirmed=true`가 필수입니다. 이미지가 없는

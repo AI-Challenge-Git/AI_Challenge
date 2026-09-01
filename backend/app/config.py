@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = []
     active_policy_version: str = "kb-trading-failure-guidance-2026-08-18"
     pii_policy_version: str = "pii-mask.v1"
-    ai_adapter: Literal["fake", "openai"] = "fake"
+    ai_adapter: Literal["openai"] = "openai"
     ai_timeout_seconds: float = Field(default=90.0, gt=0, le=120)
     ai_max_concurrency: int = Field(default=4, ge=1, le=32)
     openai_api_key: SecretStr | None = None
@@ -60,12 +60,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_production_secrets(self) -> "Settings":
-        if self.ai_adapter == "openai" and (
+        if self.app_env == "production" and (
             self.openai_api_key is None or not self.openai_api_key.get_secret_value().strip()
         ):
-            raise ValueError("OPENAI_API_KEY must be configured for the openai AI adapter")
-        if self.app_env == "production" and self.ai_adapter != "openai":
-            raise ValueError("production requires the openai AI adapter")
+            raise ValueError("production requires OPENAI_API_KEY")
         if self.app_env == "production" and (
             self.signal_embedding_model_revision is None
             or not self.signal_embedding_model_revision.strip()

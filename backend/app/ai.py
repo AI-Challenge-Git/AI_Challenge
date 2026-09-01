@@ -3,7 +3,6 @@ from functools import lru_cache
 from typing import Protocol
 
 from app.codes import FieldStatus
-from app.config import get_settings
 from app.real_extractor_v5 import ExtractFailureReason, RealDualExtractor
 from app.schemas import (
     CandidateField,
@@ -28,7 +27,7 @@ def _unknown_candidate[T]() -> CandidateField[T]:
 
 
 class FakeDualExtractor:
-    """Deterministic contract fixture used until the AI-owned schema is approved."""
+    """Deterministic contract fixture for dependency-overridden tests only."""
 
     schema_version = "dual-extraction.fake.v1"
     taxonomy_version = "issue-taxonomy.pending"
@@ -103,8 +102,6 @@ class OpenAIDualExtractorAdapter:
 
 @lru_cache
 def get_dual_extractor() -> DualExtractor:
-    if get_settings().ai_adapter == "fake":
-        return FakeDualExtractor()
     return OpenAIDualExtractorAdapter()
 
 
