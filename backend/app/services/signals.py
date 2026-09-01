@@ -240,6 +240,174 @@ def _validate_embedding_metadata(
     )
 
 
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    numerator = math.fsum(a * b for a, b in zip(left, right, strict=True))
+    left_norm = math.sqrt(math.fsum(value * value for value in left))
+    right_norm = math.sqrt(math.fsum(value * value for value in right))
+    if left_norm == 0 or right_norm == 0:
+        return 0.0
+    return numerator / (left_norm * right_norm)
+
+
+def _average_linkage_similarity(
+    left: list[list[float]],
+    right: list[list[float]],
+) -> float:
+    return math.fsum(
+        _cosine_similarity(left_vector, right_vector)
+        for left_vector in left
+        for right_vector in right
+    ) / (len(left) * len(right))
+
+
+async def _reconcile_average_linkage_clusters(
+    session: AsyncSession,
+    policy: ClusteringPolicy,
+    symptom: TechnicalSymptom,
+    *,
+    report_id: UUID,
+    anchor: datetime,
+    now: datetime,
+) -> SignalCluster | None:
+    if policy.linkage_method != ClusteringLinkageMethod.AVERAGE.value:
+        return None
+    window_delta = timedelta(seconds=policy.window_seconds)
+    known_submission = _known_submission_filter(symptom.submission_status)
+    cluster_filters = [
+        SignalCluster.policy_id == policy.id,
+        SignalCluster.status.in_(
+            (SignalStatus.CANDIDATE.value, SignalStatus.SIGNAL_DETECTED.value)
+        ),
+        SignalCluster.official_incident.is_(False),
+        SignalCluster.channel == symptom.channel,
+        SignalCluster.feature_area == symptom.feature_area,
+        SignalCluster.reported_symptom_type == symptom.issue_type,
+        SignalCluster.first_report_at <= anchor + window_delta,
+        SignalCluster.last_report_at >= anchor - window_delta,
+        ~select(SignalRelevanceLock.id)
+        .where(SignalRelevanceLock.signal_id == SignalCluster.id)
+        .exists(),
+    ]
+    if known_submission is not None:
+        cluster_filters.append(
+            (SignalCluster.submission_status_filter.is_(None))
+            | (SignalCluster.submission_status_filter == known_submission)
+        )
+    if symptom.error_code is not None:
+        cluster_filters.append(
+            (SignalCluster.error_code_filter.is_(None))
+            | (SignalCluster.error_code_filter == symptom.error_code)
+        )
+    clusters = list(
+        (
+            await session.scalars(
+                select(SignalCluster)
+                .where(*cluster_filters)
+                .order_by(SignalCluster.id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    if len(clusters) < 2:
+        return None
+
+    cluster_by_id = {cluster.id: cluster for cluster in clusters}
+    vectors_by_cluster: dict[UUID, list[list[float]]] = {cluster.id: [] for cluster in clusters}
+    vector_rows = (
+        await session.execute(
+            select(SignalMember.signal_id, TechnicalEmbedding.embedding)
+            .join(TechnicalEmbedding, TechnicalEmbedding.id == SignalMember.embedding_id)
+            .join(Report, Report.id == SignalMember.report_id)
+            .where(
+                SignalMember.signal_id.in_(cluster_by_id),
+                Report.received_at >= anchor - window_delta,
+                Report.received_at <= anchor + window_delta,
+            )
+            .order_by(SignalMember.signal_id, SignalMember.id)
+        )
+    ).all()
+    for signal_id, vector in vector_rows:
+        vectors_by_cluster[signal_id].append(list(vector))
+
+    # ponytail: exact O(n^2) scan is bounded by the 600-second gate window; move pair scoring to
+    # batched SQL only when production volume proves this worker-side calculation is too slow.
+    while True:
+        best: tuple[float, UUID, UUID] | None = None
+        active_ids = sorted(
+            signal_id for signal_id, vectors in vectors_by_cluster.items() if vectors
+        )
+        for index, left_id in enumerate(active_ids):
+            for right_id in active_ids[index + 1 :]:
+                if not _same_automatic_gate(cluster_by_id[left_id], cluster_by_id[right_id]):
+                    continue
+                score = _average_linkage_similarity(
+                    vectors_by_cluster[left_id], vectors_by_cluster[right_id]
+                )
+                candidate = (score, left_id, right_id)
+                if (
+                    best is None
+                    or score > best[0] + COSINE_COMPARISON_TOLERANCE
+                    or (
+                        abs(score - best[0]) <= COSINE_COMPARISON_TOLERANCE
+                        and (left_id, right_id) < (best[1], best[2])
+                    )
+                ):
+                    best = candidate
+        if best is None or best[0] < policy.similarity_threshold - COSINE_COMPARISON_TOLERANCE:
+            break
+
+        _, target_id, source_id = best
+        target = cluster_by_id[target_id]
+        source = cluster_by_id[source_id]
+        source_members = list(
+            (
+                await session.scalars(
+                    select(SignalMember)
+                    .where(SignalMember.signal_id == source.id)
+                    .order_by(SignalMember.id)
+                    .with_for_update()
+                )
+            ).all()
+        )
+        for member in source_members:
+            member.signal_id = target.id
+        source_before = source.status
+        source.status = SignalStatus.CLOSED.value
+        source.closure_reason = SignalClosureReason.MERGED.value
+        source.closed_at = now
+        source.raw_report_count = 0
+        source.reporting_unique_sessions = 0
+        source.review_priority = False
+        source.representative_symptom_id = None
+        if target.submission_status_filter is None:
+            target.submission_status_filter = source.submission_status_filter
+        if target.error_code_filter is None:
+            target.error_code_filter = source.error_code_filter
+        vectors_by_cluster[target_id].extend(vectors_by_cluster.pop(source_id))
+        await session.flush()
+        await _recalculate_cluster(
+            session,
+            target,
+            now=now,
+            deletion_recalculation=False,
+        )
+        session.add(
+            _audit_event(
+                signal_id=source.id,
+                action="SIGNAL_AUTOMATICALLY_MERGED",
+                now=now,
+                before_status=source_before,
+                after_status=source.status,
+                reason="AVERAGE_LINKAGE_THRESHOLD",
+                target_signal_id=target.id,
+            )
+        )
+    current_signal_id = await session.scalar(
+        select(SignalMember.signal_id).where(SignalMember.report_id == report_id)
+    )
+    return cluster_by_id.get(current_signal_id) if current_signal_id is not None else None
+
+
 async def _recalculate_cluster(
     session: AsyncSession,
     cluster: SignalCluster,
@@ -690,6 +858,16 @@ async def process_next_signal_job(
             now=now,
             deletion_recalculation=False,
         )
+        reconciled_cluster = await _reconcile_average_linkage_clusters(
+            session,
+            policy,
+            symptom,
+            report_id=report.id,
+            anchor=report.received_at,
+            now=now,
+        )
+        if reconciled_cluster is not None:
+            cluster = reconciled_cluster
         job.status = SignalProcessingStatus.COMPLETED.value
         job.safe_error_code = None
         job.completed_at = now

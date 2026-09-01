@@ -13,8 +13,21 @@ API process가 아니라 단일 pre-deploy command인 `alembic upgrade head`에�
 | Service | Start command | Schedule |
 | --- | --- | --- |
 | API | Dockerfile CMD | 상시 |
-| Signal worker | `python -m scripts.process_signal_jobs --max-jobs 100` | `*/5 * * * *` |
+| Signal worker | `python -m scripts.process_signal_jobs --forever --max-jobs 100` | always-on, 5-second idle polling |
 | Retention worker | `python -m scripts.purge_data --execute --batch-size 100` | `17 * * * *` |
+
+Signal worker is an always-on Railway worker, not a cron job. It polls every
+`SIGNAL_WORKER_POLL_SECONDS` (default 5 seconds). Retryable provider failures remain queued with
+backoff; configuration failures terminate the process so Railway can restart and alert it.
+
+After migrations and one-time provisioning, run the read-only deployment gate:
+
+```powershell
+python -m scripts.check_runtime_readiness
+```
+
+Deployment is not ready until it reports an active signal policy matching the runtime embedding
+contract, an active KRX Symbol Master, and at least one active AGENT and OPERATOR account.
 
 `/backend/railway.json`은 API service에만 연결한다. Signal worker는
 `/backend/railway.signal-worker.json`, Retention worker는
