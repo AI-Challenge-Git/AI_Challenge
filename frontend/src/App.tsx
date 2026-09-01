@@ -382,7 +382,7 @@ export default function App() {
                     if (error) setError(null);
                   }}
                   placeholder="예: 9시쯤 KB 앱에서 매도 주문을 눌렀는데 계속 로딩되고 주문번호를 확인하지 못했어요."
-                  aria-describedby="report-help report-error"
+                  aria-describedby="report-date-help report-help report-error"
                   aria-label="MTS 오류 상황"
                   aria-invalid={Boolean(error)}
                 />
@@ -391,6 +391,7 @@ export default function App() {
                 </span>
               </div>
               <div className="input-meta">
+                <p id="report-date-help">날짜 입력 시 장애가 발생한 년도와 월일을 명확히 작성해주시기를 바랍니다.</p>
                 <p id="report-help">계좌번호·전화번호·이메일은 자동 마스킹됩니다. 주민등록번호·비밀번호·OTP가 포함되면 요청을 거부합니다.</p>
               </div>
               <label className="image-upload">

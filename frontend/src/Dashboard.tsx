@@ -31,12 +31,17 @@ export function DashboardData({ snapshot }: { snapshot: SignalDashboard }) {
   const visibleItems = snapshot.items.filter(({ status }) => status === "SIGNAL_DETECTED" || status === "UNDER_REVIEW");
   const hourlyVolume = snapshot.hourly_volume.slice(-12);
   const maxHourlyReports = Math.max(1, ...hourlyVolume.map(({ raw_report_count }) => raw_report_count));
+  const baseline = snapshot.baseline_status === "INSUFFICIENT_HISTORY"
+    ? { value: "비교 이력 축적 중", detail: "초기 운영의 정상 상태입니다." }
+    : snapshot.baseline_status === "ZERO_BASELINE"
+      ? { value: "직전 시간대 제보 없음", detail: "비교할 직전 기준선이 없습니다." }
+      : { value: `${snapshot.baseline_ratio?.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}배`, detail: "직전 시간대 대비 증가 배율" };
 
   return (
     <>
       <section className="dashboard-card signal-summary">
         <div><span>활성 장애 의심 신호</span><strong>{visibleItems.length}개</strong></div>
-        <div><span>평소 대비 기준선</span><strong>비교 이력 축적 중</strong><small>초기 운영의 정상 상태입니다.</small></div>
+        <div><span>직전 시간대 대비</span><strong>{baseline.value}</strong><small>{baseline.detail}</small></div>
         <div>
           <span>적용 정책</span>
           <strong>{snapshot.applied_policy ? `${snapshot.applied_policy.policy_version} · ${snapshot.applied_policy.status === "EXPERIMENTAL" ? "실험 정책" : snapshot.applied_policy.status === "RETIRED" ? "종료 정책" : "적용 중"}` : "활성 정책 없음"}</strong>

@@ -424,7 +424,7 @@ export interface components {
          * BaselineStatus
          * @enum {string}
          */
-        BaselineStatus: "INSUFFICIENT_HISTORY";
+        BaselineStatus: "INSUFFICIENT_HISTORY" | "ZERO_BASELINE" | "AVAILABLE";
         /** CandidateField[IssueType] */
         CandidateField_IssueType_: {
             value: components["schemas"]["IssueType"] | null;
@@ -944,7 +944,7 @@ export interface components {
             policy_status: string;
             baseline_status: components["schemas"]["BaselineStatus"];
             /** Baseline Ratio */
-            baseline_ratio?: null;
+            baseline_ratio?: number | null;
             /**
              * Official Incident
              * @constant
@@ -967,7 +967,7 @@ export interface components {
             applied_policy: components["schemas"]["SignalPolicySnapshot"] | null;
             baseline_status: components["schemas"]["BaselineStatus"];
             /** Baseline Ratio */
-            baseline_ratio?: null;
+            baseline_ratio?: number | null;
             /** Limit */
             limit: number;
             /** Offset */
@@ -1540,6 +1540,15 @@ export interface operations {
             };
             /** @description Invalid or sensitive input */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

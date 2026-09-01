@@ -106,6 +106,23 @@ describe("백엔드 분석 DTO 연동", () => {
     );
   });
 
+  it("AVAILABLE 기준선에 배율이 없으면 계약 오류로 처리한다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      updated_at: "2026-08-30T00:06:00Z",
+      items: [],
+      hourly_volume: [],
+      applied_policy: null,
+      baseline_status: "AVAILABLE",
+      baseline_ratio: null,
+      limit: 50,
+      offset: 0,
+    }))));
+    const { getSignalDashboard } = await import("./api");
+
+    await expect(getSignalDashboard()).rejects.toMatchObject({ code: "INVALID_DASHBOARD_CONTRACT" });
+  });
+
   it("종목코드를 대문자 영숫자 6자리로 정규화한다", async () => {
     const { normalizeSymbolCode } = await import("./api");
 
