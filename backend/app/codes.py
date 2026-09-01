@@ -1,5 +1,7 @@
 from enum import StrEnum
 
+SUPPORTED_BASELINE_POLICY_VERSION = "previous-window-distinct-sessions.v1"
+
 
 class ReportStatus(StrEnum):
     ANALYSIS_PENDING = "ANALYSIS_PENDING"
@@ -71,17 +73,21 @@ class SignalProcessingStatus(StrEnum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
     FAILED = "FAILED"
+    DEAD_LETTER = "DEAD_LETTER"
     COMPLETED = "COMPLETED"
 
 
 class BaselineStatus(StrEnum):
     INSUFFICIENT_HISTORY = "INSUFFICIENT_HISTORY"
+    ZERO_BASELINE = "ZERO_BASELINE"
+    AVAILABLE = "AVAILABLE"
 
 
 class RateLimitScope(StrEnum):
     AGENT_LOGIN_FAILURE = "AGENT_LOGIN_FAILURE"
     AGENT_CARD_LOOKUP = "AGENT_CARD_LOOKUP"
     SIGNAL_DASHBOARD = "SIGNAL_DASHBOARD"
+    REPORT_ANALYZE = "REPORT_ANALYZE"
 
 
 class AuditOutcome(StrEnum):

@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from uuid import UUID
 from weakref import WeakKeyDictionary
@@ -19,7 +19,13 @@ from app.attachments import (
     PreparedAttachment,
     attachment_data_url,
 )
-from app.codes import AnalysisStatus, FeatureArea, ReportStatus, TechnicalChannel
+from app.codes import (
+    AnalysisStatus,
+    FeatureArea,
+    RateLimitScope,
+    ReportStatus,
+    TechnicalChannel,
+)
 from app.config import Settings
 from app.errors import ServiceError
 from app.models import (
@@ -56,6 +62,7 @@ from app.security import (
     SensitiveInputError,
     canonical_json_sha256,
     ensure_confirmation_strings_are_safe,
+    keyed_fingerprint,
     make_reference_number,
     normalize_report_text,
     reference_digest,
@@ -77,6 +84,7 @@ from app.services.lifecycle import (
     retention_deadline,
     utc_now,
 )
+from app.services.rate_limits import consume_rate_limit, rate_limit_error
 from app.services.signals import (
     detach_report_from_signals,
     enqueue_signal_processing,
@@ -212,6 +220,7 @@ async def analyze_report(
     attachment_store: AttachmentStore,
     prepared_attachment: PreparedAttachment | None = None,
     *,
+    client_identifier: str,
     now: datetime | None = None,
 ) -> ReportAnalysisResponse:
     received_at = now or utc_now()
@@ -225,6 +234,7 @@ async def analyze_report(
 
     payload_sha256 = _analyze_payload_sha256(request, prepared_attachment)
     attachment_object_key: str | None = None
+    should_store_attachment = False
     async with session.begin():
         await _lock_idempotency_key(
             session, principal_digest, "ANALYZE_REPORT", request.client_request_id
@@ -253,54 +263,94 @@ async def analyze_report(
                 Report.client_request_id == request.client_request_id,
             )
             .options(selectinload(Report.analyses), selectinload(Report.attachment))
+            .with_for_update()
         )
         if existing is not None:
             if not hmac.compare_digest(existing.request_payload_sha256, payload_sha256):
                 raise ServiceError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 ID의 내용이 다릅니다.")
             analysis = max(existing.analyses, key=lambda item: item.version)
-            return _analysis_response(existing, analysis)
-
-        policy = await session.scalar(
-            select(PolicySnapshot).where(PolicySnapshot.version == settings.active_policy_version)
-        )
-        if policy is None:
-            raise ServiceError(503, "POLICY_UNAVAILABLE", "현재 정책을 사용할 수 없습니다.")
-
-        report = Report(
-            session_digest=principal_digest,
-            client_request_id=request.client_request_id,
-            policy_snapshot_id=policy.id,
-            pii_policy_version=settings.pii_policy_version,
-            masked_text=scan.masked_text,
-            request_payload_sha256=payload_sha256,
-            status=ReportStatus.ANALYSIS_PENDING.value,
-            received_at=received_at,
-            purge_at=retention_deadline(received_at),
-            updated_at=received_at,
-        )
-        analysis = ReportAnalysis(
-            report=report,
-            version=1,
-            schema_version=extractor.schema_version,
-            taxonomy_version=extractor.taxonomy_version,
-            adapter_name=extractor.adapter_name,
-            model_id=extractor.model_id,
-            status=AnalysisStatus.PENDING.value,
-        )
-        if prepared_attachment is not None:
-            attachment_object_key = secrets.token_urlsafe(32)
-            report.attachment = Attachment(
-                object_key=attachment_object_key,
-                content_type=prepared_attachment.content_type,
-                byte_size=len(prepared_attachment.content),
-                width=prepared_attachment.width,
-                height=prepared_attachment.height,
-                content_sha256=prepared_attachment.sha256,
+            stale_before = received_at - timedelta(seconds=settings.analysis_pending_stale_seconds)
+            if not (
+                existing.status == ReportStatus.ANALYSIS_PENDING.value
+                and analysis.status == AnalysisStatus.PENDING.value
+                and existing.updated_at <= stale_before
+            ):
+                return _analysis_response(existing, analysis)
+            report = existing
+            report.updated_at = received_at
+            if prepared_attachment is not None:
+                if report.attachment is None:
+                    report.attachment = Attachment(
+                        object_key=secrets.token_urlsafe(32),
+                        content_type=prepared_attachment.content_type,
+                        byte_size=len(prepared_attachment.content),
+                        width=prepared_attachment.width,
+                        height=prepared_attachment.height,
+                        content_sha256=prepared_attachment.sha256,
+                    )
+                attachment_object_key = report.attachment.object_key
+                should_store_attachment = True
+        else:
+            policy = await session.scalar(
+                select(PolicySnapshot).where(
+                    PolicySnapshot.version == settings.active_policy_version
+                )
             )
-        session.add(report)
+            if policy is None:
+                raise ServiceError(503, "POLICY_UNAVAILABLE", "현재 정책을 사용할 수 없습니다.")
+
+            report = Report(
+                session_digest=principal_digest,
+                client_request_id=request.client_request_id,
+                policy_snapshot_id=policy.id,
+                pii_policy_version=settings.pii_policy_version,
+                masked_text=scan.masked_text,
+                request_payload_sha256=payload_sha256,
+                status=ReportStatus.ANALYSIS_PENDING.value,
+                received_at=received_at,
+                purge_at=retention_deadline(received_at),
+                updated_at=received_at,
+            )
+            analysis = ReportAnalysis(
+                report=report,
+                version=1,
+                schema_version=extractor.schema_version,
+                taxonomy_version=extractor.taxonomy_version,
+                adapter_name=extractor.adapter_name,
+                model_id=extractor.model_id,
+                status=AnalysisStatus.PENDING.value,
+            )
+            if prepared_attachment is not None:
+                attachment_object_key = secrets.token_urlsafe(32)
+                report.attachment = Attachment(
+                    object_key=attachment_object_key,
+                    content_type=prepared_attachment.content_type,
+                    byte_size=len(prepared_attachment.content),
+                    width=prepared_attachment.width,
+                    height=prepared_attachment.height,
+                    content_sha256=prepared_attachment.sha256,
+                )
+                should_store_attachment = True
+            session.add(report)
+
+        client_fingerprint = keyed_fingerprint(
+            client_identifier,
+            "report-analyze-client",
+            settings.rate_limit_hmac_key.get_secret_value().encode(),
+        )
+        rate = await consume_rate_limit(
+            session,
+            scope=RateLimitScope.REPORT_ANALYZE,
+            principal_fingerprint=client_fingerprint,
+            client_fingerprint=client_fingerprint,
+            now=received_at,
+            window_seconds=settings.report_analyze_window_seconds,
+        )
+        if rate.count > settings.report_analyze_limit:
+            raise rate_limit_error(rate.expires_at, received_at)
         await session.flush()
 
-    if prepared_attachment is not None and attachment_object_key is not None:
+    if should_store_attachment and prepared_attachment is not None and attachment_object_key:
         try:
             await attachment_store.put(attachment_object_key, prepared_attachment.content)
         except AttachmentStorageError as exc:

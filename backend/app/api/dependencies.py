@@ -1,9 +1,10 @@
 import asyncio
 from collections.abc import Callable
 from datetime import datetime
+from ipaddress import ip_address
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,18 @@ def get_clock() -> Callable[[], datetime]:
 
 def get_security_sleeper() -> Sleeper:
     return asyncio.sleep
+
+
+def rate_limit_client_identifier(request: Request, *, app_env: str) -> str:
+    if app_env == "production":
+        railway_client = request.headers.get("x-real-ip")
+        if railway_client is None:
+            return "missing-railway-client"
+        try:
+            return ip_address(railway_client.strip()).compressed
+        except ValueError:
+            return "invalid-railway-client"
+    return request.client.host if request.client is not None else "unknown-client"
 
 
 def customer_principal(

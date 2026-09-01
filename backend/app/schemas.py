@@ -555,9 +555,15 @@ class SignalDashboardItem(ApiModel):
     policy_version: str
     policy_status: str
     baseline_status: BaselineStatus
-    baseline_ratio: None = None
+    baseline_ratio: float | None = Field(default=None, ge=0)
     official_incident: Literal[False]
     official_notice_url: str | None
+
+    @model_validator(mode="after")
+    def validate_baseline(self) -> "SignalDashboardItem":
+        if (self.baseline_status is BaselineStatus.AVAILABLE) != (self.baseline_ratio is not None):
+            raise ValueError("baseline ratio is required only when baseline is available")
+        return self
 
 
 class SignalHourlyVolume(ApiModel):
@@ -586,9 +592,15 @@ class SignalDashboardResponse(ApiModel):
     hourly_volume: list[SignalHourlyVolume]
     applied_policy: SignalPolicySnapshot | None
     baseline_status: BaselineStatus
-    baseline_ratio: None = None
+    baseline_ratio: float | None = Field(default=None, ge=0)
     limit: int
     offset: int
+
+    @model_validator(mode="after")
+    def validate_baseline(self) -> "SignalDashboardResponse":
+        if (self.baseline_status is BaselineStatus.AVAILABLE) != (self.baseline_ratio is not None):
+            raise ValueError("baseline ratio is required only when baseline is available")
+        return self
 
 
 class SignalProcessingResult(ApiModel):

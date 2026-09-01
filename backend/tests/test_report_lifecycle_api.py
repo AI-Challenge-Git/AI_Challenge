@@ -3,7 +3,7 @@ import base64
 import json
 import os
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -11,9 +11,10 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 from PIL import Image, PngImagePlugin
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, null, select, update
 
 from app.ai import FakeDualExtractor, get_dual_extractor
+from app.api.dependencies import get_clock
 from app.attachments import AttachmentStorageError, LocalAttachmentStore, get_attachment_store
 from app.codes import AnalysisStatus
 from app.config import Settings, get_settings
@@ -25,6 +26,7 @@ from app.models import (
     ConsultationCard,
     IdempotencyRecord,
     ObjectDeletionJob,
+    RateLimitBucket,
     Report,
     ReportAnalysis,
     Symbol,
@@ -122,6 +124,7 @@ async def _clean_business_data() -> None:
         await session.execute(delete(IdempotencyRecord))
         await session.execute(delete(AuditLog))
         await session.execute(delete(ObjectDeletionJob))
+        await session.execute(delete(RateLimitBucket))
 
 
 @pytest.fixture(autouse=True)
@@ -524,6 +527,84 @@ async def test_concurrent_analyze_retries_create_one_report() -> None:
     assert first.status_code == second.status_code == 200
     assert {first.json()["status"], second.json()["status"]} == {"confirmation", "pending"}
     assert extractor.calls == 1
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Report)) == 1
+
+
+async def test_public_analysis_rate_limit_is_atomic_and_returns_retry_after() -> None:
+    now = datetime(2026, 9, 1, tzinfo=UTC)
+    settings = Settings(report_analyze_limit=2, report_analyze_window_seconds=60)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_clock] = lambda: lambda: now
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            responses = await asyncio.gather(
+                *(
+                    client.post(
+                        "/api/reports/analyze",
+                        headers=_headers(session_seed),
+                        json={
+                            "text": (
+                                "공개 분석 호출 제한을 검증하기 위한 비식별 합성 제보 문장입니다."
+                            ),
+                            "client_request_id": str(uuid4()),
+                        },
+                    )
+                    for session_seed in range(5)
+                )
+            )
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+        app.dependency_overrides.pop(get_clock, None)
+
+    statuses = [response.status_code for response in responses]
+    assert statuses.count(200) == 2
+    assert statuses.count(429) == 3
+    assert {
+        response.headers["retry-after"] for response in responses if response.status_code == 429
+    } == {"60"}
+
+
+async def test_stale_pending_analysis_is_reprocessed_with_the_same_report() -> None:
+    started_at = datetime(2026, 9, 1, tzinfo=UTC)
+    current_time = [started_at]
+    extractor = CapturingExtractor()
+    settings = Settings(analysis_pending_stale_seconds=180)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_clock] = lambda: lambda: current_time[0]
+    app.dependency_overrides[get_dual_extractor] = lambda: extractor
+    request_id = str(uuid4())
+    payload = {
+        "text": "재시작 뒤 고착된 분석을 다시 처리하기 위한 비식별 합성 제보 문장입니다.",
+        "client_request_id": request_id,
+    }
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.post("/api/reports/analyze", headers=_headers(), json=payload)
+            async with session_factory() as session, session.begin():
+                await session.execute(
+                    update(Report).values(status="ANALYSIS_PENDING", updated_at=started_at)
+                )
+                await session.execute(
+                    update(ReportAnalysis).values(
+                        status="PENDING",
+                        technical_candidate=null(),
+                        consultation_candidate=null(),
+                        completed_at=None,
+                    )
+                )
+            current_time[0] = started_at + timedelta(seconds=181)
+            replay = await client.post("/api/reports/analyze", headers=_headers(), json=payload)
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+        app.dependency_overrides.pop(get_clock, None)
+        app.dependency_overrides.pop(get_dual_extractor, None)
+
+    assert first.status_code == replay.status_code == 200
+    assert first.json()["status"] == replay.json()["status"] == "confirmation"
+    assert len(extractor.inputs) == 2
     async with session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(Report)) == 1
 

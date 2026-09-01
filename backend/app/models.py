@@ -735,14 +735,14 @@ class SignalProcessingJob(Base):
     __tablename__ = "signal_processing_jobs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('PENDING', 'PROCESSING', 'FAILED', 'COMPLETED')",
+            "status IN ('PENDING', 'PROCESSING', 'FAILED', 'DEAD_LETTER', 'COMPLETED')",
             name="status_value",
         ),
         CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
         CheckConstraint(
             "safe_error_code IS NULL OR safe_error_code IN "
             "('EMBEDDING_UNAVAILABLE', 'INVALID_EMBEDDING', 'POLICY_MISMATCH', "
-            "'EMBEDDING_INPUT_UNAVAILABLE')",
+            "'EMBEDDING_INPUT_UNAVAILABLE', 'RETRY_EXHAUSTED')",
             name="safe_error_code_value",
         ),
         Index("ix_signal_processing_jobs_ready", "status", "next_attempt_at"),
@@ -1028,7 +1028,8 @@ class RateLimitBucket(Base):
     __table_args__ = (
         UniqueConstraint("scope", "principal_fingerprint", "client_fingerprint"),
         CheckConstraint(
-            "scope IN ('AGENT_LOGIN_FAILURE', 'AGENT_CARD_LOOKUP', 'SIGNAL_DASHBOARD')",
+            "scope IN ('AGENT_LOGIN_FAILURE', 'AGENT_CARD_LOOKUP', 'SIGNAL_DASHBOARD', "
+            "'REPORT_ANALYZE')",
             name="scope_value",
         ),
         CheckConstraint(

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from app.codes import (
+    SUPPORTED_BASELINE_POLICY_VERSION,
     ClusteringLinkageMethod,
     ClusteringPolicyStatus,
     ClusterRepresentativeMethod,
@@ -40,6 +41,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--normalization", required=True, choices=("L2", "NONE"))
     parser.add_argument("--input-format", required=True)
     parser.add_argument("--taxonomy-version", required=True)
+    parser.add_argument(
+        "--baseline-policy-version",
+        choices=(SUPPORTED_BASELINE_POLICY_VERSION,),
+        default=SUPPORTED_BASELINE_POLICY_VERSION,
+    )
     parser.add_argument("--window-seconds", type=_positive_int, default=600)
     parser.add_argument("--min-unique-sessions", type=_positive_int, default=5)
     parser.add_argument("--review-priority-threshold", type=_positive_int, default=10)
@@ -115,6 +121,7 @@ async def run(arguments: argparse.Namespace) -> None:
                 linkage_method=arguments.linkage_method,
                 representative_method=arguments.representative_method,
                 taxonomy_version=arguments.taxonomy_version,
+                baseline_policy_version=arguments.baseline_policy_version,
                 created_at=datetime.now(UTC),
             )
             session.add(policy)

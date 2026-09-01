@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.codes import (
+    SUPPORTED_BASELINE_POLICY_VERSION,
     BaselineStatus,
     ClusteringLinkageMethod,
     ClusteringPolicyStatus,
@@ -76,6 +77,12 @@ if TYPE_CHECKING:
 
 SAFE_PROCESSING_ERRORS = {
     "EMBEDDING_UNAVAILABLE",
+    "INVALID_EMBEDDING",
+    "POLICY_MISMATCH",
+    "EMBEDDING_INPUT_UNAVAILABLE",
+    "RETRY_EXHAUSTED",
+}
+PERMANENT_PROCESSING_ERRORS = {
     "INVALID_EMBEDDING",
     "POLICY_MISMATCH",
     "EMBEDDING_INPUT_UNAVAILABLE",
@@ -179,6 +186,7 @@ async def _mark_job_failed(
     safe_error_code: str,
     *,
     now: datetime,
+    max_attempts: int,
 ) -> SignalProcessingResult:
     if safe_error_code not in SAFE_PROCESSING_ERRORS:
         raise ValueError("unsafe signal processing error code")
@@ -193,15 +201,26 @@ async def _mark_job_failed(
                 signal_id=None,
                 safe_error_code=safe_error_code,
             )
-        job.status = SignalProcessingStatus.FAILED.value
-        job.safe_error_code = safe_error_code
-        job.next_attempt_at = now + timedelta(minutes=5)
+        terminal = (
+            safe_error_code in PERMANENT_PROCESSING_ERRORS or job.attempt_count >= max_attempts
+        )
+        job.status = (
+            SignalProcessingStatus.DEAD_LETTER.value
+            if terminal
+            else SignalProcessingStatus.FAILED.value
+        )
+        job.safe_error_code = (
+            "RETRY_EXHAUSTED"
+            if terminal and safe_error_code not in PERMANENT_PROCESSING_ERRORS
+            else safe_error_code
+        )
+        job.next_attempt_at = now if terminal else now + timedelta(minutes=5)
         job.completed_at = now
     return SignalProcessingResult(
         job_id=job_id,
-        status=SignalProcessingStatus.FAILED,
+        status=SignalProcessingStatus(job.status),
         signal_id=None,
-        safe_error_code=safe_error_code,
+        safe_error_code=job.safe_error_code,
     )
 
 
@@ -228,35 +247,59 @@ async def _recalculate_cluster(
     now: datetime,
     deletion_recalculation: bool,
 ) -> None:
-    counts = (
-        await session.execute(
-            select(
-                func.count(SignalMember.id),
-                func.count(func.distinct(Report.session_digest)),
-                func.min(Report.received_at),
-                func.max(Report.received_at),
-                func.max(Report.purge_at),
-            )
-            .select_from(SignalMember)
-            .join(Report, Report.id == SignalMember.report_id)
-            .where(SignalMember.signal_id == cluster.id)
-        )
-    ).one()
-    raw_count = int(counts[0] or 0)
-    unique_sessions = int(counts[1] or 0)
     policy = await session.get(ClusteringPolicy, cluster.policy_id)
     if policy is None:
         raise RuntimeError("signal policy is missing")
+    latest_report_at = await session.scalar(
+        select(func.max(Report.received_at))
+        .select_from(SignalMember)
+        .join(Report, Report.id == SignalMember.report_id)
+        .where(SignalMember.signal_id == cluster.id)
+    )
+    window_start = (
+        latest_report_at - timedelta(seconds=policy.window_seconds)
+        if latest_report_at is not None
+        else None
+    )
+    counts = (
+        (
+            await session.execute(
+                select(
+                    func.count(SignalMember.id),
+                    func.count(func.distinct(Report.session_digest)),
+                    func.min(Report.received_at),
+                    func.max(Report.received_at),
+                    func.max(Report.purge_at),
+                )
+                .select_from(SignalMember)
+                .join(Report, Report.id == SignalMember.report_id)
+                .where(
+                    SignalMember.signal_id == cluster.id,
+                    Report.received_at >= window_start,
+                    Report.received_at <= latest_report_at,
+                )
+            )
+        ).one()
+        if latest_report_at is not None
+        else (0, 0, None, None, None)
+    )
+    raw_count = int(counts[0] or 0)
+    unique_sessions = int(counts[1] or 0)
 
     before = cluster.status
     cluster.raw_report_count = raw_count
     cluster.reporting_unique_sessions = unique_sessions
     cluster.review_priority = unique_sessions >= policy.review_priority_threshold
     cluster.representative_symptom_id = None
-    if counts[2] is not None:
-        cluster.first_report_at = counts[2]
-        cluster.last_report_at = counts[3]
-        cluster.purge_at = counts[4]
+    first_report_at, last_report_at, purge_at = counts[2], counts[3], counts[4]
+    if (
+        isinstance(first_report_at, datetime)
+        and isinstance(last_report_at, datetime)
+        and isinstance(purge_at, datetime)
+    ):
+        cluster.first_report_at = first_report_at
+        cluster.last_report_at = last_report_at
+        cluster.purge_at = purge_at
 
     if unique_sessions < policy.min_unique_sessions and deletion_recalculation:
         cluster.status = SignalStatus.CLOSED.value
@@ -266,6 +309,11 @@ async def _recalculate_cluster(
         unique_sessions >= policy.min_unique_sessions
     ):
         cluster.status = SignalStatus.SIGNAL_DETECTED.value
+    elif (
+        cluster.status == SignalStatus.SIGNAL_DETECTED.value
+        and unique_sessions < policy.min_unique_sessions
+    ):
+        cluster.status = SignalStatus.CANDIDATE.value
 
     if (
         raw_count > 0
@@ -276,6 +324,8 @@ async def _recalculate_cluster(
         right_member = aliased(SignalMember)
         left_embedding = aliased(TechnicalEmbedding)
         right_embedding = aliased(TechnicalEmbedding)
+        left_report = aliased(Report)
+        right_report = aliased(Report)
         left_vector = (
             cast(left_embedding.embedding, Vector1024())
             if policy.embedding_dimension == 1024
@@ -291,9 +341,17 @@ async def _recalculate_cluster(
         cluster.representative_symptom_id = await session.scalar(
             select(left_member.technical_symptom_id)
             .join(left_embedding, left_embedding.id == left_member.embedding_id)
+            .join(left_report, left_report.id == left_member.report_id)
             .join(right_member, right_member.signal_id == left_member.signal_id)
             .join(right_embedding, right_embedding.id == right_member.embedding_id)
-            .where(left_member.signal_id == cluster.id)
+            .join(right_report, right_report.id == right_member.report_id)
+            .where(
+                left_member.signal_id == cluster.id,
+                left_report.received_at >= window_start,
+                left_report.received_at <= latest_report_at,
+                right_report.received_at >= window_start,
+                right_report.received_at <= latest_report_at,
+            )
             .group_by(left_member.technical_symptom_id)
             .order_by(average_similarity.desc(), left_member.technical_symptom_id)
             .limit(1)
@@ -355,7 +413,10 @@ async def process_next_signal_job(
     provider: EmbeddingProvider,
     *,
     now: datetime,
+    max_attempts: int = 5,
 ) -> SignalProcessingResult | None:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
     async with session.begin():
         policy = await session.scalar(
             select(ClusteringPolicy).where(ClusteringPolicy.is_active.is_(True))
@@ -380,6 +441,17 @@ async def process_next_signal_job(
         )
         if job is None:
             return None
+        if job.attempt_count >= max_attempts:
+            job.status = SignalProcessingStatus.DEAD_LETTER.value
+            job.safe_error_code = "RETRY_EXHAUSTED"
+            job.next_attempt_at = now
+            job.completed_at = now
+            return SignalProcessingResult(
+                job_id=job.id,
+                status=SignalProcessingStatus.DEAD_LETTER,
+                signal_id=None,
+                safe_error_code="RETRY_EXHAUSTED",
+            )
         symptom = await session.get(TechnicalSymptom, job.technical_symptom_id)
         if symptom is None or symptom.symptom is None:
             job_id = job.id
@@ -411,6 +483,7 @@ async def process_next_signal_job(
             job_id,
             "EMBEDDING_INPUT_UNAVAILABLE",
             now=now,
+            max_attempts=max_attempts,
         )
     try:
         raw_result = await provider.embed(request)
@@ -421,6 +494,7 @@ async def process_next_signal_job(
             job_id,
             "INVALID_EMBEDDING",
             now=now,
+            max_attempts=max_attempts,
         )
     except Exception:  # provider exceptions are never exposed outside this boundary
         return await _mark_job_failed(
@@ -428,6 +502,7 @@ async def process_next_signal_job(
             job_id,
             "EMBEDDING_UNAVAILABLE",
             now=now,
+            max_attempts=max_attempts,
         )
 
     async with session.begin():
@@ -438,13 +513,13 @@ async def process_next_signal_job(
         if policy is None or job is None:
             raise RuntimeError("signal processing state disappeared")
         if not _validate_embedding_metadata(result, policy):
-            job.status = SignalProcessingStatus.FAILED.value
+            job.status = SignalProcessingStatus.DEAD_LETTER.value
             job.safe_error_code = "POLICY_MISMATCH"
-            job.next_attempt_at = now + timedelta(minutes=5)
+            job.next_attempt_at = now
             job.completed_at = now
             return SignalProcessingResult(
                 job_id=job.id,
-                status=SignalProcessingStatus.FAILED,
+                status=SignalProcessingStatus.DEAD_LETTER,
                 signal_id=None,
                 safe_error_code="POLICY_MISMATCH",
             )
@@ -453,13 +528,13 @@ async def process_next_signal_job(
         if symptom is None or report is None:
             return None
         if symptom.taxonomy_version != policy.taxonomy_version:
-            job.status = SignalProcessingStatus.FAILED.value
+            job.status = SignalProcessingStatus.DEAD_LETTER.value
             job.safe_error_code = "POLICY_MISMATCH"
-            job.next_attempt_at = now + timedelta(minutes=5)
+            job.next_attempt_at = now
             job.completed_at = now
             return SignalProcessingResult(
                 job_id=job.id,
-                status=SignalProcessingStatus.FAILED,
+                status=SignalProcessingStatus.DEAD_LETTER,
                 signal_id=None,
                 safe_error_code="POLICY_MISMATCH",
             )
@@ -487,6 +562,8 @@ async def process_next_signal_job(
             if policy.embedding_dimension == 1024
             else TechnicalEmbedding.embedding
         )
+        member_report = aliased(Report)
+        window_delta = timedelta(seconds=policy.window_seconds)
         distance = embedding_expression.op("<=>", return_type=Float())(result.vector)
         candidate_filters = [
             SignalCluster.policy_id == policy.id,
@@ -494,8 +571,10 @@ async def process_next_signal_job(
             SignalCluster.channel == symptom.channel,
             SignalCluster.feature_area == symptom.feature_area,
             SignalCluster.reported_symptom_type == symptom.issue_type,
-            SignalCluster.last_report_at
-            >= report.received_at - timedelta(seconds=policy.window_seconds),
+            SignalCluster.first_report_at <= report.received_at + window_delta,
+            SignalCluster.last_report_at >= report.received_at - window_delta,
+            member_report.received_at >= report.received_at - window_delta,
+            member_report.received_at <= report.received_at + window_delta,
             TechnicalEmbedding.model_id == policy.model_id,
             TechnicalEmbedding.model_revision == policy.model_revision,
             TechnicalEmbedding.embedding_dimension == policy.embedding_dimension,
@@ -524,6 +603,7 @@ async def process_next_signal_job(
                 )
                 .join(SignalCluster, SignalCluster.id == SignalMember.signal_id)
                 .join(TechnicalEmbedding, TechnicalEmbedding.id == SignalMember.embedding_id)
+                .join(member_report, member_report.id == SignalMember.report_id)
                 .where(*candidate_filters)
                 .group_by(SignalMember.signal_id)
                 .subquery()
@@ -542,6 +622,7 @@ async def process_next_signal_job(
                     select(SignalCluster, similarity_expression)
                     .join(SignalMember, SignalMember.signal_id == SignalCluster.id)
                     .join(TechnicalEmbedding, TechnicalEmbedding.id == SignalMember.embedding_id)
+                    .join(member_report, member_report.id == SignalMember.report_id)
                     .where(*candidate_filters)
                     .order_by(distance, SignalCluster.id, SignalMember.id)
                     .limit(1)
@@ -649,7 +730,61 @@ async def list_dashboard_signals(
             .offset(offset)
         )
     ).all()
+    baseline_by_signal: dict[UUID, tuple[BaselineStatus, float | None, int]] = {}
+    supported_signal_ids = [
+        cluster.id
+        for cluster, policy in rows
+        if policy.baseline_policy_version == SUPPORTED_BASELINE_POLICY_VERSION
+    ]
+    previous_counts: dict[UUID, int] = {}
+    if supported_signal_ids:
+        window_interval = ClusteringPolicy.window_seconds * text("INTERVAL '1 second'")
+        previous_rows = (
+            await session.execute(
+                select(
+                    SignalMember.signal_id,
+                    func.count(func.distinct(Report.session_digest)),
+                )
+                .join(Report, Report.id == SignalMember.report_id)
+                .join(SignalCluster, SignalCluster.id == SignalMember.signal_id)
+                .join(ClusteringPolicy, ClusteringPolicy.id == SignalCluster.policy_id)
+                .where(
+                    SignalMember.signal_id.in_(supported_signal_ids),
+                    Report.received_at >= SignalCluster.last_report_at - 2 * window_interval,
+                    Report.received_at < SignalCluster.last_report_at - window_interval,
+                )
+                .group_by(SignalMember.signal_id)
+            )
+        ).all()
+        previous_counts = {signal_id: int(count) for signal_id, count in previous_rows}
+    for cluster, policy in rows:
+        previous_window_start = cluster.last_report_at - timedelta(
+            seconds=2 * policy.window_seconds
+        )
+        previous_count = previous_counts.get(cluster.id, 0)
+        if (
+            policy.baseline_policy_version != SUPPORTED_BASELINE_POLICY_VERSION
+            or policy.created_at > previous_window_start
+        ):
+            baseline_by_signal[cluster.id] = (
+                BaselineStatus.INSUFFICIENT_HISTORY,
+                None,
+                previous_count,
+            )
+        elif previous_count == 0:
+            baseline_by_signal[cluster.id] = (
+                BaselineStatus.ZERO_BASELINE,
+                None,
+                0,
+            )
+        else:
+            baseline_by_signal[cluster.id] = (
+                BaselineStatus.AVAILABLE,
+                cluster.reporting_unique_sessions / previous_count,
+                previous_count,
+            )
     hour_bucket = func.date_trunc("hour", Report.received_at).label("bucket_start")
+    dashboard_window = ClusteringPolicy.window_seconds * text("INTERVAL '1 second'")
     hourly_rows = (
         await session.execute(
             select(
@@ -663,6 +798,8 @@ async def list_dashboard_signals(
             .where(
                 SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES),
                 visible_signal,
+                Report.received_at >= SignalCluster.last_report_at - dashboard_window,
+                Report.received_at <= SignalCluster.last_report_at,
             )
             .group_by("bucket_start")
             .order_by("bucket_start")
@@ -671,6 +808,22 @@ async def list_dashboard_signals(
     active_policy = await session.scalar(
         select(ClusteringPolicy).where(ClusteringPolicy.is_active.is_(True))
     )
+    baseline_values = [baseline_by_signal[cluster.id] for cluster, _ in rows]
+    if not baseline_values or any(
+        status is BaselineStatus.INSUFFICIENT_HISTORY for status, _, _ in baseline_values
+    ):
+        dashboard_baseline_status = BaselineStatus.INSUFFICIENT_HISTORY
+        dashboard_baseline_ratio = None
+    else:
+        previous_total = sum(previous for _, _, previous in baseline_values)
+        if previous_total == 0:
+            dashboard_baseline_status = BaselineStatus.ZERO_BASELINE
+            dashboard_baseline_ratio = None
+        else:
+            dashboard_baseline_status = BaselineStatus.AVAILABLE
+            dashboard_baseline_ratio = (
+                sum(cluster.reporting_unique_sessions for cluster, _ in rows) / previous_total
+            )
     return SignalDashboardResponse(
         updated_at=now,
         items=[
@@ -688,8 +841,8 @@ async def list_dashboard_signals(
                 affected_features=[cluster.feature_area],
                 policy_version=policy.policy_version,
                 policy_status=policy.status,
-                baseline_status=BaselineStatus.INSUFFICIENT_HISTORY,
-                baseline_ratio=None,
+                baseline_status=baseline_by_signal[cluster.id][0],
+                baseline_ratio=baseline_by_signal[cluster.id][1],
                 official_incident=False,
                 official_notice_url=cluster.official_notice_url,
             )
@@ -722,8 +875,8 @@ async def list_dashboard_signals(
             if active_policy is not None
             else None
         ),
-        baseline_status=BaselineStatus.INSUFFICIENT_HISTORY,
-        baseline_ratio=None,
+        baseline_status=dashboard_baseline_status,
+        baseline_ratio=dashboard_baseline_ratio,
         limit=limit,
         offset=offset,
     )

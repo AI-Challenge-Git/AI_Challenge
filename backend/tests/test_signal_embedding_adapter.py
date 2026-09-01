@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import SecretStr
 
+from app.codes import SUPPORTED_BASELINE_POLICY_VERSION
 from app.config import Settings
 from app.schemas import SignalEmbeddingRequest
 from app.services.signal_embeddings import (
@@ -166,7 +167,9 @@ def test_policy_cli_defaults_to_evaluated_threshold(monkeypatch: pytest.MonkeyPa
         ],
     )
 
-    assert parse_args().similarity_threshold == 0.58
+    arguments = parse_args()
+    assert arguments.similarity_threshold == 0.58
+    assert arguments.baseline_policy_version == SUPPORTED_BASELINE_POLICY_VERSION
 
 
 def test_runtime_contract_uses_configured_revision_and_provider_metadata(

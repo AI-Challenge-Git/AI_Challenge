@@ -23,6 +23,9 @@ pre-deploy migration이 없으며 bounded command와 UTC cron schedule만 포함
 
 Railway cron은 UTC 기준이며 5분보다 짧게 실행할 수 없다. 각 CLI는 한 bounded batch를 처리하고 DB
 connection을 닫은 뒤 종료한다. 이전 실행이 끝나지 않았으면 다음 실행은 Railway가 건너뛴다.
+Signal worker는 영구 오류를 즉시 dead-letter 처리하고 일시 오류를
+`SIGNAL_WORKER_MAX_ATTEMPTS`까지만 재시도한다. 해당 실행에서 실패 또는 dead-letter가 발생하면
+non-zero로 종료하므로 Railway job 실패 알림을 연결해야 한다.
 
 KRX 동기화는 금융위 상장정보 API만으로 보통주 여부를 확정할 수 없으므로 KRX `전종목기본정보.CSV`
 원본도 필요하다. scheduler가 신뢰할 수 있는 CSV 원천을 받기 전에는 자동 등록하지 않는다. 원본을
@@ -39,6 +42,11 @@ API와 worker에는 `DATABASE_URL`, 서로 다른 네 HMAC key와 `OPENAI_API_KE
 `KRX_LISTED_INFO_API_KEY` Secret을 추가한다. 값을 Git·Railway start command·로그에 넣지 않는다.
 운영상황판 조회 제한은 기본 `SIGNAL_DASHBOARD_LIMIT=60`,
 `SIGNAL_DASHBOARD_WINDOW_SECONDS=60`이며 트래픽 측정 후 환경변수로 조정한다.
+공개 분석 제한은 기본 `REPORT_ANALYZE_LIMIT=5`, `REPORT_ANALYZE_WINDOW_SECONDS=60`이며 비식별
+client fingerprint 단위다. `ANALYSIS_PENDING_STALE_SECONDS=180`은 `AI_TIMEOUT_SECONDS`보다 길게
+유지하고, `SIGNAL_WORKER_MAX_ATTEMPTS=5`는 일시 provider 실패의 최대 시도 횟수다.
+production의 client fingerprint는 Railway edge가 주입하는 유효한 `X-Real-IP`를 정규화한 뒤
+HMAC 처리한다. 헤더가 없거나 IP 형식이 아니면 공용 fail-closed bucket으로 제한한다.
 `APP_ENV=production`, `AI_ADAPTER=openai`를 명시한다. 네 HMAC key는 각각 32자 이상이어야 하며
 서로 같은 값을 재사용하지 않는다. production은 확정된 `SIGNAL_EMBEDDING_MODEL_REVISION`, exact HTTPS
 `CORS_ORIGINS`, S3-compatible private storage 설정이 하나라도 빠지면 시작을 거부한다.

@@ -623,6 +623,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1798,7 +1808,9 @@
       "BaselineStatus": {
         "type": "string",
         "enum": [
-          "INSUFFICIENT_HISTORY"
+          "INSUFFICIENT_HISTORY",
+          "ZERO_BASELINE",
+          "AVAILABLE"
         ],
         "title": "BaselineStatus"
       },
@@ -3180,7 +3192,15 @@
             "$ref": "#/components/schemas/BaselineStatus"
           },
           "baseline_ratio": {
-            "type": "null",
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Baseline Ratio"
           },
           "official_incident": {
@@ -3257,7 +3277,15 @@
             "$ref": "#/components/schemas/BaselineStatus"
           },
           "baseline_ratio": {
-            "type": "null",
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Baseline Ratio"
           },
           "limit": {
