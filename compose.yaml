@@ -19,7 +19,7 @@ services:
     build:
       context: ./backend
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
-    environment:
+    environment: &backend-environment
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mts_sos}:${POSTGRES_PASSWORD:-mts_sos}@db:5432/${POSTGRES_DB:-mts_sos}
       DATABASE_ECHO: ${DATABASE_ECHO:-false}
@@ -33,6 +33,7 @@ services:
       REPORT_ANALYZE_LIMIT: ${REPORT_ANALYZE_LIMIT:-5}
       REPORT_ANALYZE_WINDOW_SECONDS: ${REPORT_ANALYZE_WINDOW_SECONDS:-60}
       SIGNAL_WORKER_MAX_ATTEMPTS: ${SIGNAL_WORKER_MAX_ATTEMPTS:-5}
+      SIGNAL_WORKER_POLL_SECONDS: ${SIGNAL_WORKER_POLL_SECONDS:-5}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       SIGNAL_EMBEDDING_MODEL_REVISION: ${SIGNAL_EMBEDDING_MODEL_REVISION:-}
       KRX_LISTED_INFO_API_URL: ${KRX_LISTED_INFO_API_URL:-https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo}
@@ -77,6 +78,16 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  signal-worker:
+    build:
+      context: ./backend
+    command: ["python", "-m", "scripts.process_signal_jobs", "--forever", "--max-jobs", "100"]
+    environment: *backend-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres_data:

@@ -43,6 +43,7 @@ from app.models import (
     SignalMember,
     SignalProcessingJob,
     SignalRelevanceLock,
+    SymbolMasterVersion,
     TechnicalEmbedding,
     TechnicalSymptom,
 )
@@ -56,6 +57,7 @@ from app.services.signals import (
     list_dashboard_signals,
     process_next_signal_job,
 )
+from scripts import check_runtime_readiness
 from scripts import process_signal_jobs as process_signal_jobs_script
 
 pytestmark = pytest.mark.skipif(
@@ -144,6 +146,7 @@ async def _clean() -> None:
         await session.execute(delete(SignalCluster))
         await session.execute(delete(TechnicalEmbedding))
         await session.execute(delete(ClusteringPolicy))
+        await session.execute(delete(SymbolMasterVersion))
         await session.execute(delete(IdempotencyRecord))
         await session.execute(delete(AuditLog))
         await session.execute(delete(AgentAccessToken))
@@ -494,6 +497,59 @@ async def test_average_linkage_prevents_single_member_chaining() -> None:
     assert member_counts == [2, 1]
 
 
+async def test_average_linkage_reconciles_existing_multi_member_clusters() -> None:
+    await _policy(min_unique_sessions=5, similarity_threshold=0.58)
+    report_ids = []
+    for index in range(5):
+        report_ids.append(
+            await _report(
+                session_digest=bytes([index + 1]) * 32,
+                received_at=NOW + timedelta(seconds=index),
+            )
+        )
+    angle_30 = math.radians(30)
+    angle_60 = math.radians(60)
+    provider = SequenceEmbeddingProvider(
+        [
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [math.cos(angle_60), math.sin(angle_60), 0.0],
+            [math.cos(angle_60), math.sin(angle_60), 0.0],
+            [math.cos(angle_30), math.sin(angle_30), 0.0],
+        ]
+    )
+
+    async with session_factory() as session:
+        for _ in range(5):
+            await process_next_signal_job(session, provider, now=NOW + timedelta(minutes=1))
+        active_cluster = await session.scalar(
+            select(SignalCluster).where(SignalCluster.status == SignalStatus.SIGNAL_DETECTED.value)
+        )
+        assert active_cluster is not None
+        assert active_cluster.raw_report_count == 5
+        assert active_cluster.reporting_unique_sessions == 5
+        bridge_symptom_id = await session.scalar(
+            select(TechnicalSymptom.id).where(TechnicalSymptom.report_id == report_ids[-1])
+        )
+        assert active_cluster.representative_symptom_id == bridge_symptom_id
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(SignalCluster)
+                .where(SignalCluster.status == SignalStatus.CLOSED.value)
+            )
+            == 1
+        )
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(SignalAuditEvent)
+                .where(SignalAuditEvent.action == "SIGNAL_AUTOMATICALLY_MERGED")
+            )
+            == 1
+        )
+
+
 async def test_medoid_is_recalculated_after_each_membership_change() -> None:
     await _policy(min_unique_sessions=1, similarity_threshold=0.45)
     report_ids = []
@@ -779,6 +835,60 @@ async def test_worker_preflight_leaves_jobs_pending_on_runtime_policy_mismatch(
         assert job is not None
         assert job.status == SignalProcessingStatus.PENDING.value
         assert job.attempt_count == 0
+
+
+async def test_runtime_readiness_requires_policy_symbols_and_both_roles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failures = await check_runtime_readiness.collect_failures()
+    assert failures == (
+        "ACTIVE_SIGNAL_POLICY_MISSING",
+        "ACTIVE_SYMBOL_MASTER_MISSING",
+        "ACTIVE_AGENT_MISSING",
+        "ACTIVE_OPERATOR_MISSING",
+    )
+
+    await _policy()
+    monkeypatch.setattr(
+        check_runtime_readiness,
+        "load_signal_embedding_contract",
+        lambda: SignalEmbeddingContract(
+            model_id="fake-embed",
+            model_revision="test-r1",
+            dimension=3,
+            normalization="L2",
+            input_format="query.v1",
+            distance_metric="COSINE",
+        ),
+    )
+    async with session_factory() as session, session.begin():
+        session.add(
+            SymbolMasterVersion(
+                version="krx-test-ready",
+                source_url="https://example.invalid/krx.csv",
+                source_as_of=NOW.date(),
+                source_sha256="d" * 64,
+                source_encoding="UTF-8-SIG",
+                schema_version="krx-symbol-master.v1",
+                row_count=1,
+                is_active=True,
+                imported_at=NOW,
+            )
+        )
+        for role in AgentRole:
+            session.add(
+                AgentAccount(
+                    employee_id=f"READY-{role.value}",
+                    agent_label=f"{role.value} ready",
+                    role=role.value,
+                    password_hash=hash_password("not-used"),
+                    is_active=True,
+                    created_at=NOW,
+                    updated_at=NOW,
+                )
+            )
+
+    assert await check_runtime_readiness.collect_failures() == ()
 
 
 @pytest.mark.parametrize(

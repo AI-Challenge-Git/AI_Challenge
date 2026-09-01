@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     report_analyze_limit: int = Field(default=5, ge=1, le=1000)
     report_analyze_window_seconds: int = Field(default=60, ge=1, le=3600)
     signal_worker_max_attempts: int = Field(default=5, ge=1, le=100)
+    signal_worker_poll_seconds: float = Field(default=5.0, ge=1, le=60)
     openai_api_key: SecretStr | None = None
     signal_embedding_model_revision: str | None = None
     krx_listed_info_api_url: str = (

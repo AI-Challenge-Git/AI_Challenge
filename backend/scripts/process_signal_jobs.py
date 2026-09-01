@@ -26,10 +26,15 @@ def _job_limit(value: str) -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Process pending incident-signal jobs")
     parser.add_argument("--max-jobs", type=_job_limit, default=100)
+    parser.add_argument(
+        "--forever",
+        action="store_true",
+        help="keep polling for jobs instead of exiting after one bounded batch",
+    )
     return parser.parse_args()
 
 
-async def run(*, max_jobs: int) -> int:
+async def run(*, max_jobs: int, report_empty: bool = True) -> int:
     completed = 0
     failed = 0
     dead_lettered = 0
@@ -73,15 +78,26 @@ async def run(*, max_jobs: int) -> int:
                 dead_lettered += 1
             else:
                 failed += 1
-        print(
-            f"processed={completed + failed + dead_lettered} completed={completed} "
-            f"failed={failed} dead_lettered={dead_lettered}"
-        )
+        if completed or failed or dead_lettered or report_empty:
+            print(
+                f"processed={completed + failed + dead_lettered} completed={completed} "
+                f"failed={failed} dead_lettered={dead_lettered}"
+            )
         return 1 if failed or dead_lettered else 0
     finally:
         await engine.dispose()
 
 
+async def run_forever(*, max_jobs: int) -> int:
+    poll_seconds = get_settings().signal_worker_poll_seconds
+    while True:
+        exit_code = await run(max_jobs=max_jobs, report_empty=False)
+        if exit_code == 2:
+            return exit_code
+        await asyncio.sleep(poll_seconds)
+
+
 if __name__ == "__main__":
     arguments = parse_args()
-    raise SystemExit(asyncio.run(run(max_jobs=arguments.max_jobs)))
+    command = run_forever if arguments.forever else run
+    raise SystemExit(asyncio.run(command(max_jobs=arguments.max_jobs)))

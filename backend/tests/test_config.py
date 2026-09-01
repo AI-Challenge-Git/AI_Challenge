@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from app.config import Settings, get_settings
 from app.main import create_app
 from app.schemas import ExtractionResult
 from app.services.reports import _extract_with_runtime_limits
+from scripts import process_signal_jobs
 
 
 def test_settings_load_environment_variables(
@@ -46,6 +48,7 @@ def test_openai_is_the_only_runtime_adapter(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.report_analyze_limit == 5
     assert settings.report_analyze_window_seconds == 60
     assert settings.signal_worker_max_attempts == 5
+    assert settings.signal_worker_poll_seconds == 5
     assert settings.agent_access_token_ttl_minutes == 30
     assert settings.agent_login_failure_limit == 5
     assert settings.agent_login_failure_window_seconds == 300
@@ -58,6 +61,35 @@ def test_openai_is_the_only_runtime_adapter(monkeypatch: pytest.MonkeyPatch) -> 
 def test_pending_analysis_lease_must_exceed_provider_timeout() -> None:
     with pytest.raises(ValidationError, match="ANALYSIS_PENDING_STALE_SECONDS"):
         Settings(ai_timeout_seconds=90, analysis_pending_stale_seconds=90)
+
+
+async def test_signal_worker_forever_keeps_polling_after_failed_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def failed_batch(*, max_jobs: int, report_empty: bool) -> int:
+        nonlocal calls
+        assert max_jobs == 7
+        assert report_empty is False
+        calls += 1
+        return 1
+
+    async def stop_after_sleep(seconds: float) -> None:
+        assert seconds == 5
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(process_signal_jobs, "run", failed_batch)
+    monkeypatch.setattr("scripts.process_signal_jobs.asyncio.sleep", stop_after_sleep)
+    monkeypatch.setattr(
+        process_signal_jobs,
+        "get_settings",
+        lambda: type("WorkerSettings", (), {"signal_worker_poll_seconds": 5.0})(),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await process_signal_jobs.run_forever(max_jobs=7)
+    assert calls == 1
 
 
 def test_rate_limit_client_identifier_uses_railway_ip_only_in_production() -> None:
@@ -246,3 +278,17 @@ def test_initial_migration_only_manages_pgvector_extension() -> None:
     assert "DROP EXTENSION IF EXISTS vector" in migration
     assert "create_table" not in migration.lower()
     assert "CREATE TABLE" not in migration.upper()
+
+
+def test_railway_workers_use_the_expected_process_model() -> None:
+    backend_root = Path(__file__).parents[1]
+    signal = json.loads((backend_root / "railway.signal-worker.json").read_text(encoding="utf-8"))
+    retention = json.loads(
+        (backend_root / "railway.retention-worker.json").read_text(encoding="utf-8")
+    )
+
+    signal_deploy = signal["deploy"]
+    assert "--forever" in signal_deploy["startCommand"]
+    assert "cronSchedule" not in signal_deploy
+    assert signal_deploy["restartPolicyType"] == "ON_FAILURE"
+    assert retention["deploy"]["cronSchedule"] == "17 * * * *"
