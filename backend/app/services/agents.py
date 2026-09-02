@@ -73,6 +73,7 @@ from app.services.idempotency import (
     payload_sha256,
 )
 from app.services.lifecycle import card_is_accessible
+from app.services.policies import InvalidPolicySnapshotError, consultation_safety_notice
 from app.services.rate_limits import RateLimitResult, consume_rate_limit, rate_limit_error
 from app.services.signals import (
     has_candidate_signal_for_report,
@@ -89,10 +90,6 @@ from app.signal_relevance import SignalRelevanceStatus
 from app.signal_verification import AgentSignalDecision, verify_signal_relevance
 
 Sleeper = Callable[[float], Awaitable[None]]
-CONSULTATION_SAFETY_NOTICE = (
-    "상담 준비카드는 주문 접수·체결 증빙이 아닙니다. "
-    "재주문 전 공식 채널에서 주문 상태를 확인해야 합니다."
-)
 _VERIFICATION_OPERATION = "VERIFY_CONSULTATION_CARD"
 _SIGNAL_VERIFICATION_OPERATION = "VERIFY_SIGNAL_RELEVANCE"
 _STATUS_PRIORITY = {
@@ -451,6 +448,7 @@ async def _load_card(
         .options(
             joinedload(ConsultationCard.report).joinedload(Report.technical_symptom),
             joinedload(ConsultationCard.report).joinedload(Report.attachment),
+            joinedload(ConsultationCard.report).joinedload(Report.policy_snapshot),
         )
     )
     if for_update:
@@ -481,6 +479,14 @@ def _card_detail(
 ) -> ConsultationCardDetail:
     if card.expires_at is None:
         raise ServiceError(404, "CARD_NOT_FOUND", "상담카드를 찾을 수 없습니다.")
+    try:
+        safety_notice = consultation_safety_notice(card.report.policy_snapshot)
+    except InvalidPolicySnapshotError as exc:
+        raise ServiceError(
+            503,
+            "POLICY_SNAPSHOT_UNAVAILABLE",
+            "상담 안전 안내를 불러올 수 없습니다.",
+        ) from exc
     return ConsultationCardDetail(
         card_id=card.id,
         created_at=card.created_at,
@@ -502,7 +508,7 @@ def _card_detail(
             attempted_at=card.attempted_at,
         ),
         verification_status=verification_status,
-        safety_notice=CONSULTATION_SAFETY_NOTICE,
+        safety_notice=safety_notice,
         has_attachment=card.report.attachment is not None,
         attachment_url=attachment_url,
         related_signals=related_signals,

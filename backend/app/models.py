@@ -634,9 +634,14 @@ class ClusteringPolicy(Base):
             name="structured_rules_version_value",
         ),
         CheckConstraint(
-            "((status = 'APPROVED' AND approved_by IS NOT NULL AND approved_at IS NOT NULL) OR "
+            "((status = 'APPROVED' AND approved_by IS NOT NULL AND approved_at IS NOT NULL "
+            "AND approval_evidence_sha256 IS NOT NULL) OR "
             "(status <> 'APPROVED'))",
             name="approval_metadata",
+        ),
+        CheckConstraint(
+            "approval_evidence_sha256 IS NULL OR approval_evidence_sha256 ~ '^[0-9a-f]{64}$'",
+            name="approval_evidence_sha256_lower_hex",
         ),
     )
 
@@ -670,6 +675,7 @@ class ClusteringPolicy(Base):
         ForeignKey("agent_accounts.id", ondelete="RESTRICT"),
     )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_evidence_sha256: Mapped[str | None] = mapped_column(CHAR(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

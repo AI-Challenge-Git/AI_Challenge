@@ -9,6 +9,7 @@ from app.api.dependencies import (
     agent_principal,
     get_clock,
     get_security_sleeper,
+    rate_limit_client_identifier,
 )
 from app.attachments import AttachmentStore, get_attachment_store
 from app.config import Settings, get_settings
@@ -44,10 +45,6 @@ AUTH_ERRORS: dict[int | str, dict[str, Any]] = {
 }
 
 
-def _client_identifier(request: Request) -> str:
-    return request.client.host if request.client is not None else "unknown-client"
-
-
 @router.post(
     "/auth/login",
     tags=["agent-auth"],
@@ -71,7 +68,7 @@ async def login(
     return await login_agent(
         session,
         request_body,
-        _client_identifier(request),
+        rate_limit_client_identifier(request, app_env=settings.app_env),
         settings,
         now=clock(),
         sleeper=sleeper,
@@ -124,7 +121,7 @@ async def lookup_card(
         session,
         principal,
         request_body,
-        _client_identifier(request),
+        rate_limit_client_identifier(request, app_env=settings.app_env),
         settings,
         attachment_store,
         now=clock(),

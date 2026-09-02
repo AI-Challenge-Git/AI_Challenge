@@ -587,6 +587,30 @@ class SignalPolicySnapshot(ApiModel):
     baseline_policy_version: str | None
 
 
+class OperatorApproveSignalPolicyRequest(ApiModel):
+    policy_version: str = Field(min_length=1, max_length=64)
+    evaluation_artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    client_request_id: UUID4
+
+
+class OperatorSignalPolicyApprovalResponse(ApiModel):
+    policy_version: str
+    status: ClusteringPolicyStatus
+    approved_by: UUID
+    approved_at: datetime
+    evaluation_artifact_sha256: str
+
+
+class OperationalMetricsResponse(ApiModel):
+    observed_at: datetime
+    signal_jobs_ready: int = Field(ge=0)
+    signal_jobs_repeated_failures: int = Field(ge=0)
+    signal_jobs_dead_letter: int = Field(ge=0)
+    provider_failures_last_15m: int = Field(ge=0)
+    object_deletion_jobs_ready: int = Field(ge=0)
+    object_deletion_jobs_retrying: int = Field(ge=0)
+
+
 class SignalDashboardResponse(ApiModel):
     updated_at: datetime
     items: list[SignalDashboardItem]

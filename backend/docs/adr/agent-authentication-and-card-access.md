@@ -34,9 +34,10 @@ agent account 자체는 report 보존정책으로 삭제하지 않는다.
 ## 보안·운영 경계
 
 존재하지 않는 employee ID도 process별 dummy Argon2 hash를 검증해 잘못된 password와 외부 오류 및
-주요 CPU 경로를 맞춘다. raw client 주소는 요청 메모리에서 fingerprint 생성에만 사용한다. 현재
-client 식별은 ASGI의 `request.client.host` 기준이며 Railway trusted proxy 설정은 배포 E2E 단계에서
-검증해야 한다.
+주요 CPU 경로를 맞춘다. raw client 주소는 요청 메모리에서 fingerprint 생성에만 사용한다.
+development/test는 ASGI `request.client.host`, production은 Railway edge가 주입하는 유효한
+`X-Real-IP`를 사용한다. 누락·형식 오류는 공용 fail-closed bucket으로 제한하고 spoof header overwrite는
+배포 E2E에서 검증한다.
 
 attachment는 운영 signed URL이 없으므로 상담원 응답에 URL을 넣지 않고 `has_attachment`만
 제공한다. 장애 신호 vertical slice가 없으므로 `related_signals=[]`이며 similarity를 만들지 않는다.

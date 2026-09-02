@@ -49,6 +49,7 @@ from app.models import (
 )
 from app.schemas import SignalEmbeddingRequest, SignalEmbeddingResult
 from app.security import hash_password, make_opaque_token, opaque_token_digest
+from app.services import readiness
 from app.services.lifecycle import purge_expired_data
 from app.services.signal_embeddings import SignalEmbeddingContract
 from app.services.signals import (
@@ -912,7 +913,7 @@ async def test_runtime_readiness_requires_policy_symbols_and_both_roles(
 
     await _policy()
     monkeypatch.setattr(
-        check_runtime_readiness,
+        readiness,
         "load_signal_embedding_contract",
         lambda: SignalEmbeddingContract(
             model_id="fake-embed",
@@ -1199,6 +1200,73 @@ async def test_dashboard_auth_and_operator_role_idempotency() -> None:
                 select(func.count())
                 .select_from(SignalAuditEvent)
                 .where(SignalAuditEvent.action == "SIGNAL_ACKNOWLEDGED")
+            )
+            == 1
+        )
+
+
+async def test_operator_approves_signal_policy_with_evaluation_evidence_once() -> None:
+    policy_id = await _policy()
+    operator_token = await _agent_token(AgentRole.OPERATOR)
+    agent_token = await _agent_token(AgentRole.AGENT)
+    async with session_factory() as session:
+        policy_version = await session.scalar(
+            select(ClusteringPolicy.policy_version).where(ClusteringPolicy.id == policy_id)
+        )
+    assert policy_version is not None
+    request_id = str(uuid4())
+    payload = {
+        "policy_version": policy_version,
+        "evaluation_artifact_sha256": "e" * 64,
+        "client_request_id": request_id,
+    }
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        wrong_role = await client.post(
+            "/api/operator/signal-policies/approve",
+            headers={"Authorization": f"Bearer {agent_token}"},
+            json=payload,
+        )
+        approved = await client.post(
+            "/api/operator/signal-policies/approve",
+            headers={"Authorization": f"Bearer {operator_token}"},
+            json=payload,
+        )
+        replay = await client.post(
+            "/api/operator/signal-policies/approve",
+            headers={"Authorization": f"Bearer {operator_token}"},
+            json=payload,
+        )
+        conflict = await client.post(
+            "/api/operator/signal-policies/approve",
+            headers={"Authorization": f"Bearer {operator_token}"},
+            json={**payload, "evaluation_artifact_sha256": "f" * 64},
+        )
+        metrics = await client.get(
+            "/api/operator/operations/metrics",
+            headers={"Authorization": f"Bearer {operator_token}"},
+        )
+
+    assert wrong_role.status_code == 403
+    assert approved.status_code == replay.status_code == 200
+    assert approved.json() == replay.json()
+    assert approved.json()["status"] == "APPROVED"
+    assert approved.json()["evaluation_artifact_sha256"] == "e" * 64
+    assert approved.headers["cache-control"] == "no-store"
+    assert conflict.status_code == 409
+    assert metrics.status_code == 200
+    assert metrics.headers["cache-control"] == "no-store"
+    assert metrics.json()["signal_jobs_dead_letter"] == 0
+    async with session_factory() as session:
+        policy = await session.get(ClusteringPolicy, policy_id)
+        assert policy is not None
+        assert policy.status == ClusteringPolicyStatus.APPROVED.value
+        assert policy.approval_evidence_sha256 == "e" * 64
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(AuditLog)
+                .where(AuditLog.action == "SIGNAL_POLICY_APPROVED")
             )
             == 1
         )

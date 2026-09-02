@@ -2,11 +2,12 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings, get_settings
 from app.db import get_session
+from app.services.readiness import collect_service_readiness_failures
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -21,13 +22,22 @@ async def live() -> HealthResponse:
 
 
 @router.get("/ready", response_model=HealthResponse)
-async def ready(session: Annotated[AsyncSession, Depends(get_session)]) -> HealthResponse:
+async def ready(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> HealthResponse:
     try:
-        await session.execute(text("SELECT 1"))
+        failures = await collect_service_readiness_failures(session, settings)
     except (OSError, SQLAlchemyError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="database unavailable",
         ) from exc
+
+    if failures:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="required runtime data unavailable",
+        )
 
     return HealthResponse(status="ready")

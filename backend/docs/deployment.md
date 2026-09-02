@@ -15,12 +15,16 @@ API process가 아니라 단일 pre-deploy command인 `alembic upgrade head`에�
 | API | Dockerfile CMD | 상시 |
 | Signal worker | `python -m scripts.process_signal_jobs --forever --max-jobs 100` | always-on, 5-second idle polling |
 | Retention worker | `python -m scripts.purge_data --execute --batch-size 100` | `17 * * * *` |
+| Operations monitor | `python -m scripts.check_operational_health` | every 5 minutes |
 
 Signal worker is an always-on Railway worker, not a cron job. It polls every
 `SIGNAL_WORKER_POLL_SECONDS` (default 5 seconds). Retryable provider failures remain queued with
 backoff; configuration failures terminate the process so Railway can restart and alert it.
 
-After migrations and one-time provisioning, run the read-only deployment gate:
+`/health/ready`는 DB 연결뿐 아니라 설정된 공식 안내 policy snapshot의 URL·content hash·필수 문구,
+활성 signal policy와 runtime embedding 계약, 활성 KRX Symbol Master를 검사한다. 계정 provisioning은
+API process 시작 전제는 아니므로 별도 gate에서 확인한다. migrations와 일회성 provisioning 이후 다음
+read-only deployment gate를 실행한다.
 
 ```powershell
 python -m scripts.check_runtime_readiness
@@ -31,8 +35,15 @@ contract, an active KRX Symbol Master, and at least one active AGENT and OPERATO
 
 `/backend/railway.json`은 API service에만 연결한다. Signal worker는
 `/backend/railway.signal-worker.json`, Retention worker는
-`/backend/railway.retention-worker.json`을 Config File로 지정한다. worker 설정에는 API용
+`/backend/railway.retention-worker.json`, Operations monitor는
+`/backend/railway.operations-monitor.json`을 Config File로 지정한다. worker 설정에는 API용
 pre-deploy migration이 없으며 bounded command와 UTC cron schedule만 포함한다.
+
+Operations monitor는 signal ready backlog, 반복 실패, dead-letter, 최근 15분 AI provider 오류,
+object deletion retry를 비식별 JSON 한 줄로 출력한다. 실패 상태가 있으면 non-zero로 종료한다. Railway
+service failure notification을 이 cron service에 연결해야 실제 경보가 완성된다. 원문·token·object key와
+provider 응답은 metric이나 log에 포함하지 않는다. 운영자는 `GET /api/operator/operations/metrics`로 같은
+집계를 조회할 수 있다.
 
 Railway cron은 UTC 기준이며 5분보다 짧게 실행할 수 없다. 각 CLI는 한 bounded batch를 처리하고 DB
 connection을 닫은 뒤 종료한다. 이전 실행이 끝나지 않았으면 다음 실행은 Railway가 건너뛴다.
@@ -102,3 +113,34 @@ staging에서는 별도의 DB·Bucket·Secret을 사용하고 다음 순서로 �
 KRX Master, 고객 이미지 제보, signal worker, dashboard, OPERATOR mutation, 상담원 signed URL,
 고객 삭제, retention worker, 로그 secret 미노출. 실제 cloud 자원 생성과 Secret 등록은 사용자 승인
 후 수행한다.
+
+[Railway 공식 public networking 계약](https://docs.railway.com/networking/public-networking/specs-and-limits)은
+`X-Real-IP`를 client remote IP header로 제공한다.
+배포 E2E에서는 동일 외부 client가 서로 다른 가짜 `X-Real-IP` 값을 보낸 경우에도 rate-limit bucket이
+우회되지 않는지 아래 명령으로 확인한다. `--limit`은 배포된 `SIGNAL_DASHBOARD_LIMIT`와 같아야 한다.
+명령은 매번 새 익명 token을 메모리에서 만들어 `limit + 1`회 요청하고 token이나 IP를 출력·저장하지
+않는다. 이 플랫폼 동작은 ASGI 단위 테스트만으로 완료 처리하지 않는다.
+
+```powershell
+python -m scripts.verify_proxy_rate_limit --base-url https://<railway-api-domain> --limit 60
+```
+
+## Signal policy approval
+
+새 정책은 항상 `EXPERIMENTAL`로 등록한다. locked 평가 결과와 팀 승인이 끝난 뒤 산출물 원본의 SHA-256을
+계산하고 OPERATOR token으로 `POST /api/operator/signal-policies/approve`를 한 번 호출한다. 요청에는
+`policy_version`, `evaluation_artifact_sha256`, UUID v4 `client_request_id`를 넣는다. 서버는 상태 전이를
+row lock으로 직렬화하고 승인자·승인시각·평가 hash와 비식별 audit를 저장한다. 동일 request replay는
+같은 결과를 반환하고 다른 payload 재사용은 409다. locked 평가가 끝나지 않았으면 이 API를 호출하지
+않는다.
+
+## Backup, rollback, load and cost gates
+
+CI는 빈 PostgreSQL migration, 최신 migration downgrade/upgrade, 전체 test, OpenAPI snapshot, frontend
+build와 `pg_dump`/`pg_restore` 왕복을 매 변경에서 수행한다. 이는 ephemeral DB 복구 검증이며 Railway
+운영 backup의 보존·암호화·복구시간을 증명하지 않는다. 배포 전 staging backup으로 별도 DB에 복구한 뒤
+migration head와 비식별 row count를 확인하고, 직전 image와 migration downgrade 호환성을 rehearse한다.
+
+실제 AI 부하·비용은 staging의 합성 데이터로 동시성 1/4/8, p50/p95 latency, timeout/provider error,
+제보당 extraction·embedding 호출 수와 provider 청구 usage를 기록한다. 실제 secret·유료 호출이 필요하므로
+자동 CI에서는 실행하지 않으며 측정 결과와 허용 budget이 없으면 production capacity 완료로 표시하지 않는다.

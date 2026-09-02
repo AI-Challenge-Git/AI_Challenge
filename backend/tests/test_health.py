@@ -36,8 +36,13 @@ async def test_live(client: AsyncClient) -> None:
     assert database_was_called is False
 
 
-async def test_ready_when_database_is_available(client: AsyncClient) -> None:
+async def test_ready_when_runtime_dependencies_are_available(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     session = AsyncMock(spec=AsyncSession)
+    readiness = AsyncMock(return_value=())
+    monkeypatch.setattr("app.api.health.collect_service_readiness_failures", readiness)
 
     async def override_session() -> AsyncIterator[AsyncSession]:
         yield session
@@ -50,7 +55,30 @@ async def test_ready_when_database_is_available(client: AsyncClient) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ready"}
-    session.execute.assert_awaited_once()
+    readiness.assert_awaited_once()
+
+
+async def test_ready_when_required_runtime_data_is_missing(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = AsyncMock(spec=AsyncSession)
+    monkeypatch.setattr(
+        "app.api.health.collect_service_readiness_failures",
+        AsyncMock(return_value=("ACTIVE_SIGNAL_POLICY_MISSING",)),
+    )
+
+    async def override_session() -> AsyncIterator[AsyncSession]:
+        yield session
+
+    app.dependency_overrides[get_session] = override_session
+    try:
+        response = await client.get("/health/ready")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "required runtime data unavailable"}
 
 
 @pytest.mark.parametrize(
@@ -63,11 +91,15 @@ async def test_ready_when_database_is_available(client: AsyncClient) -> None:
 async def test_ready_when_database_is_unavailable(
     client: AsyncClient,
     database_error: Exception,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = AsyncMock(spec=AsyncSession)
     secret = "do-not-leak-this-password"
     database_error.args = (f"postgresql+asyncpg://user:{secret}@db:5432/mts_sos",)
-    session.execute.side_effect = database_error
+    monkeypatch.setattr(
+        "app.api.health.collect_service_readiness_failures",
+        AsyncMock(side_effect=database_error),
+    )
 
     async def override_session() -> AsyncIterator[AsyncSession]:
         yield session

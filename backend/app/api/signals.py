@@ -15,19 +15,24 @@ from app.codes import SignalStatus
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.schemas import (
+    OperationalMetricsResponse,
     OperatorAcknowledgeSignalRequest,
+    OperatorApproveSignalPolicyRequest,
     OperatorCloseSignalRequest,
     OperatorMergeSignalsRequest,
     OperatorOfficialNoticeRequest,
     OperatorSignalListResponse,
     OperatorSignalMutationResponse,
+    OperatorSignalPolicyApprovalResponse,
     OperatorSplitSignalRequest,
     ProblemDetails,
     SignalDashboardResponse,
 )
 from app.services.agents import AgentPrincipal
+from app.services.operations import collect_operational_metrics
 from app.services.signals import (
     acknowledge_signal,
+    approve_signal_policy,
     close_signal,
     enforce_dashboard_rate_limit,
     link_official_notice,
@@ -104,6 +109,40 @@ async def operator_signals(
         limit=limit,
         offset=offset,
     )
+
+
+@router.post(
+    "/operator/signal-policies/approve",
+    tags=["operator-signals"],
+    response_model=OperatorSignalPolicyApprovalResponse,
+    responses=SIGNAL_ERRORS,
+)
+async def approve_policy(
+    request_body: OperatorApproveSignalPolicyRequest,
+    response: Response,
+    principal: Annotated[AgentPrincipal, Depends(operator_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    clock: Annotated[Callable[[], datetime], Depends(get_clock)],
+) -> OperatorSignalPolicyApprovalResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return await approve_signal_policy(session, principal, request_body, now=clock())
+
+
+@router.get(
+    "/operator/operations/metrics",
+    tags=["operator-operations"],
+    response_model=OperationalMetricsResponse,
+    responses={401: SIGNAL_ERRORS[401], 403: SIGNAL_ERRORS[403]},
+)
+async def operations_metrics(
+    response: Response,
+    principal: Annotated[AgentPrincipal, Depends(operator_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    clock: Annotated[Callable[[], datetime], Depends(get_clock)],
+) -> OperationalMetricsResponse:
+    del principal
+    response.headers["Cache-Control"] = "no-store"
+    return await collect_operational_metrics(session, now=clock())
 
 
 @router.post(

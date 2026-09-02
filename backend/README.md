@@ -158,7 +158,7 @@ uv run python -m scripts.register_signal_policy `
 uv run python -m scripts.process_signal_jobs --forever --max-jobs 100
 ```
 
-배포 초기 데이터 등록 후 다음 read-only gate가 `runtime_ready=true`인지 확인합니다.
+배포 초기 데이터 등록 후 다음 read-only gate의 JSON 응답이 `"ready":true`인지 확인합니다.
 
 ```powershell
 uv run python -m scripts.check_runtime_readiness

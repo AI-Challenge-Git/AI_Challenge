@@ -16,6 +16,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.codes import (
     SUPPORTED_BASELINE_POLICY_VERSION,
+    AuditOutcome,
     BaselineStatus,
     ClusteringLinkageMethod,
     ClusteringPolicyStatus,
@@ -30,6 +31,7 @@ from app.codes import (
 from app.config import Settings
 from app.errors import ServiceError
 from app.models import (
+    AuditLog,
     ClusteringPolicy,
     IdempotencyRecord,
     Report,
@@ -44,12 +46,14 @@ from app.models import (
 )
 from app.schemas import (
     OperatorAcknowledgeSignalRequest,
+    OperatorApproveSignalPolicyRequest,
     OperatorCloseSignalRequest,
     OperatorMergeSignalsRequest,
     OperatorOfficialNoticeRequest,
     OperatorSignalListItem,
     OperatorSignalListResponse,
     OperatorSignalMutationResponse,
+    OperatorSignalPolicyApprovalResponse,
     OperatorSplitSignalRequest,
     RelatedSignal,
     SignalDashboardItem,
@@ -163,6 +167,10 @@ def _gate_lock_key(policy_id: UUID, symptom: TechnicalSymptom) -> int:
 
 def _operator_digest(agent_id: UUID) -> bytes:
     return hashlib.sha256(b"signal-operator:" + agent_id.bytes).digest()
+
+
+def _policy_resource_fingerprint(policy_version: str) -> str:
+    return hashlib.sha256(f"signal-policy:{policy_version}".encode()).hexdigest()
 
 
 def _audit_event(
@@ -1329,6 +1337,92 @@ async def _idempotency_replay(
     if not hmac.compare_digest(record.payload_sha256, request_sha256):
         raise ServiceError(409, "IDEMPOTENCY_CONFLICT", "요청 ID가 다른 내용에 사용됐습니다.")
     return True
+
+
+def _policy_approval_response(
+    policy: ClusteringPolicy,
+) -> OperatorSignalPolicyApprovalResponse:
+    if (
+        policy.approved_by is None
+        or policy.approved_at is None
+        or policy.approval_evidence_sha256 is None
+    ):
+        raise RuntimeError("approved policy metadata is incomplete")
+    return OperatorSignalPolicyApprovalResponse(
+        policy_version=policy.policy_version,
+        status=ClusteringPolicyStatus(policy.status),
+        approved_by=policy.approved_by,
+        approved_at=policy.approved_at,
+        evaluation_artifact_sha256=policy.approval_evidence_sha256,
+    )
+
+
+async def approve_signal_policy(
+    session: AsyncSession,
+    principal: AgentPrincipal,
+    request: OperatorApproveSignalPolicyRequest,
+    *,
+    now: datetime,
+) -> OperatorSignalPolicyApprovalResponse:
+    operation = "APPROVE_SIGNAL_POLICY"
+    principal_digest = _operator_digest(principal.agent_id)
+    request_sha256 = payload_sha256(request)
+    async with session.begin():
+        await lock_idempotency_key(session, principal_digest, operation, request.client_request_id)
+        replay = await _idempotency_replay(
+            session,
+            principal_digest=principal_digest,
+            operation=operation,
+            client_request_id=request.client_request_id,
+            request_sha256=request_sha256,
+        )
+        policy = await session.scalar(
+            select(ClusteringPolicy)
+            .where(ClusteringPolicy.policy_version == request.policy_version)
+            .with_for_update()
+        )
+        if policy is None:
+            raise ServiceError(404, "SIGNAL_POLICY_NOT_FOUND", "신호 정책을 찾을 수 없습니다.")
+        if replay:
+            return _policy_approval_response(policy)
+        if policy.status != ClusteringPolicyStatus.EXPERIMENTAL.value:
+            raise ServiceError(
+                409,
+                "INVALID_SIGNAL_POLICY_STATE",
+                "실험 상태의 신호 정책만 승인할 수 있습니다.",
+            )
+        if not policy.is_active:
+            raise ServiceError(
+                409,
+                "SIGNAL_POLICY_NOT_ACTIVE",
+                "현재 활성 신호 정책만 승인할 수 있습니다.",
+            )
+
+        policy.status = ClusteringPolicyStatus.APPROVED.value
+        policy.approved_by = principal.agent_id
+        policy.approved_at = now
+        policy.approval_evidence_sha256 = request.evaluation_artifact_sha256
+        session.add_all(
+            (
+                completed_idempotency_record(
+                    principal_digest=principal_digest,
+                    operation=operation,
+                    client_request_id=request.client_request_id,
+                    payload_sha256=request_sha256,
+                    response_status=200,
+                    now=now,
+                ),
+                AuditLog(
+                    actor_id=principal.agent_id,
+                    actor_type="operator",
+                    action="SIGNAL_POLICY_APPROVED",
+                    outcome=AuditOutcome.SUCCESS.value,
+                    resource_fingerprint=_policy_resource_fingerprint(policy.policy_version),
+                    created_at=now,
+                ),
+            )
+        )
+        return _policy_approval_response(policy)
 
 
 async def acknowledge_signal(

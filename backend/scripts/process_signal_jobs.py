@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 
 from sqlalchemy import select
 
@@ -44,7 +45,19 @@ async def run(*, max_jobs: int, report_empty: bool = True) -> int:
                 select(ClusteringPolicy).where(ClusteringPolicy.is_active.is_(True))
             )
         if policy is None:
-            print("processed=0 completed=0 failed=0 dead_lettered=0 configuration_error=1")
+            print(
+                json.dumps(
+                    {
+                        "event": "signal_worker_batch",
+                        "processed": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "dead_lettered": 0,
+                        "configuration_error": "ACTIVE_SIGNAL_POLICY_MISSING",
+                    },
+                    separators=(",", ":"),
+                )
+            )
             return 2
         mismatches = embedding_contract_mismatches(
             load_signal_embedding_contract(),
@@ -80,8 +93,16 @@ async def run(*, max_jobs: int, report_empty: bool = True) -> int:
                 failed += 1
         if completed or failed or dead_lettered or report_empty:
             print(
-                f"processed={completed + failed + dead_lettered} completed={completed} "
-                f"failed={failed} dead_lettered={dead_lettered}"
+                json.dumps(
+                    {
+                        "event": "signal_worker_batch",
+                        "processed": completed + failed + dead_lettered,
+                        "completed": completed,
+                        "failed": failed,
+                        "dead_lettered": dead_lettered,
+                    },
+                    separators=(",", ":"),
+                )
             )
         return 1 if failed or dead_lettered else 0
     finally:
