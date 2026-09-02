@@ -27,6 +27,7 @@ from evaluate_clustering_quality import (
     cluster_agglomerative_candidate,
 )
 from evaluate_embedding_pairs import CASES
+from evaluate_issue_types import normalized_issue_type
 from evaluate_online_clustering_quality import (
     ORDER_SEEDS,
     THRESHOLD_CANDIDATES,
@@ -58,7 +59,8 @@ def main() -> None:
             extraction_failures += 1
             continue
 
-        actual_issue_type = outcome.result.technical.issue_type.value
+        issue_type_field = outcome.result.technical.issue_type
+        actual_issue_type = normalized_issue_type(issue_type_field.value, issue_type_field.status)
         symptom_field = outcome.result.technical.symptom
         canonical_symptom = symptom_field.value or symptom_text
 
