@@ -7,6 +7,8 @@ AI-11(마스킹 placeholder를 실제 값으로 추론·복원 금지) 정식 �
 정식 pytest로 옮긴다.
 """
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -22,11 +24,11 @@ from app.schemas import (
 from app.security import SensitiveInputError, assert_no_unmasked_pii
 
 
-def _unknown() -> CandidateField:
+def _unknown() -> CandidateField[Any]:
     return CandidateField(value=None, status=FieldStatus.UNKNOWN, evidence_quote=None)
 
 
-def _confirmed(value: str) -> CandidateField:
+def _confirmed(value: str) -> CandidateField[Any]:
     return CandidateField(value=value, status=FieldStatus.CONFIRMED_FROM_TEXT, evidence_quote=value)
 
 
