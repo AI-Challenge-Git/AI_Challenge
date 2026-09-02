@@ -1,4 +1,4 @@
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   getConsultationCard,
@@ -71,6 +71,17 @@ const formatValue = (field: string, value: string | number | null) => {
   return String(value);
 };
 
+export const cardAccessExpired = (
+  card: Pick<AgentCardListItem, "expired" | "expires_at">,
+  now = Date.now(),
+) => card.expired || Date.parse(card.expires_at) <= now;
+
+export const relatedSignalEmptyMessage = (state: AgentCase["related_signal_state"]) => {
+  if (state === "CANDIDATE") return "유사한 제보를 비교하고 있습니다. 아직 장애 의심 신호가 탐지된 상태는 아닙니다.";
+  if (state === "ACTIVE") return "활성 신호 정보를 불러오지 못했습니다. 잠시 후 다시 조회해 주세요.";
+  return "현재 연결된 장애 의심 신호가 없습니다.";
+};
+
 export default function AgentDesk() {
   const [agent, setAgent] = useState<AgentSession | null>(null);
   const [cards, setCards] = useState<AgentCardListItem[]>([]);
@@ -83,9 +94,25 @@ export default function AgentDesk() {
   const [savingSignalId, setSavingSignalId] = useState("");
   const [signalResults, setSignalResults] = useState<Record<string, AgentSignalVerificationResult>>({});
   const [loggingIn, setLoggingIn] = useState(false);
+  const [now, setNow] = useState(Date.now());
   const verificationRequestId = useRef("");
   const refreshedAttachmentUrl = useRef("");
   const signalVerificationRequest = useRef<{ key: string; id: string } | null>(null);
+
+  useEffect(() => {
+    if (!agent) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [agent]);
+
+  useEffect(() => {
+    if (!caseFile || Date.parse(caseFile.expires_at) > now) return;
+    setCaseFile(null);
+    setResult(null);
+    setSignalResults({});
+    setError("상담카드 조회 시간이 만료되었습니다.");
+  }, [caseFile, now]);
 
   const showAgentError = (reason: unknown, fallback: string) => {
     if (reason instanceof ApiError && reason.status === 401) {
@@ -143,7 +170,12 @@ export default function AgentDesk() {
       verificationRequestId.current = "";
     } catch (reason) {
       setCaseFile(null);
-      showAgentError(reason, "상담 준비카드를 조회하지 못했습니다.");
+      if (reason instanceof ApiError && reason.status === 404 && reason.code === "CARD_NOT_FOUND") {
+        await loadCards(token);
+        setError("상담카드 조회 시간이 만료되었습니다.");
+      } else {
+        showAgentError(reason, "상담 준비카드를 조회하지 못했습니다.");
+      }
     } finally {
       setSearching(false);
     }
@@ -276,7 +308,8 @@ export default function AgentDesk() {
           </header>
           <div className="agent-card-items">
             {cards.length ? cards.map((card) => {
-              const unavailable = card.expired || !card.can_open;
+              const expired = cardAccessExpired(card, now);
+              const unavailable = expired || !card.can_open;
               return (
                 <button
                   key={card.card_id}
@@ -287,7 +320,8 @@ export default function AgentDesk() {
                 >
                   <span>{formatTime(card.received_at)}</span>
                   <strong>{card.technical_symptom ?? "기술 증상 미확인"}</strong>
-                  <small>{card.expired ? "만료됨 · 조회 불가" : !card.can_open ? "조회 불가" : card.consultation_status === "VERIFIED" ? "재확인 완료" : "상담 확인 대기"}</small>
+                  <small>{card.consultation_status === "VERIFIED" ? "재확인 완료" : "재확인 대기"}</small>
+                  <small>{expired ? "조회 시간 만료 · 접근 불가" : !card.can_open ? "조회 불가" : `${formatTime(card.expires_at)}까지 조회 가능`}</small>
                 </button>
               );
             }) : <p className="empty-copy">조회할 상담카드가 없습니다.</p>}
@@ -329,7 +363,7 @@ export default function AgentDesk() {
 
               <aside className="dashboard-card incident-card">
                 <header><div><span className="section-kicker">INCIDENT CONTEXT</span><h2>관련 장애 맥락</h2></div></header>
-                {caseFile.related_signals.length ? (
+                {caseFile.related_signal_state === "ACTIVE" && caseFile.related_signals.length ? (
                   <ul className="related-signal-list">
                     {caseFile.related_signals.map((signal) => (
                       <li key={signal.signal_id}>
@@ -357,7 +391,7 @@ export default function AgentDesk() {
                       </li>
                     ))}
                   </ul>
-                ) : <p className="empty-copy">연결된 장애 의심 신호가 없습니다.</p>}
+                ) : <p className="empty-copy">{relatedSignalEmptyMessage(caseFile.related_signal_state)}</p>}
                 <div className="incident-guide"><strong>안전 안내</strong><span>{caseFile.safety_notice}</span></div>
               </aside>
             </section>

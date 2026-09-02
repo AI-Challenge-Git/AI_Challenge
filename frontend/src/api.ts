@@ -17,6 +17,10 @@ import type {
   SavedCard,
   SignalDashboard,
   TechnicalData,
+  OperatorSignalClosureReason,
+  OperatorSignalListResponse,
+  OperatorSignalMutationResult,
+  OperatorSignalStatus,
 } from "./types";
 
 type ApiAnalyzeJsonRequest = operations["analyze_api_reports_analyze_post"]["requestBody"]["content"]["application/json"];
@@ -30,6 +34,8 @@ type ApiAgentLoginResponse = components["schemas"]["AgentLoginResponse"];
 type ApiAgentLookupRequest = components["schemas"]["ConsultationCardLookupRequest"];
 type ApiAgentVerificationRequest = components["schemas"]["AgentVerificationRequest"];
 type ApiAgentSignalVerificationRequest = components["schemas"]["AgentSignalVerificationRequest"];
+type ApiOperatorAcknowledgeRequest = components["schemas"]["OperatorAcknowledgeSignalRequest"];
+type ApiOperatorCloseRequest = components["schemas"]["OperatorCloseSignalRequest"];
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "");
 const SESSION_TOKEN_KEY = "mts-sos-session-token";
@@ -82,6 +88,9 @@ async function parseError(response: Response): Promise<ApiError> {
   if (code === "SYMBOL_MISMATCH") return new ApiError("종목명과 종목코드가 일치하지 않습니다. 다시 확인해 주세요.", code, response.status);
   if (code === "SIGNAL_RELEVANCE_CONFLICT") return new ApiError("기존 관련성 확정 결과와 충돌합니다. 자동으로 변경하지 않고 수동 검토가 필요합니다.", code, response.status);
   if (code === "SIGNAL_RELEVANCE_UNAVAILABLE") return new ApiError("관련성 확인 결과를 현재 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.", code, response.status);
+  if (code === "OPERATOR_ROLE_REQUIRED") return new ApiError("운영자 권한이 필요합니다. 운영자 계정으로 다시 로그인해 주세요.", code, response.status);
+  if (code === "SIGNAL_NOT_FOUND") return new ApiError("요청한 장애 의심 신호를 찾을 수 없습니다.", code, response.status);
+  if (code === "INVALID_SIGNAL_STATE") return new ApiError("현재 신호 상태에서는 해당 작업을 수행할 수 없습니다. 목록을 새로고침해 주세요.", code, response.status);
   if (response.status === 401) return new ApiError("로그인이 만료되었거나 인증 정보가 올바르지 않습니다. 다시 로그인해 주세요.", code, 401);
   if (response.status === 403) return new ApiError("상담원 권한이 필요합니다. 다시 로그인해 주세요.", code, 403);
   if (response.status === 404) return new ApiError("요청한 상담 정보를 찾을 수 없습니다.", code, 404);
@@ -415,6 +424,56 @@ export async function loginAgent(employeeId: string, password: string): Promise<
     method: "POST",
     body: JSON.stringify(login),
   }, null);
+}
+
+export async function getOperatorSignals(
+  operatorToken?: string,
+  status?: OperatorSignalStatus,
+  limit = 100,
+  offset = 0,
+): Promise<OperatorSignalListResponse> {
+  const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (status) query.set("status", status);
+  return request<OperatorSignalListResponse>(
+    `/api/operator/signals?${query}`,
+    {},
+    requireAgentToken(operatorToken),
+  );
+}
+
+export async function acknowledgeOperatorSignal(
+  signalId: string,
+  operatorToken?: string,
+  clientRequestId: string = crypto.randomUUID(),
+): Promise<OperatorSignalMutationResult> {
+  const payload: ApiOperatorAcknowledgeRequest = {
+    signal_id: signalId,
+    client_request_id: clientRequestId,
+    reason: "MANUAL_REVIEW",
+  };
+  return request<OperatorSignalMutationResult>(
+    "/api/operator/signals/acknowledge",
+    { method: "POST", body: JSON.stringify(payload) },
+    requireAgentToken(operatorToken),
+  );
+}
+
+export async function closeOperatorSignal(
+  signalId: string,
+  closureReason: OperatorSignalClosureReason,
+  operatorToken?: string,
+  clientRequestId: string = crypto.randomUUID(),
+): Promise<OperatorSignalMutationResult> {
+  const payload: ApiOperatorCloseRequest = {
+    signal_id: signalId,
+    client_request_id: clientRequestId,
+    closure_reason: closureReason,
+  };
+  return request<OperatorSignalMutationResult>(
+    "/api/operator/signals/close",
+    { method: "POST", body: JSON.stringify(payload) },
+    requireAgentToken(operatorToken),
+  );
 }
 
 export function normalizeSymbolCode(value: string): string {

@@ -106,6 +106,45 @@ describe("백엔드 분석 DTO 연동", () => {
     );
   });
 
+  it("운영자 토큰으로 전체 신호를 조회하고 검토 시작·종료를 요청한다", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
+    const operatorToken = "operator-token";
+    const signalId = "11111111-1111-4111-8111-111111111111";
+    const list = { updated_at: "2026-08-30T00:06:00Z", items: [], limit: 100, offset: 0 };
+    const mutation = {
+      signal_id: signalId,
+      status: "UNDER_REVIEW",
+      closure_reason: null,
+      reporting_unique_sessions: 3,
+      raw_report_count: 5,
+      official_notice_url: null,
+      changed_at: "2026-08-30T00:07:00Z",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(list)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(mutation)))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...mutation, status: "CLOSED", closure_reason: "FALSE_POSITIVE" })));
+    vi.stubGlobal("fetch", fetchMock);
+    const { acknowledgeOperatorSignal, closeOperatorSignal, getOperatorSignals } = await import("./api");
+
+    await expect(getOperatorSignals(operatorToken)).resolves.toEqual(list);
+    await acknowledgeOperatorSignal(signalId, operatorToken, "22222222-2222-4222-8222-222222222222");
+    await closeOperatorSignal(signalId, "FALSE_POSITIVE", operatorToken, "33333333-3333-4333-8333-333333333333");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.com/api/operator/signals?limit=100&offset=0");
+    expect(fetchMock.mock.calls[0][1]?.headers).toEqual(expect.objectContaining({ Authorization: `Bearer ${operatorToken}` }));
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({
+      signal_id: signalId,
+      client_request_id: "22222222-2222-4222-8222-222222222222",
+      reason: "MANUAL_REVIEW",
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({
+      signal_id: signalId,
+      client_request_id: "33333333-3333-4333-8333-333333333333",
+      closure_reason: "FALSE_POSITIVE",
+    });
+  });
+
   it("AVAILABLE 기준선에 배율이 없으면 계약 오류로 처리한다", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({

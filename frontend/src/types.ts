@@ -95,6 +95,11 @@ export type AgentVerificationResult = components["schemas"]["AgentVerificationRe
 export type AgentSignalVerificationResult = components["schemas"]["AgentSignalVerificationResponse"];
 export type SignalDashboard = components["schemas"]["SignalDashboardResponse"];
 export type SignalDashboardItem = components["schemas"]["SignalDashboardItem"];
+export type OperatorSignalListItem = components["schemas"]["OperatorSignalListItem"];
+export type OperatorSignalListResponse = components["schemas"]["OperatorSignalListResponse"];
+export type OperatorSignalMutationResult = components["schemas"]["OperatorSignalMutationResponse"];
+export type OperatorSignalStatus = components["schemas"]["SignalStatus"];
+export type OperatorSignalClosureReason = components["schemas"]["SignalClosureReason"];
 
 export type AgentCardSelector =
   | { reference_number: string; card_id?: never }
