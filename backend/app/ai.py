@@ -116,10 +116,18 @@ def validate_evidence_quotes(result: ExtractionResult, masked_text: str) -> None
                 raise ValueError("AI evidence must be a substring of masked_text")
 
 
+# 날짜/시각 필드(ISO 8601, 예: "2026-08-15T11:00:00+09:00")는 애초에 마스킹
+# placeholder 대상이 아니었는데도, "2026-08-15"처럼 계좌번호 정규식(숫자-숫자-숫자)에
+# 우연히 걸려 오탐이 났다 (FE-07 정상 추출이 AI-11 검사에서 차단되던 버그).
+_DATETIME_FIELD_NAMES = frozenset({"reported_occurred_at", "attempted_at"})
+
+
 def validate_no_restored_pii(result: ExtractionResult) -> None:
     """AI-11: 마스킹 placeholder를 실제 값으로 추론·복원하지 않았는지 확인한다."""
     for section in (result.technical, result.consultation):
         for field_name in type(section).model_fields:
+            if field_name in _DATETIME_FIELD_NAMES:
+                continue
             value = getattr(section, field_name).value
             if isinstance(value, str):
                 assert_no_unmasked_pii(value)
