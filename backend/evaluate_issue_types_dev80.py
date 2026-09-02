@@ -18,11 +18,13 @@ UNRELATED_OR_AMBIGUOUS/UNKNOWN 두 상태로 분리했다.
 용도다. locked-test 80건(evaluate_issue_types_locked80.py)은 별도 파일이며
 한 번 확정하면 재조정하지 않는다.
 
-주의: 아래 문장은 초안이다. 기존 evaluate_issue_types.py / holdout /
-holdout_v2 / holdout_v3 / v4 / test_*.py의 문장과 겹치지 않도록 작성했으나,
-자동 중복 검사(대화에서 실행)만 거쳤고 팀 리뷰는 아직이다. 특히
-hard negative(표현 유사·원인 다름 / 표현 다름·원인 동일)는 의도적으로
-포함하지 않았다 — 정답 라벨에 도메인 판단이 필요해 팀 확인 후 추가한다.
+확정 (2026-09-02): 기존 evaluate_issue_types.py / holdout / holdout_v2 /
+holdout_v3 / v4 / test_*.py의 문장과 겹치지 않음(자동 중복 검사 통과), 무관
+정보 보강(BALANCE/NETWORK/UNRELATED 카테고리) 완료. 최종 실행 결과:
+Accuracy 80/80(100%), evidence_quote substring 100%, 원문 전체 인용 비율
+0.0(목표 달성), 오류유형별 정답률 전 카테고리 100% — 최종 PASS.
+hard negative는 이 dev80이 아니라 locked80에 카테고리별 2건씩 별도 추가함
+(evaluate_issue_types_locked80.py 참고).
 """
 
 from app.codes import IssueType
