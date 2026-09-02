@@ -28,6 +28,7 @@ def test_agent_vertical_slice_is_present_in_openapi() -> None:
 
     assert "/api/auth/login" in paths
     assert "/api/agent/consultation-cards" in paths
+    assert "/api/operator/signals" in paths
     assert "/api/consultation-cards/lookup" in paths
     assert "/api/consultation-cards/verifications" in paths
     verification = schema["components"]["schemas"]["AgentVerificationRequest"]

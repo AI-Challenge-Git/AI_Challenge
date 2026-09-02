@@ -14,11 +14,18 @@
   600초 rolling window 고유 세션 수 / 직전 600초 window 고유 세션 수다.
 - `reporting_unique_sessions`는 고객 제보 기반 비식별 세션 수이며 실제 영향 고객 수로 표시하면 안 된다.
 - 상담카드 상세 `related_signals`는 더 이상 무조건 빈 배열이 아니며 같은 typed 활성 신호가 포함될 수 있다.
+- 상담카드 `related_signals`는 공개 상황판과 동일하게, 시간창이 지난 `SIGNAL_DETECTED`는 제외하고
+  `UNDER_REVIEW`는 계속 포함한다.
+- 상담카드 `related_signal_state`는 `ACTIVE | CANDIDATE | NONE`이다. `CANDIDATE`이면 “관련 신호 없음”
+  대신 “유사 제보 비교 중”처럼 표시하되 장애가 탐지됐다고 표현하면 안 된다.
 - 상담카드 상세의 새 `attachment_url: string | null`은 인증·2시간 TTL 검증 후 발급된 짧은 signed
   URL이다. 값이 있을 때만 이미지를 표시하고 browser storage·console·analytics에 저장하지 않는다.
   URL이 만료되면 카드 상세를 다시 조회해 새 URL을 받아야 한다.
 - 운영자 변경 API는 `OPERATOR` Bearer token이 필요하다. 일반 상담원 token으로 호출하면 `403`이다.
-- 이번 조회 MVP에서는 운영자 회원가입·로그인·인증 및 상태변경 UI 연동은 작업 범위에서 제외한다.
+- `GET /api/operator/signals`는 `CANDIDATE | SIGNAL_DETECTED | UNDER_REVIEW | CLOSED`를 조회하며,
+  optional `status`, `limit`, `offset` query를 지원한다. `public_visible=false`와
+  `window_expires_at`을 이용해 공개 시간창이 지난 신호도 운영자 화면에 표시해야 한다.
+- 운영자 화면에서 `SIGNAL_DETECTED`의 검토 시작(acknowledge)과 미종료 신호의 종료(close)를 연결해야 한다.
 - `official_incident=false`인 항목을 확정 장애로 표현하면 안 된다.
 - `applied_policy.linkage_method`는 `SINGLE_MAX | AVERAGE`,
   `representative_method`는 `NONE | MEDOID`다. 현재 활성 정책은 `EXPERIMENTAL`이므로 승인 정책으로
@@ -40,6 +47,13 @@
 - `BLOCK`은 최종 결과를 저장하지 않은 상태, `IDEMPOTENT_REPLAY`는 기존 lock 유지다.
 - `409 SIGNAL_RELEVANCE_CONFLICT`는 자동 덮어쓰기하지 말고 수동 검토 상태로 표시한다.
 - 최신 `backend/openapi.json`에서 generated TypeScript를 다시 생성한다.
+
+## 상담카드 접근 만료
+
+- 목록 응답의 `expires_at`을 현재 시각과 계속 비교해 만료 즉시 조회 버튼을 비활성화해야 한다.
+- 화면을 오래 열어둘 수 있으므로 만료 시점 timer 또는 주기적 목록 갱신이 필요하다.
+- 상세 조회가 `404 CARD_NOT_FOUND`이면 목록을 갱신하고 “상담카드 조회 시간이 만료되었습니다”처럼
+  안내한다. 재확인 완료 상태와 2시간 접근 TTL은 별개다.
 
 ## KRX 종목코드
 

@@ -170,8 +170,21 @@ transaction 밖에서 실행한다. metadata·차원·입력 불일치는 재시
 기존 운영자 mutation은 `OPERATOR` Bearer token과 UUID v4 `client_request_id`를 요구한다. 현재 조회 MVP
 범위에서는 운영자 회원가입·로그인·인증 또는 mutation 흐름을 추가로 확장하지 않는다.
 
+`GET /api/operator/signals`는 `OPERATOR` Bearer token으로 `CANDIDATE`, 공개 시간창이 지난
+`SIGNAL_DETECTED`, `UNDER_REVIEW`, `CLOSED`를 모두 조회한다. optional `status` filter와 pagination을
+지원하며 `public_visible`과 `window_expires_at`으로 공개 상황판 노출 여부를 구분한다. 시간창 만료는
+DB 상태를 자동으로 `CLOSED`로 바꾸지 않는다. 운영자가 만료된 `SIGNAL_DETECTED`를 acknowledge하거나
+명시적 closure reason으로 close할 수 있다.
+
+상담카드 `related_signals`는 공개 상황판과 같은 노출 기준을 사용한다. 따라서 시간창이 지난
+`SIGNAL_DETECTED`는 양쪽에서 모두 숨기고, `UNDER_REVIEW`는 양쪽에서 계속 제공한다.
+`related_signal_state`는 공개 가능한 관련 신호가 있으면 `ACTIVE`, 직접 membership이 내부
+`CANDIDATE`에만 있으면 `CANDIDATE`, 둘 다 아니면 `NONE`이다. 내부 candidate의 ID·통계·유사도는
+노출하지 않는다.
+
 | Method | Path | 의미 |
 |---|---|---|
+| GET | `/api/operator/signals` | 공개 만료·내부·종료 상태를 포함한 전체 신호 조회 |
 | POST | `/api/operator/signals/acknowledge` | `SIGNAL_DETECTED`를 `UNDER_REVIEW`로 전이 |
 | POST | `/api/operator/signals/close` | closure reason을 남기고 `CLOSED`로 전이 |
 | POST | `/api/operator/signals/merge` | 구조화 hard gate가 호환되는 두 신호를 수동 병합 |

@@ -11,6 +11,7 @@ from app.api.dependencies import (
     operator_principal,
     rate_limit_client_identifier,
 )
+from app.codes import SignalStatus
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.schemas import (
@@ -18,6 +19,7 @@ from app.schemas import (
     OperatorCloseSignalRequest,
     OperatorMergeSignalsRequest,
     OperatorOfficialNoticeRequest,
+    OperatorSignalListResponse,
     OperatorSignalMutationResponse,
     OperatorSplitSignalRequest,
     ProblemDetails,
@@ -30,6 +32,7 @@ from app.services.signals import (
     enforce_dashboard_rate_limit,
     link_official_notice,
     list_dashboard_signals,
+    list_operator_signals,
     merge_signals,
     split_signal,
 )
@@ -75,6 +78,32 @@ async def dashboard(
         now=now,
     )
     return await list_dashboard_signals(session, now=now, limit=limit, offset=offset)
+
+
+@router.get(
+    "/operator/signals",
+    tags=["operator-signals"],
+    response_model=OperatorSignalListResponse,
+    responses={401: SIGNAL_ERRORS[401], 403: SIGNAL_ERRORS[403], 422: SIGNAL_ERRORS[422]},
+)
+async def operator_signals(
+    response: Response,
+    principal: Annotated[AgentPrincipal, Depends(operator_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    clock: Annotated[Callable[[], datetime], Depends(get_clock)],
+    status: SignalStatus | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
+) -> OperatorSignalListResponse:
+    del principal
+    response.headers["Cache-Control"] = "no-store"
+    return await list_operator_signals(
+        session,
+        now=clock(),
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post(

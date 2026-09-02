@@ -4,7 +4,7 @@ import hmac
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -74,7 +74,11 @@ from app.services.idempotency import (
 )
 from app.services.lifecycle import card_is_accessible
 from app.services.rate_limits import RateLimitResult, consume_rate_limit, rate_limit_error
-from app.services.signals import related_signals_for_report, signal_relevance_for_report
+from app.services.signals import (
+    has_candidate_signal_for_report,
+    related_signals_for_report,
+    signal_relevance_for_report,
+)
 from app.services.symbols import validate_symbol
 from app.signal_lock import (
     LockedSignalResult,
@@ -472,6 +476,7 @@ def _card_detail(
     technical: TechnicalSymptom,
     verification_status: VerificationStatus | None,
     related_signals: list[RelatedSignal],
+    related_signal_state: Literal["ACTIVE", "CANDIDATE", "NONE"],
     attachment_url: str | None,
 ) -> ConsultationCardDetail:
     if card.expires_at is None:
@@ -501,6 +506,7 @@ def _card_detail(
         has_attachment=card.report.attachment is not None,
         attachment_url=attachment_url,
         related_signals=related_signals,
+        related_signal_state=related_signal_state,
     )
 
 
@@ -565,7 +571,20 @@ async def lookup_consultation_card(
                 if technical is None:
                     raise ServiceError(503, "CARD_UNAVAILABLE", "상담카드를 사용할 수 없습니다.")
                 verification_status = await _latest_verification_status(session, card.id)
-                related_signals = await related_signals_for_report(session, card.report_id)
+                related_signals = await related_signals_for_report(
+                    session,
+                    card.report_id,
+                    now=now,
+                )
+                related_signal_state: Literal["ACTIVE", "CANDIDATE", "NONE"] = (
+                    "ACTIVE"
+                    if related_signals
+                    else (
+                        "CANDIDATE"
+                        if await has_candidate_signal_for_report(session, card.report_id)
+                        else "NONE"
+                    )
+                )
                 attachment_url: str | None = None
                 if card.report.attachment is not None:
                     try:
@@ -585,6 +604,7 @@ async def lookup_consultation_card(
                     technical,
                     verification_status,
                     related_signals,
+                    related_signal_state,
                     attachment_url,
                 )
                 session.add(
@@ -888,6 +908,7 @@ async def save_agent_signal_verification(
                     session,
                     card.report_id,
                     request.signal_id,
+                    now=now,
                 )
                 if relevance_and_lock is None:
                     error = ServiceError(

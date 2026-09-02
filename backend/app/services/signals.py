@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy import Float, cast, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.codes import (
     SUPPORTED_BASELINE_POLICY_VERSION,
@@ -46,6 +47,8 @@ from app.schemas import (
     OperatorCloseSignalRequest,
     OperatorMergeSignalsRequest,
     OperatorOfficialNoticeRequest,
+    OperatorSignalListItem,
+    OperatorSignalListResponse,
     OperatorSignalMutationResponse,
     OperatorSplitSignalRequest,
     RelatedSignal,
@@ -116,6 +119,33 @@ def _public_signal_status(value: str) -> PublicSignalStatus:
     if status not in (SignalStatus.SIGNAL_DETECTED, SignalStatus.UNDER_REVIEW):
         raise ValueError("signal is not externally visible")
     return status
+
+
+def _public_signal_filter(now: datetime) -> ColumnElement[bool]:
+    within_detection_window = (
+        SignalCluster.last_report_at + ClusteringPolicy.window_seconds * text("INTERVAL '1 second'")
+        >= now
+    )
+    return or_(
+        SignalCluster.status == SignalStatus.UNDER_REVIEW.value,
+        within_detection_window,
+    )
+
+
+def _signal_window_expires_at(cluster: SignalCluster, policy: ClusteringPolicy) -> datetime:
+    return cluster.last_report_at + timedelta(seconds=policy.window_seconds)
+
+
+def _is_public_signal(
+    cluster: SignalCluster,
+    policy: ClusteringPolicy,
+    *,
+    now: datetime,
+) -> bool:
+    return cluster.status == SignalStatus.UNDER_REVIEW.value or (
+        cluster.status == SignalStatus.SIGNAL_DETECTED.value
+        and _signal_window_expires_at(cluster, policy) >= now
+    )
 
 
 def _gate_lock_key(policy_id: UUID, symptom: TechnicalSymptom) -> int:
@@ -887,14 +917,7 @@ async def list_dashboard_signals(
     limit: int,
     offset: int,
 ) -> SignalDashboardResponse:
-    within_detection_window = (
-        SignalCluster.last_report_at + ClusteringPolicy.window_seconds * text("INTERVAL '1 second'")
-        >= now
-    )
-    visible_signal = or_(
-        SignalCluster.status == SignalStatus.UNDER_REVIEW.value,
-        within_detection_window,
-    )
+    visible_signal = _public_signal_filter(now)
     rows = (
         await session.execute(
             select(SignalCluster, ClusteringPolicy)
@@ -1060,6 +1083,60 @@ async def list_dashboard_signals(
     )
 
 
+async def list_operator_signals(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    status: SignalStatus | None,
+    limit: int,
+    offset: int,
+) -> OperatorSignalListResponse:
+    statement = select(SignalCluster, ClusteringPolicy).join(
+        ClusteringPolicy,
+        ClusteringPolicy.id == SignalCluster.policy_id,
+    )
+    if status is not None:
+        statement = statement.where(SignalCluster.status == status.value)
+    rows = (
+        await session.execute(
+            statement.order_by(SignalCluster.last_report_at.desc(), SignalCluster.id)
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    return OperatorSignalListResponse(
+        updated_at=now,
+        items=[
+            OperatorSignalListItem(
+                signal_id=cluster.id,
+                status=SignalStatus(cluster.status),
+                closure_reason=(
+                    SignalClosureReason(cluster.closure_reason)
+                    if cluster.closure_reason is not None
+                    else None
+                ),
+                channel=cluster.channel,
+                feature_area=cluster.feature_area,
+                reported_symptom_type=IssueType(cluster.reported_symptom_type),
+                reporting_unique_sessions=cluster.reporting_unique_sessions,
+                raw_report_count=cluster.raw_report_count,
+                review_priority=cluster.review_priority,
+                first_report_at=cluster.first_report_at,
+                last_report_at=cluster.last_report_at,
+                window_expires_at=_signal_window_expires_at(cluster, policy),
+                public_visible=_is_public_signal(cluster, policy, now=now),
+                policy_version=policy.policy_version,
+                policy_status=ClusteringPolicyStatus(policy.status),
+                official_notice_url=cluster.official_notice_url,
+                closed_at=cluster.closed_at,
+            )
+            for cluster, policy in rows
+        ],
+        limit=limit,
+        offset=offset,
+    )
+
+
 async def enforce_dashboard_rate_limit(
     session: AsyncSession,
     principal_digest: bytes,
@@ -1089,15 +1166,19 @@ async def enforce_dashboard_rate_limit(
 async def related_signals_for_report(
     session: AsyncSession,
     report_id: UUID,
+    *,
+    now: datetime,
 ) -> list[RelatedSignal]:
     clusters = list(
         (
             await session.scalars(
                 select(SignalCluster)
+                .join(ClusteringPolicy, ClusteringPolicy.id == SignalCluster.policy_id)
                 .join(SignalMember, SignalMember.signal_id == SignalCluster.id)
                 .where(
                     SignalMember.report_id == report_id,
                     SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES),
+                    _public_signal_filter(now),
                 )
                 .order_by(SignalCluster.last_report_at.desc())
             )
@@ -1105,7 +1186,12 @@ async def related_signals_for_report(
     )
     related = []
     for cluster in clusters:
-        relevance_and_lock = await signal_relevance_for_report(session, report_id, cluster.id)
+        relevance_and_lock = await signal_relevance_for_report(
+            session,
+            report_id,
+            cluster.id,
+            now=now,
+        )
         relevance = relevance_and_lock[0] if relevance_and_lock is not None else None
         locked = relevance_and_lock[1] if relevance_and_lock is not None else None
         related.append(
@@ -1126,10 +1212,25 @@ async def related_signals_for_report(
     return related
 
 
+async def has_candidate_signal_for_report(session: AsyncSession, report_id: UUID) -> bool:
+    candidate_id = await session.scalar(
+        select(SignalMember.id)
+        .join(SignalCluster, SignalCluster.id == SignalMember.signal_id)
+        .where(
+            SignalMember.report_id == report_id,
+            SignalCluster.status == SignalStatus.CANDIDATE.value,
+        )
+        .limit(1)
+    )
+    return candidate_id is not None
+
+
 async def signal_relevance_for_report(
     session: AsyncSession,
     report_id: UUID,
     signal_id: UUID,
+    *,
+    now: datetime,
 ) -> tuple[SignalRelevanceResult, SignalRelevanceLock | None] | None:
     row = (
         await session.execute(
@@ -1147,6 +1248,7 @@ async def signal_relevance_for_report(
                 SignalCluster.id == signal_id,
                 SignalMember.report_id == report_id,
                 SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES),
+                _public_signal_filter(now),
             )
         )
     ).first()

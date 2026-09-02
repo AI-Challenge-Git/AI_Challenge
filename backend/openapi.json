@@ -966,6 +966,104 @@
         }
       }
     },
+    "/api/operator/signals": {
+      "get": {
+        "tags": [
+          "operator-signals"
+        ],
+        "summary": "Operator Signals",
+        "operationId": "operator_signals_api_operator_signals_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SignalStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorSignalListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/operator/signals/acknowledge": {
       "post": {
         "tags": [
@@ -2152,6 +2250,15 @@
             },
             "type": "array",
             "title": "Related Signals"
+          },
+          "related_signal_state": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "CANDIDATE",
+              "NONE"
+            ],
+            "title": "Related Signal State"
           }
         },
         "additionalProperties": false,
@@ -2166,7 +2273,8 @@
           "safety_notice",
           "has_attachment",
           "attachment_url",
-          "related_signals"
+          "related_signals",
+          "related_signal_state"
         ],
         "title": "ConsultationCardDetail"
       },
@@ -2602,6 +2710,157 @@
           "official_notice_url"
         ],
         "title": "OperatorOfficialNoticeRequest"
+      },
+      "OperatorSignalListItem": {
+        "properties": {
+          "signal_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Signal Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SignalStatus"
+          },
+          "closure_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalClosureReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel"
+          },
+          "feature_area": {
+            "type": "string",
+            "title": "Feature Area"
+          },
+          "reported_symptom_type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "reporting_unique_sessions": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Reporting Unique Sessions"
+          },
+          "raw_report_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Raw Report Count"
+          },
+          "review_priority": {
+            "type": "boolean",
+            "title": "Review Priority"
+          },
+          "first_report_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Report At"
+          },
+          "last_report_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Report At"
+          },
+          "window_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Window Expires At"
+          },
+          "public_visible": {
+            "type": "boolean",
+            "title": "Public Visible"
+          },
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          },
+          "policy_status": {
+            "$ref": "#/components/schemas/ClusteringPolicyStatus"
+          },
+          "official_notice_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Notice Url"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signal_id",
+          "status",
+          "closure_reason",
+          "channel",
+          "feature_area",
+          "reported_symptom_type",
+          "reporting_unique_sessions",
+          "raw_report_count",
+          "review_priority",
+          "first_report_at",
+          "last_report_at",
+          "window_expires_at",
+          "public_visible",
+          "policy_version",
+          "policy_status",
+          "official_notice_url",
+          "closed_at"
+        ],
+        "title": "OperatorSignalListItem"
+      },
+      "OperatorSignalListResponse": {
+        "properties": {
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorSignalListItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "updated_at",
+          "items",
+          "limit",
+          "offset"
+        ],
+        "title": "OperatorSignalListResponse"
       },
       "OperatorSignalMutationResponse": {
         "properties": {
