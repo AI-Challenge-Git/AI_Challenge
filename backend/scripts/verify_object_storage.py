@@ -30,7 +30,10 @@ async def run() -> None:
         def signed_get() -> bytes:
             request = Request(signed_url, headers={"Accept": "application/octet-stream"})
             with urlopen(request, timeout=30) as response:  # noqa: S310
-                return response.read()
+                content = response.read()
+                if not isinstance(content, bytes):
+                    raise TypeError("signed object storage response was not bytes")
+                return content
 
         if await asyncio.to_thread(signed_get) != _SMOKE_CONTENT:
             raise RuntimeError("signed object storage read verification failed")
