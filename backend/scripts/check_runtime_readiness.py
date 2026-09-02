@@ -1,46 +1,19 @@
 import asyncio
+import json
 
 from sqlalchemy import func, select
 
 from app.codes import AgentRole
+from app.config import get_settings
 from app.db import engine, session_factory
-from app.models import AgentAccount, ClusteringPolicy, SymbolMasterVersion
-from app.services.signal_embeddings import (
-    embedding_contract_mismatches,
-    load_signal_embedding_contract,
-)
+from app.models import AgentAccount
+from app.services.readiness import collect_service_readiness_failures
 
 
 async def collect_failures() -> tuple[str, ...]:
-    failures: list[str] = []
+    failures: list[str]
     async with session_factory() as session:
-        policy = await session.scalar(
-            select(ClusteringPolicy).where(ClusteringPolicy.is_active.is_(True))
-        )
-        if policy is None:
-            failures.append("ACTIVE_SIGNAL_POLICY_MISSING")
-        else:
-            try:
-                contract = load_signal_embedding_contract()
-            except RuntimeError:
-                failures.append("SIGNAL_EMBEDDING_CONTRACT_MISSING")
-            else:
-                if embedding_contract_mismatches(
-                    contract,
-                    model_id=policy.model_id,
-                    model_revision=policy.model_revision,
-                    dimension=policy.embedding_dimension,
-                    normalization=policy.normalization,
-                    input_format=policy.input_format,
-                    distance_metric=policy.distance_metric,
-                ):
-                    failures.append("SIGNAL_POLICY_CONTRACT_MISMATCH")
-
-        symbol_master = await session.scalar(
-            select(SymbolMasterVersion).where(SymbolMasterVersion.is_active.is_(True))
-        )
-        if symbol_master is None or symbol_master.row_count < 1:
-            failures.append("ACTIVE_SYMBOL_MASTER_MISSING")
+        failures = list(await collect_service_readiness_failures(session, get_settings()))
 
         role_rows = (
             await session.execute(
@@ -60,11 +33,14 @@ async def collect_failures() -> tuple[str, ...]:
 async def run() -> int:
     try:
         failures = await collect_failures()
-        if failures:
-            print(f"runtime_ready=false failures={','.join(failures)}")
-            return 1
-        print("runtime_ready=true")
-        return 0
+        ready = not failures
+        print(
+            json.dumps(
+                {"event": "runtime_readiness", "ready": ready, "failures": failures},
+                separators=(",", ":"),
+            )
+        )
+        return 0 if ready else 1
     finally:
         await engine.dispose()
 

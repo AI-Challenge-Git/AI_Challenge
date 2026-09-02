@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 
 from app.attachments import get_attachment_store
 from app.db import engine, session_factory
@@ -41,12 +42,18 @@ async def run(*, execute: bool, batch_size: int) -> None:
                 )
                 object_candidates = preview.attachment_objects + preview.retry_ready_objects
                 print(
-                    "mode=dry-run "
-                    f"reports={preview.reports} "
-                    f"signal_clusters={preview.signal_clusters} "
-                    f"signal_audit_events={preview.signal_audit_events} "
-                    f"independent_records={independent_records} "
-                    f"objects={object_candidates}"
+                    json.dumps(
+                        {
+                            "event": "retention_worker_batch",
+                            "mode": "dry-run",
+                            "reports": preview.reports,
+                            "signal_clusters": preview.signal_clusters,
+                            "signal_audit_events": preview.signal_audit_events,
+                            "independent_records": independent_records,
+                            "objects": object_candidates,
+                        },
+                        separators=(",", ":"),
+                    )
                 )
                 return
 
@@ -66,13 +73,19 @@ async def run(*, execute: bool, batch_size: int) -> None:
                 + result.signal_audit_events_deleted
             )
             print(
-                "mode=execute "
-                f"reports_deleted={result.reports_deleted} "
-                f"independent_records_deleted={independent_deleted} "
-                f"object_deletions_succeeded={result.object_deletions_succeeded} "
-                f"object_deletions_failed={result.object_deletions_failed} "
-                f"object_deletions_skipped={result.object_deletions_skipped} "
-                f"retry_waiting={result.retry_waiting}"
+                json.dumps(
+                    {
+                        "event": "retention_worker_batch",
+                        "mode": "execute",
+                        "reports_deleted": result.reports_deleted,
+                        "independent_records_deleted": independent_deleted,
+                        "object_deletions_succeeded": result.object_deletions_succeeded,
+                        "object_deletions_failed": result.object_deletions_failed,
+                        "object_deletions_skipped": result.object_deletions_skipped,
+                        "retry_waiting": result.retry_waiting,
+                    },
+                    separators=(",", ":"),
+                )
             )
     finally:
         await engine.dispose()

@@ -13,7 +13,7 @@ from app.config import Settings, get_settings
 from app.main import create_app
 from app.schemas import ExtractionResult
 from app.services.reports import _extract_with_runtime_limits
-from scripts import process_signal_jobs
+from scripts import process_signal_jobs, verify_proxy_rate_limit
 
 
 def test_settings_load_environment_variables(
@@ -116,6 +116,31 @@ def test_rate_limit_client_identifier_fails_closed_for_bad_railway_headers(
     request = Request({"type": "http", "headers": headers, "client": ("10.0.0.1", 1234)})
 
     assert rate_limit_client_identifier(request, app_env="production") == expected
+
+
+def test_proxy_rate_limit_verifier_detects_edge_header_overwrite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statuses = iter((200, 200, 429))
+    monkeypatch.setattr(
+        verify_proxy_rate_limit,
+        "_request_status",
+        lambda url, token, spoofed_ip: next(statuses),
+    )
+
+    assert verify_proxy_rate_limit.run(base_url="https://api.example.com", limit=2) == 0
+
+
+def test_proxy_rate_limit_verifier_rejects_spoof_bypass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        verify_proxy_rate_limit,
+        "_request_status",
+        lambda url, token, spoofed_ip: 200,
+    )
+
+    assert verify_proxy_rate_limit.run(base_url="https://api.example.com", limit=2) == 1
 
 
 async def test_backend_service_keeps_timed_out_ai_calls_bounded() -> None:
@@ -286,9 +311,14 @@ def test_railway_workers_use_the_expected_process_model() -> None:
     retention = json.loads(
         (backend_root / "railway.retention-worker.json").read_text(encoding="utf-8")
     )
+    monitor = json.loads(
+        (backend_root / "railway.operations-monitor.json").read_text(encoding="utf-8")
+    )
 
     signal_deploy = signal["deploy"]
     assert "--forever" in signal_deploy["startCommand"]
     assert "cronSchedule" not in signal_deploy
     assert signal_deploy["restartPolicyType"] == "ON_FAILURE"
     assert retention["deploy"]["cronSchedule"] == "17 * * * *"
+    assert monitor["deploy"]["cronSchedule"] == "*/5 * * * *"
+    assert "check_operational_health" in monitor["deploy"]["startCommand"]

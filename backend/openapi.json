@@ -1064,6 +1064,138 @@
         }
       }
     },
+    "/api/operator/signal-policies/approve": {
+      "post": {
+        "tags": [
+          "operator-signals"
+        ],
+        "summary": "Approve Policy",
+        "operationId": "approve_policy_api_operator_signal_policies_approve_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorApproveSignalPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorSignalPolicyApprovalResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Signal unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/operator/operations/metrics": {
+      "get": {
+        "tags": [
+          "operator-operations"
+        ],
+        "summary": "Operations Metrics",
+        "operationId": "operations_metrics_api_operator_operations_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationalMetricsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/operator/signals/acknowledge": {
       "post": {
         "tags": [
@@ -2593,6 +2725,57 @@
         ],
         "title": "IssueType"
       },
+      "OperationalMetricsResponse": {
+        "properties": {
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Observed At"
+          },
+          "signal_jobs_ready": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Signal Jobs Ready"
+          },
+          "signal_jobs_repeated_failures": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Signal Jobs Repeated Failures"
+          },
+          "signal_jobs_dead_letter": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Signal Jobs Dead Letter"
+          },
+          "provider_failures_last_15m": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Provider Failures Last 15M"
+          },
+          "object_deletion_jobs_ready": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Object Deletion Jobs Ready"
+          },
+          "object_deletion_jobs_retrying": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Object Deletion Jobs Retrying"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "observed_at",
+          "signal_jobs_ready",
+          "signal_jobs_repeated_failures",
+          "signal_jobs_dead_letter",
+          "provider_failures_last_15m",
+          "object_deletion_jobs_ready",
+          "object_deletion_jobs_retrying"
+        ],
+        "title": "OperationalMetricsResponse"
+      },
       "OperatorAcknowledgeSignalRequest": {
         "properties": {
           "signal_id": {
@@ -2621,6 +2804,34 @@
           "reason"
         ],
         "title": "OperatorAcknowledgeSignalRequest"
+      },
+      "OperatorApproveSignalPolicyRequest": {
+        "properties": {
+          "policy_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Policy Version"
+          },
+          "evaluation_artifact_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Evaluation Artifact Sha256"
+          },
+          "client_request_id": {
+            "type": "string",
+            "format": "uuid4",
+            "title": "Client Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "policy_version",
+          "evaluation_artifact_sha256",
+          "client_request_id"
+        ],
+        "title": "OperatorApproveSignalPolicyRequest"
       },
       "OperatorCloseSignalRequest": {
         "properties": {
@@ -2921,6 +3132,41 @@
           "changed_at"
         ],
         "title": "OperatorSignalMutationResponse"
+      },
+      "OperatorSignalPolicyApprovalResponse": {
+        "properties": {
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ClusteringPolicyStatus"
+          },
+          "approved_by": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Approved By"
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Approved At"
+          },
+          "evaluation_artifact_sha256": {
+            "type": "string",
+            "title": "Evaluation Artifact Sha256"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "policy_version",
+          "status",
+          "approved_by",
+          "approved_at",
+          "evaluation_artifact_sha256"
+        ],
+        "title": "OperatorSignalPolicyApprovalResponse"
       },
       "OperatorSplitSignalRequest": {
         "properties": {

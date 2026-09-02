@@ -42,6 +42,7 @@ from app.security import (
     verify_password,
 )
 from app.services.lifecycle import purge_expired_data
+from app.services.policies import consultation_safety_notice, policy_content_sha256
 from scripts.seed_agent import run as seed_agent
 
 pytestmark = pytest.mark.skipif(
@@ -162,12 +163,16 @@ async def _create_card(
         assert symbol_master_version_id is not None
         policy = await session.scalar(select(PolicySnapshot).limit(1))
         if policy is None:
+            policy_content = {
+                "title": "합성 정책",
+                "notice": "합성 상담 준비카드는 주문 처리 증빙이 아닙니다.",
+            }
             policy = PolicySnapshot(
                 version="agent-test-policy",
                 source_url="https://example.invalid/policy",
                 source_checked_on=FIXED_NOW.date(),
-                content={"schema_version": "test"},
-                content_sha256="0" * 64,
+                content=policy_content,
+                content_sha256=policy_content_sha256(policy_content),
                 created_at=received_at,
             )
             session.add(policy)
@@ -417,7 +422,15 @@ async def test_card_list_exposes_only_minimal_data_and_time_boundaries() -> None
 
 
 async def test_lookup_supports_reference_and_card_id_with_local_private_storage() -> None:
-    card_id, _ = await _create_card(with_attachment=True)
+    card_id, report_id = await _create_card(with_attachment=True)
+    async with session_factory() as session:
+        policy = await session.scalar(
+            select(PolicySnapshot)
+            .join(Report, Report.policy_snapshot_id == PolicySnapshot.id)
+            .where(Report.id == report_id)
+        )
+    assert policy is not None
+    expected_notice = consultation_safety_notice(policy)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         token = await _login(client)
@@ -438,6 +451,7 @@ async def test_lookup_supports_reference_and_card_id_with_local_private_storage(
     assert body["card_id"] == str(card_id)
     assert body["has_attachment"] is True
     assert body["attachment_url"] is None
+    assert body["safety_notice"] == expected_notice
     assert body["related_signals"] == []
     assert {"reference_number", "reference_digest", "object_key"}.isdisjoint(body)
     assert by_reference.headers["cache-control"] == "no-store"

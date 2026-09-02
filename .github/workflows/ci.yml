@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: mts_sos
+          POSTGRES_PASSWORD: mts_sos
+          POSTGRES_DB: mts_sos_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mts_sos -d mts_sos_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+asyncpg://mts_sos:mts_sos@localhost:5432/mts_sos_ci
+      RUN_POSTGRES_TESTS: "1"
+      SIGNAL_EMBEDDING_MODEL_REVISION: test-r1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run ruff format --check app scripts tests alembic
+      - run: uv run ruff check app scripts tests alembic
+      - run: uv run mypy
+      - run: uv run alembic upgrade head
+      - run: uv run alembic check
+      - name: Rehearse latest migration rollback
+        run: |
+          uv run alembic downgrade harden_runtime_failures
+          uv run alembic upgrade head
+      - run: uv run pytest
+      - name: Verify OpenAPI snapshot
+        run: |
+          uv run python -m scripts.export_openapi /tmp/openapi.json
+          diff -u openapi.json /tmp/openapi.json
+      - name: Rehearse PostgreSQL backup and restore
+        env:
+          PGPASSWORD: mts_sos
+        run: |
+          pg_dump -h localhost -U mts_sos -d mts_sos_ci -Fc -f /tmp/mts_sos_ci.dump
+          createdb -h localhost -U mts_sos mts_sos_restore_ci
+          pg_restore -h localhost -U mts_sos -d mts_sos_restore_ci --exit-on-error /tmp/mts_sos_ci.dump
+          DATABASE_URL=postgresql+asyncpg://mts_sos:mts_sos@localhost:5432/mts_sos_restore_ci uv run alembic current
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
