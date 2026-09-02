@@ -700,10 +700,20 @@ class ExtractOutcome(NamedTuple):
     classification_override_applied: bool = False
 
 
+_EXTRACTION_RESULT_JSON_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "extraction_result",
+        "strict": True,
+        "schema": ExtractionResult.model_json_schema(),
+    },
+}
+
+
 class RealDualExtractor:
     """OpenAI API를 사용해 실제로 이중 구조화를 수행하는 extractor."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, use_structured_output: bool = True) -> None:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError(".env에 OPENAI_API_KEY가 설정되어 있지 않습니다.")
@@ -714,6 +724,24 @@ class RealDualExtractor:
             max_retries=1,
         )
         self._model = "gpt-4.1-mini"
+        # 기본값 True: 메인 추출 호출(_call_llm의 response_format_override)에
+        # ExtractionResult의 strict JSON schema를 쓴다. 이전에 .parse()로
+        # 전환했다가 AI-05 위반(cross-field 규칙)까지 클라이언트단
+        # ValidationError로 막혀버려서 기존 correction retry 경로를 완전히
+        # 우회하는 회귀가 있었다 (100% 추출 실패). 이번엔 .create()는 그대로
+        # 두고 response_format만 strict schema로 바꿔서, JSON 자체는 항상
+        # 스키마를 지키게 하되 AI-05 같은 비즈니스 규칙 위반은 여전히
+        # raw text로 받아 기존 _parse_and_validate -> correction retry가
+        # 처리하도록 한다.
+        # hard negative 14건 라이브 비교에서 회귀 없이 13/14 -> 14/14로
+        # 개선됐고, dev80 전체 재평가에서 d160_res_05가 3회 연속 <NO_RESULT>로
+        # 실패해(80/80 -> 79/80) 한때 기본값을 False로 되돌렸었다. 하지만
+        # 그 케이스만 baseline/structured 각각 20회씩 반복 호출한 결과
+        # 양쪽 다 20/20 성공(재시도 0건)이라 structured 고유의 결함이
+        # 아니라 그 dev80 실행에서 우연히 발생한 API 비결정성(fluke)으로
+        # 결론짓고 기본값을 다시 True로 전환했다. (correction retry가
+        # 애초에 이런 확률적 실수를 위해 만들어진 것과 같은 종류의 현상.)
+        self._use_structured_output = use_structured_output
 
     def _coerce_types(self, field_dict: dict[str, Any], value_type: type | None) -> dict[str, Any]:
         """
@@ -1125,15 +1153,23 @@ class RealDualExtractor:
         self,
         messages: list[dict[str, Any]],
         max_tokens: int = 4096,
+        *,
+        response_format_override: dict[str, Any] | None = None,
     ) -> tuple[str | None, ExtractFailureReason | None, str | None]:
-        """LLM을 호출하고 원본 응답 텍스트를 반환한다. 실패하면 (None, 사유, 상세)."""
+        """LLM을 호출하고 원본 응답 텍스트를 반환한다. 실패하면 (None, 사유, 상세).
+
+        response_format_override가 없으면 기존 {"type": "json_object"}를 쓴다.
+        어느 쪽이든 .create()로 원본 텍스트만 반환하며, 이 함수는 Pydantic
+        검증을 하지 않는다 - AI-05 같은 cross-field 규칙 위반은 호출부의
+        기존 _parse_and_validate -> correction retry가 그대로 처리한다.
+        """
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
                 messages=cast("Iterable[ChatCompletionMessageParam]", messages),
                 temperature=0.0,
                 max_tokens=max_tokens,
-                response_format={"type": "json_object"},
+                response_format=response_format_override or {"type": "json_object"},
             )
         except APITimeoutError as e:
             return None, ExtractFailureReason.TIMEOUT, str(e)
@@ -1600,8 +1636,12 @@ class RealDualExtractor:
             {"role": "user", "content": f"다음 고객 제보를 분석해주세요:\n\n{masked_text}"},
         ]
 
+        structured_format = _EXTRACTION_RESULT_JSON_SCHEMA if self._use_structured_output else None
+
         # --- 1차 시도 ---
-        raw_content, failure_reason, detail = self._call_llm(base_messages)
+        raw_content, failure_reason, detail = self._call_llm(
+            base_messages, response_format_override=structured_format
+        )
         if failure_reason is not None:
             return ExtractOutcome(None, failure_reason, detail, attempt_count=1)
         assert raw_content is not None  # failure_reason이 None이면 항상 값이 있다
@@ -1641,7 +1681,9 @@ class RealDualExtractor:
                 self._build_correction_message(last_detail),
             ]
 
-            raw_content_n, failure_reason_n, detail_n = self._call_llm(correction_messages)
+            raw_content_n, failure_reason_n, detail_n = self._call_llm(
+                correction_messages, response_format_override=structured_format
+            )
             if failure_reason_n is not None:
                 return ExtractOutcome(
                     None,
