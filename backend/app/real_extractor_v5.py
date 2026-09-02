@@ -120,6 +120,113 @@ _SUBMISSION_STATUS_VALUES = [s.value for s in SubmissionStatus]
 _ORDER_ACTION_VALUES = [a.value for a in OrderAction]
 _ORDER_TYPE_VALUES = [t.value for t in OrderType]
 
+# symptom canonicalization (evaluation_symptom_label, 2026-09-02 팀 리뷰 확정 초안).
+# 자유 요약 대신 issue_type별 고정 카테고리 중 가장 가까운 것의 대표 문구를 그대로
+# symptom.value로 쓰게 해서, 같은 의미의 제보끼리 embedding이 안정적으로 가까워지게
+# 한다 (paraphrase로 인한 클러스터링 실패 완화). 공식 운영 표준이 아니라 평가/군집화
+# 전용 라벨이며, DEVICE_NETWORK_SUSPECTED 세부 라벨은 원인을 확정하지 않고 고객이
+# 보고한 환경·관찰 증상만 표현한다. 이 목록을 바꾸면 embedding 입력 분포가 바뀌므로
+# 기존 벡터와 같은 policy/model_revision으로 섞지 않고 재평가 후 새 revision으로
+# 등록해야 한다.
+_SYMPTOM_TAXONOMY: dict[IssueType, list[tuple[str, str, str]]] = {
+    IssueType.ORDER_SUBMISSION_FAILURE: [
+        (
+            "ORDER_UI_UNRESPONSIVE",
+            "주문 화면이 멈춤",
+            "주문·확인 버튼을 누른 뒤 로딩, 멈춤, 무응답 또는 다음 화면으로 넘어가지 않음",
+        ),
+    ],
+    IssueType.ORDER_RESULT_UNCONFIRMED: [
+        (
+            "ORDER_STATUS_UNAVAILABLE",
+            "주문 접수 여부를 확인할 수 없음",
+            "주문이 접수됐는지, 거부됐는지, 대기 중인지 확인할 수 없음",
+        ),
+        (
+            "EXECUTION_STATUS_UNAVAILABLE",
+            "체결 여부를 확인할 수 없음",
+            "체결·미체결·부분체결 여부를 확인할 수 없음",
+        ),
+    ],
+    IssueType.LOGIN_ACCESS_FAILURE: [
+        (
+            "LOGIN_GENERIC_FAILURE",
+            "로그인이 되지 않음",
+            "로그인 실패는 확인되지만 구체적인 인증 원인은 불명확함",
+        ),
+        (
+            "AUTHENTICATOR_FAILURE",
+            "인증 수단 오류로 로그인 실패",
+            "비밀번호, PIN, 인증서, 생체인증 등 인증 수단이 실패함",
+        ),
+        (
+            "AUTH_CODE_DELIVERY_FAILURE",
+            "인증번호가 오지 않음",
+            "SMS·OTP·본인인증 번호가 도착하지 않음",
+        ),
+    ],
+    IssueType.BALANCE_INQUIRY_ERROR: [
+        (
+            "BALANCE_DATA_STALE",
+            "잔고가 갱신되지 않음",
+            "잔고가 이전 값으로 남아 있거나 최신 상태로 갱신되지 않음",
+        ),
+        (
+            "BALANCE_DATA_MISSING",
+            "보유 종목·수량·금액 데이터가 누락됨",
+            "보유 종목·수량·금액 등 데이터가 누락되거나 표시되지 않음",
+        ),
+        (
+            "EXECUTION_HISTORY_EMPTY",
+            "체결 내역이 비어 있음",
+            "체결내역 화면에 거래 기록이 표시되지 않음",
+        ),
+        (
+            "ORDER_HISTORY_LOAD_FAILURE",
+            "주문 내역 조회에 실패함",
+            "주문내역 화면 로딩 실패, 조회 오류 또는 빈 화면이 발생함",
+        ),
+    ],
+    IssueType.DEVICE_NETWORK_SUSPECTED: [
+        (
+            "DEVICE_SPECIFIC_FAILURE",
+            "특정 기기에서만 재현되는 오류",
+            "다른 기기에서는 정상이나 특정 기기에서만 재현된다고 명시됨 (여러 조건에 "
+            "동시에 해당하면 이것을 최우선으로 선택)",
+        ),
+        (
+            "NETWORK_ERROR_MESSAGE",
+            "네트워크 오류 메시지가 표시됨",
+            "네트워크·통신·연결 오류 메시지가 명시적으로 표시됨 (기기 특정 조건이 "
+            "없을 때 두 번째 우선순위)",
+        ),
+        (
+            "WIFI_ASSOCIATED_FAILURE",
+            "와이파이 연결 상태에서 발생하는 오류",
+            "Wi-Fi 사용·끊김·불안정 상황과 함께 문제가 발생한다고 보고됨 (원인을 "
+            "확정하는 것이 아니라 그 환경에서 발생했다는 관찰만 표현, 세 번째 우선순위)",
+        ),
+        (
+            "CELLULAR_ASSOCIATED_FAILURE",
+            "모바일 데이터 연결 상태에서 발생하는 오류",
+            "LTE·5G·모바일 데이터 상황과 함께 문제가 발생한다고 보고됨 (네 번째 "
+            "우선순위, 위 세 카테고리 중 아무것도 해당하지 않을 때만 선택)",
+        ),
+    ],
+}
+
+
+def _build_symptom_taxonomy_block() -> str:
+    lines = []
+    for issue_type, entries in _SYMPTOM_TAXONOMY.items():
+        lines.append(f"### {issue_type.value}")
+        for _label, phrase, criteria in entries:
+            lines.append(f'- "{phrase}" : {criteria}')
+    return "\n".join(lines)
+
+
+_SYMPTOM_TAXONOMY_BLOCK = _build_symptom_taxonomy_block()
+
 _SYSTEM_PROMPT = f"""당신은 증권사 MTS(모바일트레이딩시스템) 고객 제보를 분석하는 AI입니다.
 고객이 작성한 자유서술 제보에서 정보를 추출하되, 아래 규칙을 반드시 지켜야 합니다.
 
@@ -144,9 +251,28 @@ _SYSTEM_PROMPT = f"""당신은 증권사 MTS(모바일트레이딩시스템) 고
    그 정보는 반드시 consultation 쪽에만 넣으세요.
 6. quantity와 price_krw는 반드시 순수 숫자만 넣으세요 (예: "10주"가 아니라 10,
    "70,000원"이 아니라 70000). 단위나 콤마, 원화 기호를 포함하지 마세요.
-7. symptom은 고객이 겪은 관찰 가능한 현상(예: "로딩이 멈춤", "비밀번호 오류가 뜸")만
-   요약하세요. 원문 문장 전체를 그대로 복사하거나, 원인을 추측해서 서술하지 마세요.
-   evidence_quote도 원문 전체가 아니라 증상과 직접 관련된 부분만 인용하세요.
+7. symptom 값은 아래 issue_type별 고정 카테고리 목록에서 고르세요.
+   ★★★ 반드시 당신이 이번 응답의 issue_type으로 결정한 값과 정확히 같은
+   "### issue_type이름" 섹션 안에서만 골라야 합니다. 다른 issue_type 섹션의
+   문구를 절대 가져오지 마세요 — 예를 들어 issue_type=LOGIN_ACCESS_FAILURE로
+   판단했다면 symptom도 반드시 "### LOGIN_ACCESS_FAILURE" 섹션 안의 문구
+   중에서만 골라야 하고, "### BALANCE_INQUIRY_ERROR" 섹션의 문구("잔고가
+   갱신되지 않음" 등)를 쓰면 안 됩니다. ★★★
+   그 섹션 안에서 가장 가까운 카테고리를 찾아, 대표 문구(따옴표 안 텍스트)를
+   한 글자도 바꾸지 말고 그대로 symptom.value에 넣으세요. 같은 의미의
+   제보끼리 항상 같은 문구를 쓰게 해서 유사도 비교가 안정적으로 되게 하려는
+   목적입니다. 그 섹션 안 어느 것과도 명확히 안 맞으면, 다른 섹션에서
+   억지로 끼워맞추지 말고 기존 방식대로 고객이 겪은 관찰 가능한 현상을
+   간결하게 요약하세요(예: "로딩이 멈춤"). 원문 문장 전체를 그대로 복사하거나,
+   원인을 추측해서 서술하지 마세요.
+   evidence_quote는 (대표 문구가 아니라) 원문에서 그 판단의 근거가 된 부분만
+   그대로 인용하세요 — evidence_quote는 계속 masked_text의 정확한 substring이어야
+   합니다.
+
+## symptom 고정 카테고리 목록 (evaluation_symptom_label, 평가·군집화 전용)
+공식 금융 장애 표준이나 운영 장애 확정 코드가 아니며, 원인을 확정하지 않습니다.
+목록에 없는 issue_type(UNRELATED_OR_AMBIGUOUS, UNKNOWN)은 이 규칙과 무관합니다.
+{_SYMPTOM_TAXONOMY_BLOCK}
 
 ## action(매수/매도) 규칙
 action은 "매수", "샀다", "매수 주문" 등 명확한 매수 표현이 있으면 BUY,
