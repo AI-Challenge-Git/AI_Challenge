@@ -442,6 +442,7 @@ class ConsultationCardDetail(ApiModel):
     has_attachment: bool
     attachment_url: str | None
     related_signals: list[RelatedSignal]
+    related_signal_state: Literal["ACTIVE", "CANDIDATE", "NONE"]
 
 
 VerificationFieldName = Literal[
@@ -601,6 +602,33 @@ class SignalDashboardResponse(ApiModel):
         if (self.baseline_status is BaselineStatus.AVAILABLE) != (self.baseline_ratio is not None):
             raise ValueError("baseline ratio is required only when baseline is available")
         return self
+
+
+class OperatorSignalListItem(ApiModel):
+    signal_id: UUID
+    status: SignalStatus
+    closure_reason: SignalClosureReason | None
+    channel: str
+    feature_area: str
+    reported_symptom_type: IssueType
+    reporting_unique_sessions: int = Field(ge=0)
+    raw_report_count: int = Field(ge=0)
+    review_priority: bool
+    first_report_at: datetime
+    last_report_at: datetime
+    window_expires_at: datetime
+    public_visible: bool
+    policy_version: str
+    policy_status: ClusteringPolicyStatus
+    official_notice_url: str | None
+    closed_at: datetime | None
+
+
+class OperatorSignalListResponse(ApiModel):
+    updated_at: datetime
+    items: list[OperatorSignalListItem]
+    limit: int
+    offset: int
 
 
 class SignalProcessingResult(ApiModel):

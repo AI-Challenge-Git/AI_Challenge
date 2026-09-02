@@ -56,6 +56,7 @@ from app.services.signals import (
     enqueue_signal_processing,
     list_dashboard_signals,
     process_next_signal_job,
+    related_signals_for_report,
 )
 from scripts import check_runtime_readiness
 from scripts import process_signal_jobs as process_signal_jobs_script
@@ -427,6 +428,67 @@ async def test_dashboard_hides_expired_detected_signal_but_keeps_reviewed_signal
         )
 
     assert [item.status for item in dashboard.items] == [SignalStatus.UNDER_REVIEW]
+
+
+async def test_related_signals_use_the_same_public_window_as_dashboard() -> None:
+    await _policy(min_unique_sessions=1)
+    report_id = await _report(session_digest=b"a" * 32, received_at=NOW)
+    async with session_factory() as session:
+        assert await process_next_signal_job(
+            session,
+            FakeEmbeddingProvider(),
+            now=NOW + timedelta(minutes=1),
+        )
+        assert (
+            await related_signals_for_report(
+                session,
+                report_id,
+                now=NOW + timedelta(seconds=601),
+            )
+            == []
+        )
+
+    async with session_factory() as session, session.begin():
+        cluster = await session.scalar(select(SignalCluster))
+        assert cluster is not None
+        cluster.status = SignalStatus.UNDER_REVIEW.value
+
+    async with session_factory() as session:
+        related = await related_signals_for_report(
+            session,
+            report_id,
+            now=NOW + timedelta(seconds=601),
+        )
+
+    assert [signal.status for signal in related] == [SignalStatus.UNDER_REVIEW]
+
+
+async def test_agent_card_distinguishes_candidate_signal_from_no_signal() -> None:
+    await _policy(min_unique_sessions=2)
+    report_id = await _report(session_digest=b"a" * 32, received_at=NOW)
+    async with session_factory() as session:
+        assert await process_next_signal_job(
+            session,
+            FakeEmbeddingProvider(),
+            now=NOW + timedelta(minutes=1),
+        )
+        card_id = await session.scalar(
+            select(ConsultationCard.id).where(ConsultationCard.report_id == report_id)
+        )
+        assert card_id is not None
+
+    agent_token = await _agent_token(AgentRole.AGENT)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/consultation-cards/lookup",
+            headers={"Authorization": f"Bearer {agent_token}"},
+            json={"card_id": str(card_id)},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["related_signals"] == []
+    assert response.json()["related_signal_state"] == "CANDIDATE"
 
 
 async def test_structured_conflict_prevents_merge_even_with_same_embedding() -> None:
@@ -1140,6 +1202,50 @@ async def test_dashboard_auth_and_operator_role_idempotency() -> None:
             )
             == 1
         )
+
+
+async def test_operator_can_list_window_expired_detected_signals() -> None:
+    signal_id = await _standalone_cluster(status=SignalStatus.SIGNAL_DETECTED)
+    operator_token = await _agent_token(AgentRole.OPERATOR)
+    agent_token = await _agent_token(AgentRole.AGENT)
+    app.dependency_overrides[get_clock] = lambda: lambda: NOW + timedelta(seconds=601)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        unauthenticated = await client.get("/api/operator/signals")
+        wrong_role = await client.get(
+            "/api/operator/signals",
+            headers={"Authorization": f"Bearer {agent_token}"},
+        )
+        listed = await client.get(
+            "/api/operator/signals?status=SIGNAL_DETECTED",
+            headers={"Authorization": f"Bearer {operator_token}"},
+        )
+
+    assert unauthenticated.status_code == 401
+    assert wrong_role.status_code == 403
+    assert listed.status_code == 200
+    assert listed.headers["cache-control"] == "no-store"
+    assert listed.json()["items"] == [
+        {
+            "signal_id": str(signal_id),
+            "status": "SIGNAL_DETECTED",
+            "closure_reason": None,
+            "channel": "MABLE",
+            "feature_area": "DOMESTIC_STOCK_ORDER",
+            "reported_symptom_type": "ORDER_SUBMISSION_FAILURE",
+            "reporting_unique_sessions": 1,
+            "raw_report_count": 1,
+            "review_priority": False,
+            "first_report_at": NOW.isoformat().replace("+00:00", "Z"),
+            "last_report_at": NOW.isoformat().replace("+00:00", "Z"),
+            "window_expires_at": (NOW + timedelta(seconds=600)).isoformat().replace("+00:00", "Z"),
+            "public_visible": False,
+            "policy_version": listed.json()["items"][0]["policy_version"],
+            "policy_status": "EXPERIMENTAL",
+            "official_notice_url": None,
+            "closed_at": None,
+        }
+    ]
 
 
 async def test_dashboard_rate_limit_is_atomic() -> None:
