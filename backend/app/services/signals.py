@@ -1099,9 +1099,16 @@ async def list_operator_signals(
     limit: int,
     offset: int,
 ) -> OperatorSignalListResponse:
-    statement = select(SignalCluster, ClusteringPolicy).join(
-        ClusteringPolicy,
-        ClusteringPolicy.id == SignalCluster.policy_id,
+    statement = (
+        select(SignalCluster, ClusteringPolicy, TechnicalSymptom)
+        .join(
+            ClusteringPolicy,
+            ClusteringPolicy.id == SignalCluster.policy_id,
+        )
+        .outerjoin(
+            TechnicalSymptom,
+            TechnicalSymptom.id == SignalCluster.representative_symptom_id,
+        )
     )
     if status is not None:
         statement = statement.where(SignalCluster.status == status.value)
@@ -1126,6 +1133,9 @@ async def list_operator_signals(
                 channel=cluster.channel,
                 feature_area=cluster.feature_area,
                 reported_symptom_type=IssueType(cluster.reported_symptom_type),
+                representative_symptom_text=(
+                    representative_symptom.symptom if representative_symptom is not None else None
+                ),
                 reporting_unique_sessions=cluster.reporting_unique_sessions,
                 raw_report_count=cluster.raw_report_count,
                 review_priority=cluster.review_priority,
@@ -1138,7 +1148,7 @@ async def list_operator_signals(
                 official_notice_url=cluster.official_notice_url,
                 closed_at=cluster.closed_at,
             )
-            for cluster, policy in rows
+            for cluster, policy, representative_symptom in rows
         ],
         limit=limit,
         offset=offset,

@@ -1301,6 +1301,7 @@ async def test_operator_can_list_window_expired_detected_signals() -> None:
             "channel": "MABLE",
             "feature_area": "DOMESTIC_STOCK_ORDER",
             "reported_symptom_type": "ORDER_SUBMISSION_FAILURE",
+            "representative_symptom_text": None,
             "reporting_unique_sessions": 1,
             "raw_report_count": 1,
             "review_priority": False,

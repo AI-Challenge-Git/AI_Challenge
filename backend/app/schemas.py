@@ -644,6 +644,7 @@ class OperatorSignalListItem(ApiModel):
     channel: str
     feature_area: str
     reported_symptom_type: IssueType
+    representative_symptom_text: str | None
     reporting_unique_sessions: int = Field(ge=0)
     raw_report_count: int = Field(ge=0)
     review_priority: bool
