@@ -2953,6 +2953,17 @@
           "reported_symptom_type": {
             "$ref": "#/components/schemas/IssueType"
           },
+          "representative_symptom_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representative Symptom Text"
+          },
           "reporting_unique_sessions": {
             "type": "integer",
             "minimum": 0.0,
@@ -3026,6 +3037,7 @@
           "channel",
           "feature_area",
           "reported_symptom_type",
+          "representative_symptom_text",
           "reporting_unique_sessions",
           "raw_report_count",
           "review_priority",
