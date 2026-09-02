@@ -35,6 +35,7 @@ from typing import Any, NamedTuple, cast
 from dotenv import load_dotenv
 from openai import APITimeoutError, OpenAI
 from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat.completion_create_params import ResponseFormat
 from pydantic import ValidationError
 
 from app.codes import FieldStatus, IssueType, OrderAction, OrderType, SubmissionStatus
@@ -1169,7 +1170,9 @@ class RealDualExtractor:
                 messages=cast("Iterable[ChatCompletionMessageParam]", messages),
                 temperature=0.0,
                 max_tokens=max_tokens,
-                response_format=response_format_override or {"type": "json_object"},
+                response_format=cast(
+                    "ResponseFormat", response_format_override or {"type": "json_object"}
+                ),
             )
         except APITimeoutError as e:
             return None, ExtractFailureReason.TIMEOUT, str(e)
