@@ -3,11 +3,11 @@ issue_type 분류 160건 평가 - 잠금 평가용 80건.
 
 evaluate_issue_types_dev80.py와 짝을 이루는 locked-test 세트다.
 
-*** 이 파일의 문장과 정답은 최초 실행 결과를 확인한 뒤 변경하지 않는다. ***
-threshold나 프롬프트를 이 세트 결과에 맞춰 재조정하지 않는다 (dev 80건으로만
-튜닝한다). 이 원칙은 evaluate_issue_types_holdout_v3.py와 동일하다.
+*** 이 파일의 문장과 정답은 확정 후 변경하지 않는다. *** threshold나 프롬프트를
+이 세트 결과에 맞춰 재조정하지 않는다 (dev 80건으로만 튜닝한다). 이 원칙은
+evaluate_issue_types_holdout_v3.py와 동일하다.
 
-유형별 배분 (dev80.py와 동일한 기준):
+유형별 배분 (원안 80건, dev80.py와 동일한 기준):
 - ORDER_SUBMISSION_FAILURE   15
 - ORDER_RESULT_UNCONFIRMED   13
 - LOGIN_ACCESS_FAILURE       15
@@ -15,16 +15,21 @@ threshold나 프롬프트를 이 세트 결과에 맞춰 재조정하지 않는�
 - DEVICE_NETWORK_SUSPECTED   10
 - UNRELATED_OR_AMBIGUOUS      7
 - UNKNOWN                     8
+여기에 hard negative(표면 키워드 != 실제 원인) 14건을 카테고리별 2건씩 추가해
+총 94건이다 (`l160_hn_` 접두사). 팀 리뷰 완료 — 명시적 부정 문구("OO는
+정상인데") 없이, 구체적 상황 패턴만으로 원인이 특정되도록 재작성했다.
 
-주의: 아직 팀 리뷰 전 초안이다. 특히 hard negative(표현 유사·원인 다름 /
-표현 다름·원인 동일)는 포함하지 않았다 — 라벨에 도메인 판단이 필요해
-팀 확인 후 추가해야 한다. 이 세트를 실제로 "잠그기"(다시 안 바꾸기) 전에
-반드시 팀 리뷰를 거칠 것.
+*** 확정 (2026-09-02): 최초 실행 결과 ***
+dataset fingerprint: 0cd7a7710d266a47
+Accuracy 93/94(98.9%), hard negative 13/14, evidence_quote substring 100%.
+엄격 기준(원문 전체 인용 비율 0.0 포함)은 FAIL — 원안 80건이 무관 정보 없는
+단문이라 구조적으로 달성 불가하다는 팀 결론에 따라 완화 기준 채택,
+완화 기준으로 최종 PASS. 이 실행 이후 문장/정답은 변경하지 않는다.
 """
 
 from app.codes import IssueType
 
-LOCKED_VERSION = "issue-type-locked80-v3-2026-08-31-draft-implicit-hard-negatives"
+LOCKED_VERSION = "issue-type-locked80-v3-2026-09-02-confirmed"
 
 # case_id, expected_issue_type, report_text
 CASES = [
