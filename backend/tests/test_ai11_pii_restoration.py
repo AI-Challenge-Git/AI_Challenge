@@ -30,7 +30,9 @@ def _confirmed(value: str) -> CandidateField:
     return CandidateField(value=value, status=FieldStatus.CONFIRMED_FROM_TEXT, evidence_quote=value)
 
 
-def _extraction_result(*, symptom: str | None = None, symbol_name: str | None = None) -> ExtractionResult:
+def _extraction_result(
+    *, symptom: str | None = None, symbol_name: str | None = None
+) -> ExtractionResult:
     return ExtractionResult(
         schema_version="v1",
         taxonomy_version="v1",
@@ -149,7 +151,9 @@ def test_validate_no_restored_pii_ignores_iso_datetime_fields() -> None:
             attempted_at=_unknown(),
         ),
     )
-    validate_no_restored_pii(result)  # 예외 없이 통과해야 정상 (2026-08-15가 계좌번호로 오탐되면 안 됨)
+    validate_no_restored_pii(
+        result
+    )  # 예외 없이 통과해야 정상 (2026-08-15가 계좌번호로 오탐되면 안 됨)
 
 
 # --- API 계층: INVALID_SCHEMA로 안전하게 실패 처리되는지 ---
