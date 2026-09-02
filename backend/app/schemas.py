@@ -48,7 +48,16 @@ from app.signal_verification import AgentSignalDecision
 _FULL_DATETIME_WITH_OFFSET = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
 )
-_KOREAN_FULL_DATE_PATTERN = re.compile(r"(?:\d{2}|\d{4})\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일")
+# 한국어 표기("2026년 8월 15일") 외에, ISO형("2026-08-15")·점형("2026.08.15")·
+# 슬래시형("2026/08/15" 또는 "26/08/15") 날짜 표기도 근거로 인정한다.
+# 대시(-)형은 계좌번호 정규식(숫자-숫자-숫자)과 겹치는 실제 오탐이 있었으므로
+# 4자리 연도만 허용한다. 점/슬래시형은 계좌번호 정규식이 이 구분자를 안 써서
+# 겹칠 위험이 없으므로 2자리 연도도 허용한다.
+_KOREAN_FULL_DATE_PATTERN = re.compile(
+    r"(?:\d{2}|\d{4})\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일"
+    r"|\d{4}\s*-\s*\d{1,2}\s*-\s*\d{1,2}"
+    r"|(?:\d{2}|\d{4})\s*[./]\s*\d{1,2}\s*[./]\s*\d{1,2}"
+)
 _KOREAN_TIME_PATTERN = re.compile(r"(?:(?:오전|오후)\s*)?\d{1,2}\s*시(?:\s*\d{1,2}\s*분)?")
 
 
