@@ -35,6 +35,7 @@ const cardDetail = {
   safety_notice: "공식 채널에서 주문 상태를 확인해 주세요.",
   has_attachment: true,
   attachment_url: "https://storage.example.com/signed-image",
+  related_signal_state: "ACTIVE",
   related_signals: [{
     signal_id: "33333333-3333-4333-8333-333333333333",
     status: "SIGNAL_DETECTED",
@@ -72,6 +73,16 @@ afterEach(() => {
 });
 
 describe("상담원 API 계약", () => {
+  it("브라우저 시각으로 카드 TTL을 다시 계산하고 관련 신호 상태를 구분한다", async () => {
+    const { cardAccessExpired, relatedSignalEmptyMessage } = await import("./AgentDesk");
+    const expiresAt = "2026-08-27T02:00:00Z";
+
+    expect(cardAccessExpired({ expired: false, expires_at: expiresAt }, Date.parse("2026-08-27T01:59:59Z"))).toBe(false);
+    expect(cardAccessExpired({ expired: false, expires_at: expiresAt }, Date.parse(expiresAt))).toBe(true);
+    expect(relatedSignalEmptyMessage("CANDIDATE")).toContain("유사한 제보를 비교");
+    expect(relatedSignalEmptyMessage("NONE")).toContain("연결된 장애 의심 신호가 없습니다");
+  });
+
   it("API 주소가 있으면 CS1024/demo도 실제 로그인과 목록 API를 호출한다", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
     const fetchMock = vi.fn()

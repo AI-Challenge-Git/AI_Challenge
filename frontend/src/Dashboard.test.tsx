@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "./api";
-import Dashboard, { DashboardData, dashboardRetryDelay } from "./Dashboard";
-import type { SignalDashboard } from "./types";
+import Dashboard, { DashboardData, dashboardRetryDelay, operatorVisibilityLabel } from "./Dashboard";
+import type { OperatorSignalListItem, SignalDashboard } from "./types";
 
 const snapshot: SignalDashboard = {
   updated_at: "2026-08-30T00:06:00Z",
@@ -35,6 +35,26 @@ const snapshot: SignalDashboard = {
   baseline_ratio: null,
   limit: 50,
   offset: 0,
+};
+
+const operatorSignal: OperatorSignalListItem = {
+  signal_id: "11111111-1111-4111-8111-111111111111",
+  status: "SIGNAL_DETECTED",
+  closure_reason: null,
+  channel: "M-able",
+  feature_area: "DOMESTIC_STOCK_ORDER",
+  reported_symptom_type: "ORDER_SUBMISSION_FAILURE",
+  reporting_unique_sessions: 3,
+  raw_report_count: 5,
+  review_priority: false,
+  first_report_at: "2026-08-30T00:00:00Z",
+  last_report_at: "2026-08-30T00:05:00Z",
+  window_expires_at: "2026-08-30T00:15:00Z",
+  public_visible: true,
+  policy_version: "signal-policy.v1",
+  policy_status: "EXPERIMENTAL",
+  official_notice_url: null,
+  closed_at: null,
 };
 
 describe("운영 상황판", () => {
@@ -90,5 +110,11 @@ describe("운영 상황판", () => {
   it("첫 조회 중에는 로딩 상태를 표시한다", () => {
     const html = renderToStaticMarkup(<Dashboard />);
     expect(html).toContain("상황판을 불러오는 중");
+  });
+
+  it("운영자 신호의 공개 남은 시간과 숨김 상태를 종료와 구분한다", () => {
+    expect(operatorVisibilityLabel(operatorSignal, Date.parse("2026-08-30T00:05:00Z"))).toBe("10분 후 공개 만료");
+    expect(operatorVisibilityLabel({ ...operatorSignal, public_visible: false })).toBe("공개 상황판 숨김 · 종료 아님");
+    expect(operatorVisibilityLabel({ ...operatorSignal, status: "UNDER_REVIEW" })).toBe("검토 중 · 공개 유지");
   });
 });
