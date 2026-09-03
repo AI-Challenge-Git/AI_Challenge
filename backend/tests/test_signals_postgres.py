@@ -11,6 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import delete, func, select, text
 
+from app.ai import OpenAIDualExtractorAdapter
 from app.api.dependencies import get_clock
 from app.attachments import LocalAttachmentStore
 from app.codes import (
@@ -55,9 +56,11 @@ from app.services.signal_embeddings import SignalEmbeddingContract
 from app.services.signals import (
     detach_report_from_signals,
     enqueue_signal_processing,
+    has_candidate_signal_for_report,
     list_dashboard_signals,
     process_next_signal_job,
     related_signals_for_report,
+    requeue_signal_processing_for_policy,
 )
 from scripts import check_runtime_readiness
 from scripts import process_signal_jobs as process_signal_jobs_script
@@ -77,10 +80,12 @@ class FakeEmbeddingProvider:
         *,
         dimension: int = 3,
         model_id: str = "fake-embed",
+        model_revision: str = "test-r1",
     ) -> None:
         self.vector = vector or [1.0, 0.0, 0.0]
         self.dimension = dimension
         self.model_id = model_id
+        self.model_revision = model_revision
         self.calls = 0
 
     async def embed(self, request: SignalEmbeddingRequest) -> SignalEmbeddingResult:
@@ -88,7 +93,7 @@ class FakeEmbeddingProvider:
         assert request.technical_symptom
         return SignalEmbeddingResult(
             model_id=self.model_id,
-            model_revision="test-r1",
+            model_revision=self.model_revision,
             dimension=self.dimension,
             normalization="L2",
             input_format="query.v1",
@@ -174,6 +179,7 @@ async def _policy(
     linkage_method: ClusteringLinkageMethod = ClusteringLinkageMethod.AVERAGE,
     representative_method: ClusterRepresentativeMethod = ClusterRepresentativeMethod.MEDOID,
     similarity_threshold: float = 0.79,
+    model_revision: str = "test-r1",
 ) -> UUID:
     async with session_factory() as session, session.begin():
         policy = ClusteringPolicy(
@@ -186,7 +192,7 @@ async def _policy(
             similarity_threshold=similarity_threshold,
             structured_rules_version="hard-gate.v1",
             model_id="fake-embed",
-            model_revision="test-r1",
+            model_revision=model_revision,
             embedding_dimension=dimension,
             normalization="L2",
             input_format="query.v1",
@@ -345,6 +351,7 @@ async def test_same_session_is_not_double_counted_and_candidate_is_hidden() -> N
             offset=0,
         )
         assert dashboard.items == []
+        assert dashboard.hourly_volume == []
         cluster = await session.scalar(select(SignalCluster))
         assert cluster is not None
         assert cluster.status == SignalStatus.CANDIDATE.value
@@ -378,6 +385,112 @@ async def test_same_session_is_not_double_counted_and_candidate_is_hidden() -> N
         assert dashboard.applied_policy is not None
         assert dashboard.applied_policy.window_seconds == 600
         assert dashboard.applied_policy.status is ClusteringPolicyStatus.EXPERIMENTAL
+
+
+async def test_policy_rollout_requeues_reports_and_hides_retired_policy_signals() -> None:
+    old_policy_id = await _policy(min_unique_sessions=2)
+    report_ids = [
+        await _report(
+            session_digest=bytes([index]) * 32, received_at=NOW + timedelta(seconds=index)
+        )
+        for index in (1, 2)
+    ]
+    async with session_factory() as session:
+        for _ in report_ids:
+            result = await process_next_signal_job(
+                session,
+                FakeEmbeddingProvider(),
+                now=NOW + timedelta(minutes=1),
+            )
+            assert result is not None
+        old_dashboard = await list_dashboard_signals(
+            session,
+            now=NOW + timedelta(minutes=1),
+            limit=50,
+            offset=0,
+        )
+        assert len(old_dashboard.items) == 1
+
+    async with session_factory() as session, session.begin():
+        old_policy = await session.get(ClusteringPolicy, old_policy_id)
+        assert old_policy is not None
+        old_policy.is_active = False
+    new_policy_id = await _policy(min_unique_sessions=2, model_revision="test-r2")
+
+    async with session_factory() as session:
+        assert (
+            await process_next_signal_job(
+                session,
+                FakeEmbeddingProvider(model_revision="test-r2"),
+                now=NOW + timedelta(minutes=2),
+            )
+            is None
+        )
+        dashboard = await list_dashboard_signals(
+            session,
+            now=NOW + timedelta(minutes=2),
+            limit=50,
+            offset=0,
+        )
+        assert dashboard.items == []
+        assert (
+            await related_signals_for_report(
+                session,
+                report_ids[0],
+                now=NOW + timedelta(minutes=2),
+            )
+            == []
+        )
+        assert not await has_candidate_signal_for_report(session, report_ids[0])
+        new_policy_version = await session.scalar(
+            select(ClusteringPolicy.policy_version).where(ClusteringPolicy.id == new_policy_id)
+        )
+        assert new_policy_version is not None
+
+    async with session_factory() as session:
+        assert await requeue_signal_processing_for_policy(
+            session,
+            policy_version=new_policy_version,
+            now=NOW + timedelta(minutes=2),
+            limit=100,
+        ) == (0, 2)
+
+    async with session_factory() as session:
+        for _ in report_ids:
+            result = await process_next_signal_job(
+                session,
+                FakeEmbeddingProvider(model_revision="test-r2"),
+                now=NOW + timedelta(minutes=3),
+            )
+            assert result is not None
+        dashboard = await list_dashboard_signals(
+            session,
+            now=NOW + timedelta(minutes=3),
+            limit=50,
+            offset=0,
+        )
+        assert len(dashboard.items) == 1
+        assert dashboard.applied_policy is not None
+        assert dashboard.items[0].policy_version == dashboard.applied_policy.policy_version
+        assert (
+            len(
+                await related_signals_for_report(
+                    session,
+                    report_ids[0],
+                    now=NOW + timedelta(minutes=3),
+                )
+            )
+            == 1
+        )
+        active_policy_version = dashboard.applied_policy.policy_version
+
+    async with session_factory() as session:
+        assert await requeue_signal_processing_for_policy(
+            session,
+            policy_version=active_policy_version,
+            now=NOW + timedelta(minutes=3),
+            limit=100,
+        ) == (0, 0)
 
 
 async def test_dashboard_hides_expired_detected_signal_but_keeps_reviewed_signal() -> None:
@@ -873,6 +986,11 @@ async def test_worker_preflight_leaves_jobs_pending_on_runtime_policy_mismatch(
     await _policy()
     await _report(session_digest=b"a" * 32, received_at=NOW)
     monkeypatch.setattr(
+        OpenAIDualExtractorAdapter,
+        "taxonomy_version",
+        "taxonomy.test.v1",
+    )
+    monkeypatch.setattr(
         process_signal_jobs_script,
         "load_signal_embedding_contract",
         lambda: SignalEmbeddingContract(
@@ -891,6 +1009,32 @@ async def test_worker_preflight_leaves_jobs_pending_on_runtime_policy_mismatch(
     )
 
     with pytest.raises(RuntimeError, match="model_revision"):
+        await process_signal_jobs_script.run(max_jobs=1)
+
+    async with session_factory() as session:
+        job = await session.scalar(select(SignalProcessingJob))
+        assert job is not None
+        assert job.status == SignalProcessingStatus.PENDING.value
+        assert job.attempt_count == 0
+
+
+async def test_worker_preflight_leaves_jobs_pending_on_taxonomy_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _policy()
+    await _report(session_digest=b"a" * 32, received_at=NOW)
+    monkeypatch.setattr(
+        OpenAIDualExtractorAdapter,
+        "taxonomy_version",
+        "different-taxonomy.v1",
+    )
+    monkeypatch.setattr(
+        process_signal_jobs_script,
+        "OpenAiSignalEmbeddingAdapter",
+        lambda: pytest.fail("provider must not be initialized"),
+    )
+
+    with pytest.raises(RuntimeError, match="extractor taxonomy"):
         await process_signal_jobs_script.run(max_jobs=1)
 
     async with session_factory() as session:
@@ -923,6 +1067,12 @@ async def test_runtime_readiness_requires_policy_symbols_and_both_roles(
             input_format="query.v1",
             distance_metric="COSINE",
         ),
+    )
+    assert "SIGNAL_POLICY_TAXONOMY_MISMATCH" in await check_runtime_readiness.collect_failures()
+    monkeypatch.setattr(
+        OpenAIDualExtractorAdapter,
+        "taxonomy_version",
+        "taxonomy.test.v1",
     )
     async with session_factory() as session, session.begin():
         session.add(
@@ -1036,6 +1186,11 @@ async def test_worker_cli_returns_nonzero_when_a_job_fails(
 ) -> None:
     await _policy()
     await _report(session_digest=b"a" * 32, received_at=NOW)
+    monkeypatch.setattr(
+        OpenAIDualExtractorAdapter,
+        "taxonomy_version",
+        "taxonomy.test.v1",
+    )
     monkeypatch.setattr(
         process_signal_jobs_script,
         "load_signal_embedding_contract",

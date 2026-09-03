@@ -1476,7 +1476,7 @@ class RealDualExtractor:
 
             result = ExtractionResult(
                 schema_version="dual-extraction.v1",
-                taxonomy_version="issue-type.v1",
+                taxonomy_version="issue-type-canonical.v1",
                 adapter_name="openai",
                 model_id=self._model,
                 technical=technical,

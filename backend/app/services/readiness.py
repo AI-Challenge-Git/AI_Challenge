@@ -1,6 +1,7 @@
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai import OpenAIDualExtractorAdapter
 from app.config import Settings
 from app.models import ClusteringPolicy, PolicySnapshot, SymbolMasterVersion
 from app.services.policies import InvalidPolicySnapshotError, consultation_safety_notice
@@ -34,6 +35,8 @@ async def collect_service_readiness_failures(
     if signal_policy is None:
         failures.append("ACTIVE_SIGNAL_POLICY_MISSING")
     else:
+        if signal_policy.taxonomy_version != OpenAIDualExtractorAdapter.taxonomy_version:
+            failures.append("SIGNAL_POLICY_TAXONOMY_MISMATCH")
         try:
             contract = load_signal_embedding_contract()
         except RuntimeError:

@@ -4,6 +4,7 @@ import json
 
 from sqlalchemy import select
 
+from app.ai import OpenAIDualExtractorAdapter
 from app.codes import SignalProcessingStatus
 from app.config import get_settings
 from app.db import engine, session_factory
@@ -59,6 +60,8 @@ async def run(*, max_jobs: int, report_empty: bool = True) -> int:
                 )
             )
             return 2
+        if policy.taxonomy_version != OpenAIDualExtractorAdapter.taxonomy_version:
+            raise RuntimeError("active signal policy does not match runtime extractor taxonomy")
         mismatches = embedding_contract_mismatches(
             load_signal_embedding_contract(),
             model_id=policy.model_id,

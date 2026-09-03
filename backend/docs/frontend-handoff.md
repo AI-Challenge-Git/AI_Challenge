@@ -8,6 +8,8 @@
 - 응답의 `updated_at`, `hourly_volume`, `applied_policy`를 최신 OpenAPI 타입으로 수용해야 한다.
   `hourly_volume`은 현재 노출 중인 신호의 제보를 server UTC `received_at` 시간 단위로 집계한 값이다.
 - 정책 rolling window가 지난 `SIGNAL_DETECTED`는 목록에서 빠지며 `UNDER_REVIEW`는 계속 노출된다.
+- signal policy가 교체되면 공개 dashboard와 상담카드 관련 신호는 현재 active policy 결과만 반환한다.
+  구정책 cluster는 `GET /api/operator/signals`의 운영 이력에서만 계속 조회할 수 있다.
 - 조회가 `429`이면 `Retry-After` 이후 재시도하며 polling을 즉시 반복하지 않는다.
 - `baseline_status`는 `INSUFFICIENT_HISTORY | ZERO_BASELINE | AVAILABLE`이다.
   `baseline_ratio`는 `AVAILABLE`일 때만 number이고 나머지는 `null`이다. `AVAILABLE` 값은 현재

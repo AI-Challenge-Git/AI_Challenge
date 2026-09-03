@@ -136,27 +136,37 @@ Docker Compose의 `${...}` 값은 저장소 루트의 `.env`에서 읽습니다.
 `AI_ADAPTER=openai`, `OPENAI_API_KEY`, 확정된 `SIGNAL_EMBEDDING_MODEL_REVISION`을 같은 환경에서
 주입하고 secret 값은 Git에 추가하지 않습니다.
 
-AI 담당자가 전달한 `similarity_threshold=0.58`, average linkage, medoid 계약은
+AI 담당자가 canonical symptom 46건으로 재평가한 `similarity_threshold=0.56`, average linkage,
+medoid 계약은
 `scripts.register_signal_policy`로 immutable `EXPERIMENTAL` policy에 등록합니다.
 `600초·5건·10건`도 법령이나 업계 표준이 아닌 MVP 실험값입니다.
 
 ```powershell
 uv run python -m scripts.register_signal_policy `
-  --policy-version signal-openai-embed-avg-medoid-baseline-v1 `
+  --policy-version signal-openai-canonical-avg-medoid-v1 `
   --model-id text-embedding-3-small `
   --model-revision $env:SIGNAL_EMBEDDING_MODEL_REVISION `
   --dimension 1024 `
   --normalization L2 `
   --input-format passage `
-  --taxonomy-version issue-type.v1 `
+  --taxonomy-version issue-type-canonical.v1 `
   --baseline-policy-version previous-window-distinct-sessions.v1 `
-  --similarity-threshold 0.58 `
+  --similarity-threshold 0.56 `
   --linkage-method AVERAGE `
   --representative-method MEDOID `
   --activate
 
+uv run python -m scripts.requeue_signal_policy `
+  --policy-version signal-openai-canonical-avg-medoid-v1 `
+  --batch-size 100
+
 uv run python -m scripts.process_signal_jobs --forever --max-jobs 100
 ```
+
+정책 전환 중에는 signal worker를 중지하고 `requeue_signal_policy`를 결과의 `created`와 `reset`이
+모두 0이 될 때까지 반복한 뒤 다시 시작합니다. 재처리는 보존기간 안의 확정 제보 중 새 정책과
+`taxonomy_version`이 정확히 같은 기술 증상만 대상으로 하며, 구정책 신호는 운영자 목록에는 남지만
+공개 dashboard와 상담카드 관련 신호에서는 제외됩니다.
 
 배포 초기 데이터 등록 후 다음 read-only gate의 JSON 응답이 `"ready":true`인지 확인합니다.
 
