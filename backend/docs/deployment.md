@@ -33,6 +33,26 @@ python -m scripts.check_runtime_readiness
 Deployment is not ready until it reports an active signal policy matching the runtime embedding
 contract, an active KRX Symbol Master, and at least one active AGENT and OPERATOR account.
 
+## Signal policy rollout
+
+canonical symptom처럼 embedding 입력 의미가 바뀌면 기존 policy row를 수정하지 않습니다. Signal
+worker를 먼저 중지하고 AI 담당자가 확정한 새 model revision·taxonomy version과 threshold `0.56`으로
+새 EXPERIMENTAL policy를 등록·활성화합니다. 그 다음 아래 명령을 결과의 `created`와 `reset`이 모두
+0이 될 때까지 반복하고 worker를 다시 시작합니다.
+
+현재 canonical symptom 계약의 taxonomy version은 `issue-type-canonical.v1`입니다. API extractor와
+활성 signal policy의 taxonomy version이 다르면 정책 활성화, readiness, worker 시작이 모두 실패합니다.
+
+```powershell
+python -m scripts.requeue_signal_policy `
+  --policy-version <new-policy-version> `
+  --batch-size 100
+```
+
+이 명령은 보존기간 안의 확정 제보 중 새 policy의 taxonomy version과 일치하는 항목만 재처리합니다.
+구 taxonomy의 자유형 symptom을 canonical 값으로 추측 변환하지 않습니다. 전환 후 공개 dashboard와
+상담카드 관련 신호는 활성 policy만 사용하고, 구정책 cluster는 운영자 전체 목록에서만 조회됩니다.
+
 `/backend/railway.json`은 API service에만 연결한다. Signal worker는
 `/backend/railway.signal-worker.json`, Retention worker는
 `/backend/railway.retention-worker.json`, Operations monitor는

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import Float, cast, delete, func, or_, select, text
+from sqlalchemy import Float, and_, cast, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
@@ -23,6 +23,7 @@ from app.codes import (
     ClusterRepresentativeMethod,
     IssueType,
     RateLimitScope,
+    ReportStatus,
     SignalClosureReason,
     SignalProcessingStatus,
     SignalStatus,
@@ -216,6 +217,70 @@ def enqueue_signal_processing(
 
 def is_signal_processing_eligible(*, issue_type: str, symptom: str | None) -> bool:
     return symptom is not None and issue_type not in AUTO_CLUSTER_EXCLUDED_ISSUE_TYPES
+
+
+async def requeue_signal_processing_for_policy(
+    session: AsyncSession,
+    *,
+    policy_version: str,
+    now: datetime,
+    limit: int,
+) -> tuple[int, int]:
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    async with session.begin():
+        policy = await session.scalar(
+            select(ClusteringPolicy).where(
+                ClusteringPolicy.policy_version == policy_version,
+                ClusteringPolicy.is_active.is_(True),
+            )
+        )
+        if policy is None:
+            raise ValueError("requested signal policy is not active")
+        rows = (
+            await session.execute(
+                select(Report, TechnicalSymptom, SignalProcessingJob)
+                .join(TechnicalSymptom, TechnicalSymptom.report_id == Report.id)
+                .outerjoin(SignalProcessingJob, SignalProcessingJob.report_id == Report.id)
+                .where(
+                    Report.status == ReportStatus.CONFIRMED.value,
+                    Report.purge_at > now,
+                    TechnicalSymptom.taxonomy_version == policy.taxonomy_version,
+                    TechnicalSymptom.symptom.is_not(None),
+                    TechnicalSymptom.issue_type.not_in(AUTO_CLUSTER_EXCLUDED_ISSUE_TYPES),
+                    or_(
+                        SignalProcessingJob.id.is_(None),
+                        and_(
+                            SignalProcessingJob.policy_id.is_not(None),
+                            SignalProcessingJob.policy_id != policy.id,
+                        ),
+                    ),
+                )
+                .order_by(Report.received_at, Report.id)
+                .limit(limit)
+                .with_for_update(of=Report, skip_locked=True)
+            )
+        ).all()
+        created = 0
+        reset = 0
+        for report, symptom, job in rows:
+            if job is None:
+                job = enqueue_signal_processing(
+                    report_id=report.id,
+                    technical_symptom_id=symptom.id,
+                    now=now,
+                )
+                session.add(job)
+                created += 1
+            else:
+                reset += 1
+            job.policy_id = policy.id
+            job.status = SignalProcessingStatus.PENDING.value
+            job.safe_error_code = None
+            job.attempt_count = 0
+            job.next_attempt_at = now
+            job.completed_at = None
+        return created, reset
 
 
 async def _mark_job_failed(
@@ -640,6 +705,10 @@ async def process_next_signal_job(
                     )
                 ),
                 SignalProcessingJob.next_attempt_at <= now,
+                or_(
+                    SignalProcessingJob.policy_id.is_(None),
+                    SignalProcessingJob.policy_id == policy.id,
+                ),
             )
             .order_by(SignalProcessingJob.next_attempt_at, SignalProcessingJob.id)
             .limit(1)
@@ -932,6 +1001,7 @@ async def list_dashboard_signals(
             .join(ClusteringPolicy, ClusteringPolicy.id == SignalCluster.policy_id)
             .where(
                 SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES),
+                ClusteringPolicy.is_active.is_(True),
                 visible_signal,
             )
             .order_by(SignalCluster.last_report_at.desc(), SignalCluster.id)
@@ -1006,6 +1076,7 @@ async def list_dashboard_signals(
             .join(ClusteringPolicy, ClusteringPolicy.id == SignalCluster.policy_id)
             .where(
                 SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES),
+                ClusteringPolicy.is_active.is_(True),
                 visible_signal,
                 Report.received_at >= SignalCluster.last_report_at - dashboard_window,
                 Report.received_at <= SignalCluster.last_report_at,
@@ -1196,6 +1267,7 @@ async def related_signals_for_report(
                 .where(
                     SignalMember.report_id == report_id,
                     SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES),
+                    ClusteringPolicy.is_active.is_(True),
                     _public_signal_filter(now),
                 )
                 .order_by(SignalCluster.last_report_at.desc())
@@ -1234,9 +1306,11 @@ async def has_candidate_signal_for_report(session: AsyncSession, report_id: UUID
     candidate_id = await session.scalar(
         select(SignalMember.id)
         .join(SignalCluster, SignalCluster.id == SignalMember.signal_id)
+        .join(ClusteringPolicy, ClusteringPolicy.id == SignalCluster.policy_id)
         .where(
             SignalMember.report_id == report_id,
             SignalCluster.status == SignalStatus.CANDIDATE.value,
+            ClusteringPolicy.is_active.is_(True),
         )
         .limit(1)
     )
@@ -1266,6 +1340,7 @@ async def signal_relevance_for_report(
                 SignalCluster.id == signal_id,
                 SignalMember.report_id == report_id,
                 SignalCluster.status.in_(ACTIVE_SIGNAL_STATUSES),
+                ClusteringPolicy.is_active.is_(True),
                 _public_signal_filter(now),
             )
         )

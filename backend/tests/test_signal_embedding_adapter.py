@@ -163,12 +163,12 @@ def test_policy_cli_defaults_to_evaluated_threshold(monkeypatch: pytest.MonkeyPa
             "--input-format",
             "passage",
             "--taxonomy-version",
-            "issue-type.v1",
+            "issue-type-canonical.v1",
         ],
     )
 
     arguments = parse_args()
-    assert arguments.similarity_threshold == 0.58
+    assert arguments.similarity_threshold == 0.56
     assert arguments.baseline_policy_version == SUPPORTED_BASELINE_POLICY_VERSION
 
 
@@ -223,7 +223,7 @@ async def test_policy_activation_rejects_runtime_revision_mismatch(
             "--input-format",
             "passage",
             "--taxonomy-version",
-            "issue-type.v1",
+            "issue-type-canonical.v1",
             "--activate",
         ],
     )
@@ -240,4 +240,34 @@ async def test_policy_activation_rejects_runtime_revision_mismatch(
     )
 
     with pytest.raises(ValueError, match="model_revision"):
+        await register_policy(parse_args())
+
+
+async def test_policy_activation_rejects_runtime_taxonomy_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "register_signal_policy",
+            "--policy-version",
+            "test-policy",
+            "--model-id",
+            "text-embedding-3-small",
+            "--model-revision",
+            "configured-revision",
+            "--dimension",
+            "1024",
+            "--normalization",
+            "L2",
+            "--input-format",
+            "passage",
+            "--taxonomy-version",
+            "issue-type.v1",
+            "--activate",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="taxonomy_version"):
         await register_policy(parse_args())

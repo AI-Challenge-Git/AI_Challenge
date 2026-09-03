@@ -155,7 +155,8 @@ window의 고유 세션 수를 바로 앞의 동일 길이 window 고유 세션 
 `received_at` 기준 rolling window다.
 
 정책은 `clustering_policies`에서 version 관리한다. AI 담당자가 전달한
-`similarity_threshold=0.58`, average linkage, medoid는 현재 `EXPERIMENTAL` policy 값이다. `window_seconds=600`,
+`similarity_threshold=0.56`, average linkage, medoid는 canonical symptom 재평가로 정한 현재
+`EXPERIMENTAL` policy 값이다. `window_seconds=600`,
 `min_unique_sessions=5`, `review_priority_threshold=10`도 법령·업계 표준이 아닌 MVP 실험값이다.
 팀 승인 전에는 `APPROVED`로 표현하지 않는다. model revision을 포함한 metadata가 없으면 활성 policy를
 임의 생성하지 않고 신호 processing job을 호출하지 않는다.

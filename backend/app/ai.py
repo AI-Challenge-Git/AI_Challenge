@@ -77,7 +77,7 @@ class OpenAIDualExtractorAdapter:
     """
 
     schema_version = "dual-extraction.v1"
-    taxonomy_version = "issue-type.v1"
+    taxonomy_version = "issue-type-canonical.v1"
     adapter_name = "openai"
     model_id: str | None = "gpt-4.1-mini"
 

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from app.ai import OpenAIDualExtractorAdapter
 from app.codes import (
     SUPPORTED_BASELINE_POLICY_VERSION,
     ClusteringLinkageMethod,
@@ -49,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window-seconds", type=_positive_int, default=600)
     parser.add_argument("--min-unique-sessions", type=_positive_int, default=5)
     parser.add_argument("--review-priority-threshold", type=_positive_int, default=10)
-    parser.add_argument("--similarity-threshold", type=_threshold, default=0.58)
+    parser.add_argument("--similarity-threshold", type=_threshold, default=0.56)
     parser.add_argument(
         "--linkage-method",
         choices=[method.value for method in ClusteringLinkageMethod],
@@ -72,6 +73,10 @@ async def run(arguments: argparse.Namespace) -> None:
     if arguments.review_priority_threshold < arguments.min_unique_sessions:
         raise ValueError("review threshold cannot be below minimum unique sessions")
     if arguments.activate:
+        if arguments.taxonomy_version != OpenAIDualExtractorAdapter.taxonomy_version:
+            raise ValueError(
+                "active policy taxonomy_version does not match runtime extractor taxonomy"
+            )
         mismatches = embedding_contract_mismatches(
             load_signal_embedding_contract(),
             model_id=arguments.model_id,

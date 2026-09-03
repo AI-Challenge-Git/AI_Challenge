@@ -1,7 +1,7 @@
 # ADR: 고객 제보 기반 장애 의심 신호
 
 작성일: 2026-08-29
-갱신일: 2026-08-30
+갱신일: 2026-09-03
 
 ## 결정
 
@@ -26,8 +26,9 @@
 개인정보 보유 목적 종료 후 삭제 원칙은 공식 규정·제품 문서에서 참고한 구조다.
 
 반면 `600초`, 유사도 임계값, `5개 고유 세션`, `10개 검토 우선순위`를 정답으로 뒷받침하는 공통
-공식 기준은 없다. AI 담당자는 한국어 금융 VOC 평가 결과로 `0.58`, average linkage, medoid를
-전달했다. 백엔드는 이 값을 immutable `EXPERIMENTAL` policy에 기록하며 법령·업계 표준 또는
+공식 기준은 없다. AI 담당자는 canonical symptom 46건 재평가에서 online·batch F1 0.876을 기록한
+`0.56`, average linkage, medoid를 전달했다. 백엔드는 이 값을 immutable `EXPERIMENTAL` policy에
+기록하며 법령·업계 표준 또는
 `APPROVED` 값으로 표현하지 않는다.
 
 ## AI 경계
@@ -67,14 +68,14 @@ AI 담당이 제공한 metadata와 별도로 받은 model revision을 사용해 
 
 ```powershell
 uv run python -m scripts.register_signal_policy `
-  --policy-version signal-openai-embed-avg-medoid-v1 `
+  --policy-version signal-openai-canonical-avg-medoid-v1 `
   --model-id text-embedding-3-small `
   --model-revision $env:SIGNAL_EMBEDDING_MODEL_REVISION `
   --dimension 1024 `
   --normalization L2 `
   --input-format passage `
-  --taxonomy-version issue-type.v1 `
-  --similarity-threshold 0.58 `
+  --taxonomy-version issue-type-canonical.v1 `
+  --similarity-threshold 0.56 `
   --linkage-method AVERAGE `
   --representative-method MEDOID `
   --activate
@@ -82,6 +83,11 @@ uv run python -m scripts.register_signal_policy `
 
 `--activate`를 생략하면 등록만 하고 사용하지 않는다. policy version은 수정하지 않고 새 version으로
 교체한다.
+
+정책 교체 시 공개 dashboard와 상담카드 관련 신호는 활성 policy의 cluster만 사용한다. worker를
+중지한 뒤 `scripts.requeue_signal_policy`를 반복 실행해 보존 중이고 새 taxonomy version과 일치하는
+확정 제보만 새 policy로 다시 처리한다. 구정책 embedding과 cluster는 감사·재현을 위해 보존기간 동안
+남기되 새 policy 결과와 비교하거나 공개 응답에 섞지 않는다.
 
 processing worker는 다음처럼 bounded batch로 실행한다. 실제 scheduler 연결은 배포 단계에서 한다.
 
