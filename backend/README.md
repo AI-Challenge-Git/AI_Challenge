@@ -149,7 +149,7 @@ uv run python -m scripts.register_signal_policy `
   --dimension 1024 `
   --normalization L2 `
   --input-format passage `
-  --taxonomy-version issue-type-canonical.v1 `
+  --taxonomy-version issue-type-canonical.v2 `
   --baseline-policy-version previous-window-distinct-sessions.v1 `
   --similarity-threshold 0.56 `
   --linkage-method AVERAGE `

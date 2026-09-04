@@ -40,7 +40,7 @@ worker를 먼저 중지하고 AI 담당자가 확정한 새 model revision·taxo
 새 EXPERIMENTAL policy를 등록·활성화합니다. 그 다음 아래 명령을 결과의 `created`와 `reset`이 모두
 0이 될 때까지 반복하고 worker를 다시 시작합니다.
 
-현재 canonical symptom 계약의 taxonomy version은 `issue-type-canonical.v1`입니다. API extractor와
+현재 canonical symptom 계약의 taxonomy version은 `issue-type-canonical.v2`입니다. API extractor와
 활성 signal policy의 taxonomy version이 다르면 정책 활성화, readiness, worker 시작이 모두 실패합니다.
 
 ```powershell
