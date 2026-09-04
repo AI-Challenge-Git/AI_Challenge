@@ -12,6 +12,7 @@ from app.schemas import (
     ConsultationConfirmation,
     ReportCreateRequest,
     TechnicalConfirmation,
+    _evidence_contains_explicit_date_and_time,
 )
 from app.security import (
     InvalidReportTextError,
@@ -166,6 +167,33 @@ def test_invalid_calendar_dates_still_mask_as_account(text: str, sensitive_value
     assert result.decision is PiiDecision.MASKED
     assert sensitive_value not in result.masked_text
     assert result.detected_kinds == ("ACCOUNT",)
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "26/07/18 23시 34분에",
+        "2026/07/18 23:34에",
+        "26-9-29 8시 23분",
+        "2026년 8월 15일 오전 9시 3분에",
+    ],
+)
+def test_evidence_with_valid_date_and_time_is_recognized(evidence: str) -> None:
+    """FE-07: 날짜·시각이 모두 있는 근거는 표기 형식(슬래시/콜론/한국어)과
+    무관하게 완전한 것으로 인식돼야 한다."""
+    assert _evidence_contains_explicit_date_and_time(evidence) is True
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "23:89",  # 89분은 존재하지 않는 시각
+        "26/07/18",  # 날짜만 있고 시각 없음
+        "23시 34분",  # 시각만 있고 날짜 없음
+    ],
+)
+def test_evidence_missing_date_or_time_is_not_recognized(evidence: str) -> None:
+    assert _evidence_contains_explicit_date_and_time(evidence) is False
 
 
 @pytest.mark.parametrize(
