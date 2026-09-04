@@ -41,13 +41,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 24px;
 }
 
-.brand { display: flex; align-items: center; gap: 9px; color: var(--ink); text-decoration: none; font-family: Inter, Pretendard, sans-serif; font-weight: 700; letter-spacing: -0.02em; }
-
-.brand strong { font-weight: 800; }
-
-.brand-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; color: #171714; background: var(--yellow); transform: rotate(-4deg); }
-
-.brand-mark svg { transform: rotate(4deg); }
+.brand { display: flex; align-items: center; text-decoration: none; }
+.brand-logo { display: block; width: 190px; height: auto; }
 
 .main-nav { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: white; }
 .main-nav button { padding: 7px 11px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 12px; font-weight: 700; }
@@ -367,8 +362,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (max-width: 620px) {
   .site-header { width: calc(100% - 28px); min-height: 98px; flex-wrap: wrap; gap: 8px; padding: 11px 0; }
-  .brand { font-size: 13px; }
-  .brand-mark { width: 30px; height: 30px; }
+  .brand-logo { width: 170px; }
   .main-nav { width: 100%; order: 2; }
   .main-nav button { flex: 1; padding: 6px 8px; font-size: 10px; }
   .hero { width: calc(100% - 32px); min-height: auto; margin: 32px auto 38px; grid-template-columns: 1fr; gap: 22px; }

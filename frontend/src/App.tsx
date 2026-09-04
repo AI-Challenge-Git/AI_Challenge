@@ -327,8 +327,7 @@ export default function App() {
     <>
       <header className="site-header">
         <a className="brand" href="#top" aria-label="MTS SOS Desk 홈" onClick={() => setView("report")}>
-          <span className="brand-mark"><ShieldCheck size={21} /></span>
-          <span>MTS SOS <strong>Desk</strong></span>
+          <img className="brand-logo" src="/mts-sos-desk-logo.png" alt="" width="708" height="236" />
         </a>
         <nav className="main-nav" aria-label="주요 화면">
           <button type="button" className={view === "report" ? "current" : ""} aria-pressed={view === "report"} onClick={() => setView("report")}>고객 제보</button>
