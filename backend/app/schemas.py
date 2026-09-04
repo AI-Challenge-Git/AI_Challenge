@@ -60,7 +60,13 @@ _KOREAN_FULL_DATE_PATTERN = re.compile(
     r"|(?:\d{2}|\d{4})\s*-\s*\d{1,2}\s*-\s*\d{1,2}"
     r"|(?:\d{2}|\d{4})\s*[./]\s*\d{1,2}\s*[./]\s*\d{1,2}"
 )
-_KOREAN_TIME_PATTERN = re.compile(r"(?:(?:오전|오후)\s*)?\d{1,2}\s*시(?:\s*\d{1,2}\s*분)?")
+# "23시 33분" 같은 한국어 표기 외에, "23:33" 같은 콜론 표기 시각도 근거로
+# 인정한다. 시(0-23)·분(0-59) 범위를 벗어나는 값(예: "23:89")은 애초에
+# 존재하지 않는 시각이므로 일부러 매칭하지 않는다.
+_KOREAN_TIME_PATTERN = re.compile(
+    r"(?:(?:오전|오후)\s*)?\d{1,2}\s*시(?:\s*\d{1,2}\s*분)?"
+    r"|(?:[01]?\d|2[0-3])\s*:\s*[0-5]\d"
+)
 
 
 def _evidence_contains_explicit_date_and_time(evidence: str | None) -> bool:
