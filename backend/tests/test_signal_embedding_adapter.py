@@ -163,7 +163,7 @@ def test_policy_cli_defaults_to_evaluated_threshold(monkeypatch: pytest.MonkeyPa
             "--input-format",
             "passage",
             "--taxonomy-version",
-            "issue-type-canonical.v1",
+            "issue-type-canonical.v2",
         ],
     )
 
@@ -223,7 +223,7 @@ async def test_policy_activation_rejects_runtime_revision_mismatch(
             "--input-format",
             "passage",
             "--taxonomy-version",
-            "issue-type-canonical.v1",
+            "issue-type-canonical.v2",
             "--activate",
         ],
     )

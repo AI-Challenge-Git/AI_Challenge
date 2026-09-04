@@ -135,6 +135,39 @@ _SYMPTOM_TAXONOMY: dict[IssueType, list[tuple[str, str, str]]] = {
             "주문 화면이 멈춤",
             "주문·확인 버튼을 누른 뒤 로딩, 멈춤, 무응답 또는 다음 화면으로 넘어가지 않음",
         ),
+        (
+            "ORDER_REJECTED_INSUFFICIENT_BALANCE",
+            "잔고 부족으로 주문이 거부됨",
+            "잔고·예수금·매수가능금액 부족으로 주문이 거부됐다고 명시됨",
+        ),
+        (
+            "ORDER_REJECTED_PRICE_LIMIT",
+            "가격이 제한 범위를 벗어나 주문이 거부됨",
+            "지정가가 상한가·하한가 등 가격제한범위를 벗어나 주문이 거부됐다고 명시됨",
+        ),
+        (
+            "ORDER_REJECTED_QUANTITY_INVALID",
+            "수량 또는 단위 오류로 주문이 거부됨",
+            "최소 주문 수량·단위 조건을 충족하지 못해 주문이 거부됐다고 명시됨",
+        ),
+        (
+            "ORDER_REJECTED_SERVER_ERROR",
+            "서버·네트워크 오류로 주문이 거부됨",
+            "통신·서버 오류 메시지(오류 코드, 응답 실패 등)와 함께 주문이 거부됨. 화면이 "
+            "멈추는 것이 아니라 명시적인 오류·거부 응답이 옴",
+        ),
+        (
+            "ORDER_REJECTED_UNKNOWN_REASON",
+            "원인을 알 수 없는 오류로 주문이 거부됨",
+            "주문이 거부됐다는 것은 명확하지만 구체적 사유(잔고·가격·수량·서버오류)가 "
+            "원문에 없음. 위 거부 사유 중 어느 것에도 해당하지 않을 때만 선택",
+        ),
+        (
+            "APP_TERMINATED_DURING_SUBMISSION",
+            "주문 중 앱이 강제 종료됨",
+            "주문 절차 중 앱이 꺼지거나 강제 종료됨. 화면이 멈추는 것이 아니라 앱 자체가 "
+            "종료·크래시됨",
+        ),
     ],
     IssueType.ORDER_RESULT_UNCONFIRMED: [
         (
@@ -195,22 +228,17 @@ _SYMPTOM_TAXONOMY: dict[IssueType, list[tuple[str, str, str]]] = {
             "동시에 해당하면 이것을 최우선으로 선택)",
         ),
         (
-            "NETWORK_ERROR_MESSAGE",
-            "네트워크 오류 메시지가 표시됨",
-            "네트워크·통신·연결 오류 메시지가 명시적으로 표시됨 (기기 특정 조건이 "
-            "없을 때 두 번째 우선순위)",
-        ),
-        (
             "WIFI_ASSOCIATED_FAILURE",
             "와이파이 연결 상태에서 발생하는 오류",
             "Wi-Fi 사용·끊김·불안정 상황과 함께 문제가 발생한다고 보고됨 (원인을 "
-            "확정하는 것이 아니라 그 환경에서 발생했다는 관찰만 표현, 세 번째 우선순위)",
+            "확정하는 것이 아니라 그 환경에서 발생했다는 관찰만 표현, 기기 특정 조건이 "
+            "없을 때 두 번째 우선순위)",
         ),
         (
             "CELLULAR_ASSOCIATED_FAILURE",
             "모바일 데이터 연결 상태에서 발생하는 오류",
-            "LTE·5G·모바일 데이터 상황과 함께 문제가 발생한다고 보고됨 (네 번째 "
-            "우선순위, 위 세 카테고리 중 아무것도 해당하지 않을 때만 선택)",
+            "LTE·5G·모바일 데이터 상황과 함께 문제가 발생한다고 보고됨 (세 번째 "
+            "우선순위, 위 두 카테고리 중 아무것도 해당하지 않을 때만 선택)",
         ),
     ],
 }
@@ -1173,7 +1201,8 @@ class RealDualExtractor:
                     '"evidence_quote": "<근거 문자열 또는 null>"}\n\n'
                     "issue_type 값:\n"
                     "ORDER_SUBMISSION_FAILURE: 주문 버튼·확정·전송 단계의 멈춤, "
-                    "무반응, 로딩\n"
+                    "무반응, 로딩. 또는 잔고·가격·수량·서버 오류 등으로 주문 자체가 "
+                    "거부되거나, 주문 중 앱이 강제 종료됨\n"
                     "ORDER_RESULT_UNCONFIRMED: 주문 후 접수·주문번호·체결 결과를 "
                     "확인할 수 없음. 체결·주문 내역 화면이 언급돼도 방금 보낸 "
                     "특정 주문의 존재·접수 여부가 불확실하면 이 값\n"
@@ -1476,7 +1505,7 @@ class RealDualExtractor:
 
             result = ExtractionResult(
                 schema_version="dual-extraction.v1",
-                taxonomy_version="issue-type-canonical.v1",
+                taxonomy_version="issue-type-canonical.v2",
                 adapter_name="openai",
                 model_id=self._model,
                 technical=technical,
