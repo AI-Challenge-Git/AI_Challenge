@@ -138,6 +138,39 @@ def test_compact_account_candidate_has_explicit_length_boundaries(digits: str) -
 @pytest.mark.parametrize(
     "text",
     [
+        "26-09-29 오전 11시 23분 쯤에 매도 주문을 넣었는데 접수가 안 됩니다.",
+        "2026-09-29 오전 11시에 매수 주문을 넣었습니다.",
+        "26-9-29 8시 23분에 주문했다.",
+    ],
+)
+def test_dash_dates_are_not_masked_as_account(text: str) -> None:
+    """계좌번호 정규식(숫자-숫자-숫자)이 대시형 날짜와 겹쳐서 AI가 보기 전에
+    날짜가 통째로 사라지던 회귀. 월(1-12)·일(1-31)이 유효한 대시형 날짜는
+    계좌번호로 마스킹하면 안 된다."""
+    result = scan_and_mask(text)
+    assert result.decision is PiiDecision.ALLOW
+    assert result.masked_text == text
+
+
+@pytest.mark.parametrize(
+    ("text", "sensitive_value"),
+    [
+        ("13-45-67 이체해주세요.", "13-45-67"),
+        ("99-99-99로 송금 부탁드립니다.", "99-99-99"),
+    ],
+)
+def test_invalid_calendar_dates_still_mask_as_account(text: str, sensitive_value: str) -> None:
+    """월/일 범위를 벗어나 날짜로 해석될 수 없는 숫자-대시 패턴은 계좌번호
+    마스킹이 그대로 적용돼야 한다 (날짜 예외가 계좌번호 탐지를 무력화하면 안 됨)."""
+    result = scan_and_mask(text)
+    assert result.decision is PiiDecision.MASKED
+    assert sensitive_value not in result.masked_text
+    assert result.detected_kinds == ("ACCOUNT",)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "주민등록번호는 900101-1234567입니다.",
         "비밀번호는 secret1234입니다.",
         "OTP는 123456입니다.",
