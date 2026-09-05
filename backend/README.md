@@ -81,7 +81,8 @@ uv run python -m scripts.refresh_krx_symbols
 `refresh_krx_symbols`는 기존 CSV 보통주 allowlist와 금융위원회 상장정보 API를 매일 대조합니다.
 서로 다른 두 기준일에 연속으로 사라진 기존 코드만 제외하며, API에만 나타난 신규 코드는 종류를
 추측하지 않고 자동 등록하지 않습니다. API 오류·부분 응답·시장 불일치 시 기존 활성 Master를
-유지합니다. Railway cron과 Secret 설정은 [deployment 문서](docs/deployment.md)를 따릅니다.
+유지합니다. Railway에서는 기존 hourly retention cron이 매일 14시대 KST에 이 작업을 함께 실행하며,
+Secret 설정은 [deployment 문서](docs/deployment.md)를 따릅니다.
 
 ## 72시간 보존 정리
 

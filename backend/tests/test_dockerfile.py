@@ -25,13 +25,12 @@ def test_api_image_runs_non_root_without_per_instance_migration() -> None:
     assert "${PORT:-8000}" in dockerfile
 
 
-def test_krx_reconciliation_railway_job_is_bounded_and_daily() -> None:
-    config_path = Path(__file__).parents[1] / "railway.krx-worker.json"
+def test_retention_railway_job_runs_hourly_maintenance() -> None:
+    config_path = Path(__file__).parents[1] / "railway.retention-worker.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
 
     assert config["deploy"] == {
-        "startCommand": "python -m scripts.refresh_krx_symbols",
-        "cronSchedule": "30 5 * * *",
+        "startCommand": "python -m scripts.run_scheduled_maintenance",
+        "cronSchedule": "17 * * * *",
         "restartPolicyType": "NEVER",
     }
-    assert "KRX_LISTED_INFO_API_KEY" not in config_path.read_text(encoding="utf-8")

@@ -47,7 +47,7 @@ AI는 장애를 공식 확정하거나 주문을 실행하지 않습니다. 실�
 - AI: OpenAI 구조화 추출 및 임베딩
 - Database: PostgreSQL 16, pgvector
 - Attachment: 개발용 local volume, 운영용 private S3-compatible Object Storage
-- Deployment: Vercel frontend, Railway API·signal worker·retention worker·KRX reconciliation cron
+- Deployment: Vercel frontend, Railway API·signal worker·retention/KRX maintenance worker
 
 ## 저장소 구조
 

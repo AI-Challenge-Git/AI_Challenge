@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "python -m scripts.purge_data --execute --batch-size 100",
+    "startCommand": "python -m scripts.run_scheduled_maintenance",
     "cronSchedule": "17 * * * *",
     "restartPolicyType": "NEVER"
   }

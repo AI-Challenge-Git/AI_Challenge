@@ -14,9 +14,8 @@ API process가 아니라 단일 pre-deploy command인 `alembic upgrade head`에�
 | --- | --- | --- |
 | API | Dockerfile CMD | 상시 |
 | Signal worker | `python -m scripts.process_signal_jobs --forever --max-jobs 100` | always-on, 5-second idle polling |
-| Retention worker | `python -m scripts.purge_data --execute --batch-size 100` | `17 * * * *` |
+| Retention + KRX maintenance worker | `python -m scripts.run_scheduled_maintenance` | `17 * * * *` |
 | Operations monitor | `python -m scripts.check_operational_health` | every 5 minutes |
-| KRX reconciliation worker | `python -m scripts.refresh_krx_symbols` | `30 5 * * *` (14:30 KST) |
 
 Signal worker is an always-on Railway worker, not a cron job. It polls every
 `SIGNAL_WORKER_POLL_SECONDS` (default 5 seconds). Retryable provider failures remain queued with
@@ -57,9 +56,14 @@ python -m scripts.requeue_signal_policy `
 `/backend/railway.json`은 API service에만 연결한다. Signal worker는
 `/backend/railway.signal-worker.json`, Retention worker는
 `/backend/railway.retention-worker.json`, Operations monitor는
-`/backend/railway.operations-monitor.json`, KRX worker는
-`/backend/railway.krx-worker.json`을 Config File로 지정한다. worker 설정에는 API용
+`/backend/railway.operations-monitor.json`을 Config File로 지정한다. worker 설정에는 API용
 pre-deploy migration이 없으며 bounded command와 UTC cron schedule만 포함한다.
+
+Railway free-plan production은 별도 KRX service 대신 기존 hourly retention service에서
+`scripts.run_scheduled_maintenance`를 실행한다. purge는 매시간 그대로 실행하고 KRX 대조만
+14시대 KST 실행에서 추가한다. 두 하위 작업은 독립 실행하며 하나라도 실패하면 cron job은 non-zero로
+종료한다. 새 Railway service는 legacy Config-as-Code 파일을 새로 연결할 수 없으므로 전용
+`railway.krx-worker.json`에 의존하지 않는다.
 
 Operations monitor는 signal ready backlog, 반복 실패, dead-letter, 최근 15분 AI provider 오류,
 object deletion retry를 비식별 JSON 한 줄로 출력한다. 실패 상태가 있으면 non-zero로 종료한다. Railway
@@ -76,7 +80,8 @@ non-zero로 종료하므로 Railway job 실패 알림을 연결해야 한다.
 KRX 일일 동기화는 금융위 상장정보 API만으로 보통주 여부를 확정하지 않는다. 기존 CSV 기반 보통주
 allowlist를 부모로 두고 API에서 두 기준일 연속 사라진 기존 코드만 제외한다. API에만 있는 신규 코드는
 자동 등록하지 않으며, API 오류·시장 불일치·99% 미만 coverage에서는 기존 활성 version을 유지한다.
-공식 데이터 제공 시각 이후인 매일 14:30 KST에 다음 bounded command를 실행한다.
+공식 데이터 제공 시각 이후인 매일 14:17 KST retention 실행에서 다음 bounded command를 추가로
+실행한다.
 
 ```powershell
 python -m scripts.refresh_krx_symbols
@@ -87,10 +92,10 @@ python -m scripts.refresh_krx_symbols
 ## Railway variables
 
 API와 업무 worker에는 `DATABASE_URL`, 서로 다른 네 HMAC key와 `OPENAI_API_KEY`를 Secret으로 설정한다.
-`SIGNAL_EMBEDDING_MODEL_REVISION`은 재현성 metadata인 일반 환경변수로 명시한다. KRX worker에는
-`DATABASE_URL`과 `KRX_LISTED_INFO_API_KEY`만 Secret으로 주입하고 필요할 때 endpoint 일반 변수만
-추가한다. KRX worker에 OpenAI·HMAC·S3 secret을 공유하지 않는다. Secret 값을 Git·Railway start
-command·로그에 넣지 않는다.
+`SIGNAL_EMBEDDING_MODEL_REVISION`은 재현성 metadata인 일반 환경변수로 명시한다. Retention service의
+기존 `DATABASE_URL`은 유지하고 `KRX_LISTED_INFO_API_KEY`는 API service 변수 참조로 연결한다. Secret
+값을 Git·Railway start command·로그에 넣지 않는다. 별도 service를 사용할 수 있는 plan으로 전환하면
+KRX worker에는 이 두 변수만 주입해 다시 분리한다.
 운영상황판 조회 제한은 기본 `SIGNAL_DASHBOARD_LIMIT=60`,
 `SIGNAL_DASHBOARD_WINDOW_SECONDS=60`이며 트래픽 측정 후 환경변수로 조정한다.
 공개 분석 제한은 기본 `REPORT_ANALYZE_LIMIT=5`, `REPORT_ANALYZE_WINDOW_SECONDS=60`이며 비식별
