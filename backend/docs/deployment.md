@@ -16,6 +16,7 @@ API process가 아니라 단일 pre-deploy command인 `alembic upgrade head`에�
 | Signal worker | `python -m scripts.process_signal_jobs --forever --max-jobs 100` | always-on, 5-second idle polling |
 | Retention worker | `python -m scripts.purge_data --execute --batch-size 100` | `17 * * * *` |
 | Operations monitor | `python -m scripts.check_operational_health` | every 5 minutes |
+| KRX reconciliation worker | `python -m scripts.refresh_krx_symbols` | `30 5 * * *` (14:30 KST) |
 
 Signal worker is an always-on Railway worker, not a cron job. It polls every
 `SIGNAL_WORKER_POLL_SECONDS` (default 5 seconds). Retryable provider failures remain queued with
@@ -56,7 +57,8 @@ python -m scripts.requeue_signal_policy `
 `/backend/railway.json`은 API service에만 연결한다. Signal worker는
 `/backend/railway.signal-worker.json`, Retention worker는
 `/backend/railway.retention-worker.json`, Operations monitor는
-`/backend/railway.operations-monitor.json`을 Config File로 지정한다. worker 설정에는 API용
+`/backend/railway.operations-monitor.json`, KRX worker는
+`/backend/railway.krx-worker.json`을 Config File로 지정한다. worker 설정에는 API용
 pre-deploy migration이 없으며 bounded command와 UTC cron schedule만 포함한다.
 
 Operations monitor는 signal ready backlog, 반복 실패, dead-letter, 최근 15분 AI provider 오류,
@@ -71,19 +73,24 @@ Signal worker는 영구 오류를 즉시 dead-letter 처리하고 일시 오류�
 `SIGNAL_WORKER_MAX_ATTEMPTS`까지만 재시도한다. 해당 실행에서 실패 또는 dead-letter가 발생하면
 non-zero로 종료하므로 Railway job 실패 알림을 연결해야 한다.
 
-KRX 동기화는 금융위 상장정보 API만으로 보통주 여부를 확정할 수 없으므로 KRX `전종목기본정보.CSV`
-원본도 필요하다. scheduler가 신뢰할 수 있는 CSV 원천을 받기 전에는 자동 등록하지 않는다. 원본을
-준비한 뒤 다음 one-shot command를 매 영업일 API 갱신 이후 실행한다.
+KRX 일일 동기화는 금융위 상장정보 API만으로 보통주 여부를 확정하지 않는다. 기존 CSV 기반 보통주
+allowlist를 부모로 두고 API에서 두 기준일 연속 사라진 기존 코드만 제외한다. API에만 있는 신규 코드는
+자동 등록하지 않으며, API 오류·시장 불일치·99% 미만 coverage에서는 기존 활성 version을 유지한다.
+공식 데이터 제공 시각 이후인 매일 14:30 KST에 다음 bounded command를 실행한다.
 
 ```powershell
-python -m scripts.sync_krx_symbols 전종목기본정보.CSV --as-of YYYY-MM-DD
+python -m scripts.refresh_krx_symbols
 ```
+
+신규 상장 보통주를 반영할 때는 새 `전종목기본정보.CSV`를 기존 one-shot sync 명령으로 적재한다.
 
 ## Railway variables
 
-API와 worker에는 `DATABASE_URL`, 서로 다른 네 HMAC key와 `OPENAI_API_KEY`를 Secret으로 설정한다.
+API와 업무 worker에는 `DATABASE_URL`, 서로 다른 네 HMAC key와 `OPENAI_API_KEY`를 Secret으로 설정한다.
 `SIGNAL_EMBEDDING_MODEL_REVISION`은 재현성 metadata인 일반 환경변수로 명시한다. KRX worker에는
-`KRX_LISTED_INFO_API_KEY` Secret을 추가한다. 값을 Git·Railway start command·로그에 넣지 않는다.
+`DATABASE_URL`과 `KRX_LISTED_INFO_API_KEY`만 Secret으로 주입하고 필요할 때 endpoint 일반 변수만
+추가한다. KRX worker에 OpenAI·HMAC·S3 secret을 공유하지 않는다. Secret 값을 Git·Railway start
+command·로그에 넣지 않는다.
 운영상황판 조회 제한은 기본 `SIGNAL_DASHBOARD_LIMIT=60`,
 `SIGNAL_DASHBOARD_WINDOW_SECONDS=60`이며 트래픽 측정 후 환경변수로 조정한다.
 공개 분석 제한은 기본 `REPORT_ANALYZE_LIMIT=5`, `REPORT_ANALYZE_WINDOW_SECONDS=60`이며 비식별

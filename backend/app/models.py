@@ -115,10 +115,25 @@ class SymbolMasterVersion(Base):
             name="source_sha256_lower_hex",
         ),
         CheckConstraint(
-            "source_encoding IN ('UTF-8-SIG', 'CP949')",
+            "source_encoding IN ('UTF-8-SIG', 'CP949', 'API-JSON')",
             name="source_encoding_value",
         ),
+        CheckConstraint(
+            "source_kind IN ('KRX_CSV', 'LISTED_API_RECONCILIATION')",
+            name="source_kind_value",
+        ),
+        CheckConstraint(
+            "((source_kind = 'KRX_CSV' AND parent_version_id IS NULL "
+            "AND baseline_version_id IS NULL "
+            "AND source_encoding IN ('UTF-8-SIG', 'CP949')) OR "
+            "(source_kind = 'LISTED_API_RECONCILIATION' AND parent_version_id IS NOT NULL "
+            "AND baseline_version_id IS NOT NULL "
+            "AND source_encoding = 'API-JSON'))",
+            name="source_lineage",
+        ),
         CheckConstraint("row_count > 0", name="row_count_positive"),
+        Index("ix_symbol_master_versions_parent_version_id", "parent_version_id"),
+        Index("ix_symbol_master_versions_baseline_version_id", "baseline_version_id"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -127,6 +142,15 @@ class SymbolMasterVersion(Base):
     source_as_of: Mapped[date] = mapped_column(Date, nullable=False)
     source_sha256: Mapped[str] = mapped_column(CHAR(64), unique=True, nullable=False)
     source_encoding: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_kind: Mapped[str] = mapped_column(String(32), default="KRX_CSV", nullable=False)
+    parent_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("symbol_master_versions.id", ondelete="RESTRICT"),
+    )
+    baseline_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("symbol_master_versions.id", ondelete="RESTRICT"),
+    )
     schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
     row_count: Mapped[int] = mapped_column(Integer, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -159,6 +183,11 @@ class Symbol(Base):
             name="source_market_value",
         ),
         CheckConstraint("stock_type = '보통주'", name="stock_type_common"),
+        CheckConstraint(
+            "listed_api_missing_since IS NULL OR listed_api_last_seen_on IS NULL "
+            "OR listed_api_missing_since > listed_api_last_seen_on",
+            name="listed_api_observation_order",
+        ),
         Index("ix_symbols_master_version_id", "master_version_id"),
         Index("ix_symbols_code", "code"),
     )
@@ -174,6 +203,8 @@ class Symbol(Base):
     market: Mapped[str] = mapped_column(String(8), nullable=False)
     source_market: Mapped[str] = mapped_column(String(20), nullable=False)
     stock_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    listed_api_last_seen_on: Mapped[date | None] = mapped_column(Date)
+    listed_api_missing_since: Mapped[date | None] = mapped_column(Date)
 
     master_version: Mapped[SymbolMasterVersion] = relationship(back_populates="symbols")
 

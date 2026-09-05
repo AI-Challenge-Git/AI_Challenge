@@ -13,7 +13,7 @@ from app.config import Settings, get_settings
 from app.main import create_app
 from app.schemas import ExtractionResult
 from app.services.reports import _extract_with_runtime_limits
-from scripts import process_signal_jobs, verify_proxy_rate_limit
+from scripts import process_signal_jobs, refresh_krx_symbols, verify_proxy_rate_limit
 
 
 def test_settings_load_environment_variables(
@@ -194,6 +194,23 @@ def test_openai_api_key_is_masked() -> None:
     configured = Settings(openai_api_key=SecretStr(secret))
 
     assert secret not in repr(configured)
+
+
+def test_krx_worker_requires_only_its_database_and_api_secret() -> None:
+    api_secret = "synthetic-krx-secret"
+    settings = refresh_krx_symbols.KrxWorkerSettings.model_validate(
+        {
+            "database_url": SecretStr("postgresql+asyncpg://user:password@db/test"),
+            "krx_listed_info_api_key": SecretStr(api_secret),
+        }
+    )
+
+    assert set(refresh_krx_symbols.KrxWorkerSettings.model_fields) == {
+        "database_url",
+        "krx_listed_info_api_url",
+        "krx_listed_info_api_key",
+    }
+    assert api_secret not in repr(settings)
 
 
 def _production_settings(**overrides: object) -> Settings:

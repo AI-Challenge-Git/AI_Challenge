@@ -33,6 +33,7 @@ erDiagram
     agent_accounts ||--o{ agent_access_tokens : owns
     agent_accounts ||--o{ agent_verifications : performs
     agent_accounts ||--o{ audit_logs : acts
+    symbol_master_versions ||--o{ symbol_master_versions : derives
     symbol_master_versions ||--o{ symbols : contains
     symbol_master_versions ||--o{ consultation_cards : validates
     symbol_master_versions ||--o{ agent_verifications : validates
@@ -176,6 +177,9 @@ erDiagram
         date source_as_of
         char source_sha256 UK
         varchar source_encoding
+        varchar source_kind
+        uuid parent_version_id FK
+        uuid baseline_version_id FK
         varchar schema_version
         int row_count
         boolean is_active
@@ -190,6 +194,8 @@ erDiagram
         varchar market
         varchar source_market
         varchar stock_type
+        date listed_api_last_seen_on
+        date listed_api_missing_since
     }
 
     rate_limit_buckets {
@@ -281,6 +287,9 @@ erDiagram
   KRX 접두 `A`가 제외된 6자리 대문자 영숫자다. 숫자 6자리와 null도 유지한다.
 - `symbol_master_versions`와 `symbols`는 공유 기준 데이터라 report purge 대상이 아니다. 고객 확정값과
   상담원 재확인은 검증에 사용한 version FK를 보존하므로 참조된 과거 version을 임의 삭제하지 않는다.
+  API reconciliation version은 직전 version과 기준 CSV version을 모두 가리키며, 신규 미분류 종목을
+  자동 추가하지 않고 서로 다른 두 기준일에 연속 누락된 기존 종목만 제외한다. CSV에서 확인됐던
+  종목이 API에 다시 나타나면 자동 복구한다.
 - `rate_limit_buckets`는 employee·agent·client의 raw 값을 저장하지 않고 전용 HMAC fingerprint와
   원자적 request count만 저장한다. 만료 token과 bucket은 purge CLI가 정리한다.
 - embedding은 무차원 pgvector `vector`로 저장하고 row의 model metadata와

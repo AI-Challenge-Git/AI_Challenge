@@ -88,13 +88,23 @@ def test_sensitive_and_technical_data_boundaries_are_structural() -> None:
         "source_as_of",
         "source_sha256",
         "source_encoding",
+        "source_kind",
+        "parent_version_id",
+        "baseline_version_id",
         "schema_version",
         "row_count",
         "is_active",
     } <= symbol_version_columns
-    assert {"master_version_id", "code", "name_ko", "market", "source_market", "stock_type"} <= (
-        symbol_columns
-    )
+    assert {
+        "master_version_id",
+        "code",
+        "name_ko",
+        "market",
+        "source_market",
+        "stock_type",
+        "listed_api_last_seen_on",
+        "listed_api_missing_since",
+    } <= symbol_columns
     assert "symbol_master_version_id" in consultation_columns
     assert "symbol_master_version_id" in set(tables["agent_verifications"].columns.keys())
     vector_columns = {
@@ -176,6 +186,10 @@ def test_constraints_and_indexes_have_deterministic_names() -> None:
     assert "uq_rate_limit_buckets_scope" in names
     assert "uq_symbol_master_versions_active" in names
     assert "uq_symbols_master_version_id" in names
+    assert "ck_symbol_master_versions_source_lineage" in names
+    assert "ck_symbols_listed_api_observation_order" in names
+    assert "ix_symbol_master_versions_parent_version_id" in names
+    assert "ix_symbol_master_versions_baseline_version_id" in names
 
 
 def test_consultation_card_constraint_accepts_all_order_actions() -> None:

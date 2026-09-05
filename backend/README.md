@@ -68,6 +68,7 @@ KOSDAQ GLOBAL이면서 `주식종류=보통주`인 행만 한 transaction으로 
 cd backend
 uv run python -m scripts.import_krx_symbols "..\..\전종목기본정보.csv" --as-of 2026-08-28
 uv run python -m scripts.sync_krx_symbols "..\..\전종목기본정보.csv" --as-of 2026-08-28
+uv run python -m scripts.refresh_krx_symbols
 ```
 
 종목코드는 KRX 원천의 접두 `A`가 제외된 단축코드를 사용하며 정확히 6자리 대문자 영숫자
@@ -76,6 +77,11 @@ uv run python -m scripts.sync_krx_symbols "..\..\전종목기본정보.csv" --as
 재확인은 활성 Master의 코드 존재 여부와 종목명·코드 일치를 검사합니다. Master 미적재는
 `503 SYMBOL_MASTER_UNAVAILABLE`, 미지원 코드는 `422 UNSUPPORTED_SYMBOL`, 불일치는
 `422 SYMBOL_MISMATCH`입니다. null은 종목 미확정 상태로 계속 허용합니다.
+
+`refresh_krx_symbols`는 기존 CSV 보통주 allowlist와 금융위원회 상장정보 API를 매일 대조합니다.
+서로 다른 두 기준일에 연속으로 사라진 기존 코드만 제외하며, API에만 나타난 신규 코드는 종류를
+추측하지 않고 자동 등록하지 않습니다. API 오류·부분 응답·시장 불일치 시 기존 활성 Master를
+유지합니다. Railway cron과 Secret 설정은 [deployment 문서](docs/deployment.md)를 따릅니다.
 
 ## 72시간 보존 정리
 

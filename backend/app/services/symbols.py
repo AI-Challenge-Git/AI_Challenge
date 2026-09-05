@@ -5,10 +5,10 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 from uuid import UUID
 
@@ -23,8 +23,13 @@ KRX_LISTED_INFO_API_URL = (
     "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo"
 )
 SYMBOL_SCHEMA_VERSION = "krx-all-symbols.v1"
+RECONCILED_SYMBOL_SCHEMA_VERSION = "krx-common-allowlist-reconcile.v1"
+CSV_SOURCE_KIND = "KRX_CSV"
+RECONCILED_SOURCE_KIND = "LISTED_API_RECONCILIATION"
 _IMPORT_LOCK_ID = 0x4D54534B5258
 _MIN_LISTED_CODE_COVERAGE = 0.99
+_MAX_LISTED_API_PAGES = 100
+_MAX_LISTED_API_PAGE_BYTES = 5 * 1024 * 1024
 _CODE_PATTERN = re.compile(r"^[0-9A-Z]{6}$")
 _TARGET_MARKETS = {
     "KOSPI": "KOSPI",
@@ -40,6 +45,10 @@ _REQUIRED_COLUMNS = {
 
 
 class SymbolImportError(ValueError):
+    pass
+
+
+class ListedSnapshotNotFound(SymbolImportError):
     pass
 
 
@@ -68,6 +77,19 @@ class SymbolImportResult:
 
 
 @dataclass(frozen=True, slots=True)
+class SymbolReconciliationResult:
+    version_id: UUID
+    version: str
+    source_as_of: date
+    row_count: int
+    pending_missing_count: int
+    removed_count: int
+    unknown_api_count: int
+    name_change_count: int
+    created: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ListedItem:
     code: str
     name_ko: str
@@ -90,11 +112,19 @@ def _parse_listed_page(raw: bytes) -> tuple[list[ListedItem], int, int]:
         body = response["body"]
         result_code = str(header["resultCode"])
         total_count = int(body["totalCount"])
-        raw_items = body.get("items", {}).get("item", [])
+        raw_items_container = body.get("items")
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise SymbolImportError("listed-info API returned an invalid response") from exc
     if result_code not in {"00", "0000"}:
         raise SymbolImportError("listed-info API rejected the request")
+    if total_count < 0:
+        raise SymbolImportError("listed-info API total count is invalid")
+    if raw_items_container in (None, ""):
+        raw_items: Any = []
+    elif isinstance(raw_items_container, dict):
+        raw_items = raw_items_container.get("item", [])
+    else:
+        raise SymbolImportError("listed-info API items are invalid")
     if isinstance(raw_items, dict):
         raw_items = [raw_items]
     if not isinstance(raw_items, list):
@@ -145,29 +175,45 @@ def fetch_listed_snapshot(
         raise SymbolImportError("KRX listed-info API key is not configured")
     if not 1 <= page_size <= 10_000:
         raise SymbolImportError("listed-info API page size is invalid")
+    parsed_url = urlsplit(api_url)
+    if (
+        parsed_url.scheme != "https"
+        or not parsed_url.netloc
+        or parsed_url.query
+        or parsed_url.fragment
+    ):
+        raise SymbolImportError("listed-info API URL must be an HTTPS endpoint without a query")
 
     page_no = 1
     seen_raw = 0
-    pages: list[bytes] = []
+    expected_total: int | None = None
     items: list[ListedItem] = []
     while True:
         query = urlencode(
             {
-                "serviceKey": api_key,
                 "resultType": "json",
                 "pageNo": page_no,
                 "numOfRows": page_size,
                 "basDt": source_as_of.strftime("%Y%m%d"),
             }
         )
-        request = Request(f"{api_url}?{query}", headers={"Accept": "application/json"})
+        encoded_key = quote(api_key.strip(), safe="%")
+        request = Request(
+            f"{api_url}?serviceKey={encoded_key}&{query}",
+            headers={"Accept": "application/json"},
+        )
         try:
             with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
-                raw = response.read()
+                raw = response.read(_MAX_LISTED_API_PAGE_BYTES + 1)
         except OSError as exc:
             raise SymbolImportError("listed-info API is unavailable") from exc
+        if len(raw) > _MAX_LISTED_API_PAGE_BYTES:
+            raise SymbolImportError("listed-info API response is too large")
         page_items, total_count, page_item_count = _parse_listed_page(raw)
-        pages.append(raw)
+        if expected_total is None:
+            expected_total = total_count
+        elif total_count != expected_total:
+            raise SymbolImportError("listed-info API total count changed during pagination")
         items.extend(page_items)
         seen_raw += page_item_count
         if seen_raw >= total_count:
@@ -175,17 +221,58 @@ def fetch_listed_snapshot(
         if page_item_count == 0:
             raise SymbolImportError("listed-info API pagination ended early")
         page_no += 1
+        if page_no > _MAX_LISTED_API_PAGES:
+            raise SymbolImportError("listed-info API pagination exceeds the safe limit")
 
     codes = [item.code for item in items]
-    if not items or len(codes) != len(set(codes)):
-        raise SymbolImportError("listed-info API target data is empty or duplicated")
+    if not items:
+        raise ListedSnapshotNotFound("listed-info API has no target data for the requested date")
+    if len(codes) != len(set(codes)):
+        raise SymbolImportError("listed-info API target data is duplicated")
     if any(item.source_as_of != source_as_of for item in items):
         raise SymbolImportError("listed-info API basis date does not match the requested date")
+    sorted_items = tuple(sorted(items, key=lambda item: item.code))
+    canonical = json.dumps(
+        [
+            {
+                "code": item.code,
+                "market": item.market,
+                "name_ko": item.name_ko,
+                "source_as_of": item.source_as_of.isoformat(),
+            }
+            for item in sorted_items
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
     return ListedSnapshot(
-        items=tuple(items),
-        source_sha256=hashlib.sha256(b"".join(pages)).hexdigest(),
+        items=sorted_items,
+        source_sha256=hashlib.sha256(canonical).hexdigest(),
         source_as_of=source_as_of,
     )
+
+
+def fetch_latest_listed_snapshot(
+    *,
+    api_url: str,
+    api_key: str,
+    today: date,
+    lookback_days: int = 14,
+) -> ListedSnapshot:
+    if not 1 <= lookback_days <= 31:
+        raise SymbolImportError("listed-info API lookback must be between 1 and 31 days")
+    for days_ago in range(1, lookback_days + 1):
+        source_as_of = today - timedelta(days=days_ago)
+        try:
+            return fetch_listed_snapshot(
+                api_url=api_url,
+                api_key=api_key,
+                source_as_of=source_as_of,
+            )
+        except ListedSnapshotNotFound:
+            continue
+    raise SymbolImportError("listed-info API has no recent target snapshot")
 
 
 def verify_listed_snapshot(parsed: ParsedSymbolCsv, snapshot: ListedSnapshot) -> None:
@@ -316,6 +403,7 @@ async def import_symbol_master(
             source_as_of=source_as_of,
             source_sha256=parsed.source_sha256,
             source_encoding=parsed.source_encoding,
+            source_kind=CSV_SOURCE_KIND,
             schema_version=SYMBOL_SCHEMA_VERSION,
             row_count=len(parsed.rows),
             is_active=True,
@@ -338,6 +426,193 @@ async def import_symbol_master(
             version_id=master.id,
             version=master.version,
             row_count=master.row_count,
+            created=True,
+        )
+
+
+async def reconcile_symbol_master(
+    session: AsyncSession,
+    snapshot: ListedSnapshot,
+    *,
+    source_url: str = KRX_LISTED_INFO_API_URL,
+) -> SymbolReconciliationResult:
+    normalized_url = source_url.strip()
+    if not normalized_url:
+        raise SymbolImportError("source URL must not be blank")
+    version = f"krx-listed-reconcile-{snapshot.source_as_of.isoformat()}"
+
+    async with session.begin():
+        await session.execute(select(func.pg_advisory_xact_lock(_IMPORT_LOCK_ID)))
+        active = await session.scalar(
+            select(SymbolMasterVersion)
+            .where(SymbolMasterVersion.is_active.is_(True))
+            .with_for_update()
+        )
+        if active is None:
+            raise SymbolImportError("an active CSV-based Symbol Master is required")
+        if snapshot.source_as_of < active.source_as_of:
+            raise SymbolImportError(
+                "listed-info API snapshot is older than the active Symbol Master"
+            )
+
+        active_symbols = list(
+            (
+                await session.scalars(
+                    select(Symbol)
+                    .where(Symbol.master_version_id == active.id)
+                    .order_by(Symbol.code)
+                )
+            ).all()
+        )
+        if not active_symbols:
+            raise SymbolImportError("active Symbol Master contains no symbols")
+        baseline_version_id = active.baseline_version_id or active.id
+        baseline_symbols = list(
+            (
+                await session.scalars(
+                    select(Symbol)
+                    .where(Symbol.master_version_id == baseline_version_id)
+                    .order_by(Symbol.code)
+                )
+            ).all()
+        )
+        if not baseline_symbols:
+            raise SymbolImportError("CSV baseline Symbol Master contains no symbols")
+        listed_by_code = {item.code: item for item in snapshot.items}
+        active_codes = {symbol.code for symbol in active_symbols}
+        baseline_codes = {symbol.code for symbol in baseline_symbols}
+        matched_count = len(active_codes.intersection(listed_by_code))
+        if matched_count / len(active_symbols) < _MIN_LISTED_CODE_COVERAGE:
+            raise SymbolImportError("too many active symbols are missing from listed-info API")
+        for symbol in baseline_symbols:
+            listed = listed_by_code.get(symbol.code)
+            if listed is not None and listed.market != symbol.market:
+                raise SymbolImportError("Symbol Master and listed-info API markets do not match")
+        unknown_api_count = len(set(listed_by_code).difference(baseline_codes))
+        name_change_count = sum(
+            listed_by_code[symbol.code].name_ko != symbol.name_ko
+            for symbol in baseline_symbols
+            if symbol.code in listed_by_code
+        )
+        pending_missing_count = sum(
+            symbol.listed_api_missing_since is not None for symbol in active_symbols
+        )
+
+        existing = await session.scalar(
+            select(SymbolMasterVersion).where(
+                or_(
+                    SymbolMasterVersion.version == version,
+                    SymbolMasterVersion.source_sha256 == snapshot.source_sha256,
+                )
+            )
+        )
+        if existing is not None:
+            if (
+                existing.id == active.id
+                and existing.version == version
+                and existing.source_sha256 == snapshot.source_sha256
+                and existing.source_as_of == snapshot.source_as_of
+                and existing.source_kind == RECONCILED_SOURCE_KIND
+            ):
+                return SymbolReconciliationResult(
+                    version_id=active.id,
+                    version=active.version,
+                    source_as_of=active.source_as_of,
+                    row_count=active.row_count,
+                    pending_missing_count=pending_missing_count,
+                    removed_count=0,
+                    unknown_api_count=unknown_api_count,
+                    name_change_count=name_change_count,
+                    created=False,
+                )
+            raise SymbolImportError("snapshot version or source hash was already imported")
+        if snapshot.source_as_of == active.source_as_of:
+            if active.source_kind == CSV_SOURCE_KIND:
+                return SymbolReconciliationResult(
+                    version_id=active.id,
+                    version=active.version,
+                    source_as_of=active.source_as_of,
+                    row_count=active.row_count,
+                    pending_missing_count=pending_missing_count,
+                    removed_count=0,
+                    unknown_api_count=unknown_api_count,
+                    name_change_count=name_change_count,
+                    created=False,
+                )
+            raise SymbolImportError("active Symbol Master already uses this basis date")
+
+        next_symbols: list[dict[str, Any]] = []
+        pending_missing_count = 0
+        removed_count = 0
+        active_by_code = {symbol.code: symbol for symbol in active_symbols}
+        for baseline_symbol in baseline_symbols:
+            current_symbol = active_by_code.get(baseline_symbol.code)
+            listed = listed_by_code.get(baseline_symbol.code)
+            last_seen_on: date | None
+            missing_since: date | None
+            if listed is not None:
+                last_seen_on = snapshot.source_as_of
+                missing_since = None
+            elif current_symbol is None:
+                continue
+            elif (
+                current_symbol.listed_api_missing_since is not None
+                and current_symbol.listed_api_missing_since < snapshot.source_as_of
+            ):
+                removed_count += 1
+                continue
+            else:
+                last_seen_on = current_symbol.listed_api_last_seen_on
+                missing_since = snapshot.source_as_of
+                pending_missing_count += 1
+
+            next_symbols.append(
+                {
+                    "code": baseline_symbol.code,
+                    "name_ko": baseline_symbol.name_ko,
+                    "market": baseline_symbol.market,
+                    "source_market": baseline_symbol.source_market,
+                    "stock_type": baseline_symbol.stock_type,
+                    "listed_api_last_seen_on": last_seen_on,
+                    "listed_api_missing_since": missing_since,
+                }
+            )
+        if not next_symbols:
+            raise SymbolImportError("reconciliation would empty the Symbol Master")
+
+        await session.execute(
+            update(SymbolMasterVersion)
+            .where(SymbolMasterVersion.is_active.is_(True))
+            .values(is_active=False)
+        )
+        master = SymbolMasterVersion(
+            version=version,
+            source_url=normalized_url,
+            source_as_of=snapshot.source_as_of,
+            source_sha256=snapshot.source_sha256,
+            source_encoding="API-JSON",
+            source_kind=RECONCILED_SOURCE_KIND,
+            parent_version_id=active.id,
+            baseline_version_id=baseline_version_id,
+            schema_version=RECONCILED_SYMBOL_SCHEMA_VERSION,
+            row_count=len(next_symbols),
+            is_active=True,
+        )
+        session.add(master)
+        await session.flush()
+        session.add_all(
+            Symbol(master_version_id=master.id, **symbol_values) for symbol_values in next_symbols
+        )
+        await session.flush()
+        return SymbolReconciliationResult(
+            version_id=master.id,
+            version=master.version,
+            source_as_of=master.source_as_of,
+            row_count=master.row_count,
+            pending_missing_count=pending_missing_count,
+            removed_count=removed_count,
+            unknown_api_count=unknown_api_count,
+            name_change_count=name_change_count,
             created=True,
         )
 
