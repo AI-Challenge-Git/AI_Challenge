@@ -44,6 +44,7 @@ const operatorSignal: OperatorSignalListItem = {
   channel: "M-able",
   feature_area: "DOMESTIC_STOCK_ORDER",
   reported_symptom_type: "ORDER_SUBMISSION_FAILURE",
+  representative_symptom_text: null,
   reporting_unique_sessions: 3,
   raw_report_count: 5,
   review_priority: false,

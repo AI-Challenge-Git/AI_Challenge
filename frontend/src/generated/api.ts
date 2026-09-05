@@ -209,6 +209,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/operator/signal-policies/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve Policy */
+        post: operations["approve_policy_api_operator_signal_policies_approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operator/operations/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Operations Metrics */
+        get: operations["operations_metrics_api_operator_operations_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/operator/signals/acknowledge": {
         parameters: {
             query?: never;
@@ -662,6 +696,26 @@ export interface components {
          * @enum {string}
          */
         IssueType: "ORDER_SUBMISSION_FAILURE" | "LOGIN_ACCESS_FAILURE" | "BALANCE_INQUIRY_ERROR" | "ORDER_RESULT_UNCONFIRMED" | "DEVICE_NETWORK_SUSPECTED" | "UNRELATED_OR_AMBIGUOUS" | "UNKNOWN";
+        /** OperationalMetricsResponse */
+        OperationalMetricsResponse: {
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Signal Jobs Ready */
+            signal_jobs_ready: number;
+            /** Signal Jobs Repeated Failures */
+            signal_jobs_repeated_failures: number;
+            /** Signal Jobs Dead Letter */
+            signal_jobs_dead_letter: number;
+            /** Provider Failures Last 15M */
+            provider_failures_last_15m: number;
+            /** Object Deletion Jobs Ready */
+            object_deletion_jobs_ready: number;
+            /** Object Deletion Jobs Retrying */
+            object_deletion_jobs_retrying: number;
+        };
         /** OperatorAcknowledgeSignalRequest */
         OperatorAcknowledgeSignalRequest: {
             /**
@@ -676,6 +730,18 @@ export interface components {
             client_request_id: string;
             /** Reason */
             reason: string;
+        };
+        /** OperatorApproveSignalPolicyRequest */
+        OperatorApproveSignalPolicyRequest: {
+            /** Policy Version */
+            policy_version: string;
+            /** Evaluation Artifact Sha256 */
+            evaluation_artifact_sha256: string;
+            /**
+             * Client Request Id
+             * Format: uuid4
+             */
+            client_request_id: string;
         };
         /** OperatorCloseSignalRequest */
         OperatorCloseSignalRequest: {
@@ -740,6 +806,8 @@ export interface components {
             /** Feature Area */
             feature_area: string;
             reported_symptom_type: components["schemas"]["IssueType"];
+            /** Representative Symptom Text */
+            representative_symptom_text: string | null;
             /** Reporting Unique Sessions */
             reporting_unique_sessions: number;
             /** Raw Report Count */
@@ -805,6 +873,24 @@ export interface components {
              * Format: date-time
              */
             changed_at: string;
+        };
+        /** OperatorSignalPolicyApprovalResponse */
+        OperatorSignalPolicyApprovalResponse: {
+            /** Policy Version */
+            policy_version: string;
+            status: components["schemas"]["ClusteringPolicyStatus"];
+            /**
+             * Approved By
+             * Format: uuid
+             */
+            approved_by: string;
+            /**
+             * Approved At
+             * Format: date-time
+             */
+            approved_at: string;
+            /** Evaluation Artifact Sha256 */
+            evaluation_artifact_sha256: string;
         };
         /** OperatorSplitSignalRequest */
         OperatorSplitSignalRequest: {
@@ -1943,6 +2029,113 @@ export interface operations {
             };
             /** @description Invalid request */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    approve_policy_api_operator_signal_policies_approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperatorApproveSignalPolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorSignalPolicyApprovalResponse"];
+                };
+            };
+            /** @description Invalid access token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Operator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Signal unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description State or idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    operations_metrics_api_operator_operations_metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalMetricsResponse"];
+                };
+            };
+            /** @description Invalid access token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Operator role required */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
