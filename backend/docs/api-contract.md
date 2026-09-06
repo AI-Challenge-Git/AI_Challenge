@@ -42,9 +42,10 @@ AI timeout·schema 오류·provider 오류가 나면 미완성 report, analysis,
 `analysis_id`는 프론트 호환을 위한 결정론적 opaque 값이며 저장된 분석 resource를 뜻하지
 않는다. 다른 payload는 `409`, 재분석은 새 UUID v4 요청 ID가 필요하다.
 
-제보문의 `[전화번호]`, `[계좌번호]`, `[이메일]`은 서버가 각각 `[PHONE]`, `[ACCOUNT]`,
-`[EMAIL]`로 정규화한다. 저장값, AI 입력, API 응답과 `masked_items`에는 영문 placeholder만
-사용한다. 실제 개인정보 재탐지·마스킹과 고위험 민감정보 거부도 계속 적용한다.
+제보문의 `[전화번호]`, `[계좌번호]`, `[이메일]`, `[카드번호]`는 서버가 각각 `[PHONE]`,
+`[ACCOUNT]`, `[EMAIL]`, `[CARD]`로 정규화한다. 저장값, AI 입력, API 응답과
+`masked_items`에는 영문 placeholder만 사용한다. 실제 개인정보 재탐지·마스킹과 고위험
+민감정보 거부도 계속 적용한다.
 
 이미지가 없는 요청은 기존 JSON 계약을 사용한다. 이미지가 있으면 multipart의 `text`,
 `client_request_id`, `screenshot`, `screenshot_redacted_confirmed=true`를 모두 보내야 한다.
