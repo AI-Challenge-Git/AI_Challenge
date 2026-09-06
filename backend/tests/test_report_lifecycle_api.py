@@ -380,6 +380,7 @@ async def test_customer_confirmation_enforces_active_symbol_master() -> None:
 
 async def test_localized_placeholders_are_canonical_in_db_ai_and_response() -> None:
     extractor = CapturingExtractor()
+    raw_card_number = "1111-2222-3333-4444"
     app.dependency_overrides[get_dual_extractor] = lambda: extractor
     try:
         transport = ASGITransport(app=app)
@@ -389,7 +390,8 @@ async def test_localized_placeholders_are_canonical_in_db_ai_and_response() -> N
                 headers=_headers(),
                 json={
                     "text": (
-                        "주문 오류 제보이며 [전화번호], [계좌번호], [이메일]은 직접 가렸습니다."
+                        f"주문 오류 제보이며 카드 {raw_card_number}, [전화번호], [계좌번호], "
+                        "[이메일], [카드번호]는 직접 가렸습니다."
                     ),
                     "client_request_id": str(uuid4()),
                 },
@@ -399,11 +401,17 @@ async def test_localized_placeholders_are_canonical_in_db_ai_and_response() -> N
 
     assert analyzed.status_code == 200
     payload = analyzed.json()
-    canonical = "주문 오류 제보이며 [PHONE], [ACCOUNT], [EMAIL]은 직접 가렸습니다."
+    canonical = (
+        "주문 오류 제보이며 카드 [CARD], [PHONE], [ACCOUNT], [EMAIL], [CARD]는 직접 가렸습니다."
+    )
     assert payload["masked_text"] == canonical
-    assert payload["masked_items"] == ["PHONE", "ACCOUNT", "EMAIL"]
+    assert payload["masked_items"] == ["PHONE", "ACCOUNT", "EMAIL", "CARD"]
     assert extractor.inputs == [canonical]
-    assert all(value not in analyzed.text for value in ("[전화번호]", "[계좌번호]", "[이메일]"))
+    assert raw_card_number not in analyzed.text
+    assert all(
+        value not in analyzed.text
+        for value in ("[전화번호]", "[계좌번호]", "[이메일]", "[카드번호]")
+    )
     async with session_factory() as session:
         stored = await session.scalar(select(Report))
         assert stored is not None

@@ -193,7 +193,7 @@ def _analysis_response(report: Report, analysis: ReportAnalysis) -> ReportAnalys
     if analysis.technical_candidate is None or analysis.consultation_candidate is None:
         raise ServiceError(503, "ANALYSIS_UNAVAILABLE", "분석 결과를 사용할 수 없습니다.")
     masked_items = [
-        kind for kind in ("PHONE", "ACCOUNT", "EMAIL") if f"[{kind}]" in report.masked_text
+        kind for kind in ("PHONE", "ACCOUNT", "EMAIL", "CARD") if f"[{kind}]" in report.masked_text
     ]
     return ReportAnalysisResponse(
         root=ReportAnalysisConfirmationResponse(

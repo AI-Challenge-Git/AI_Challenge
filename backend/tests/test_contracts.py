@@ -52,13 +52,16 @@ def test_report_text_is_trimmed_and_nfc_normalized() -> None:
 
 def test_localized_placeholders_are_normalized_to_canonical_values() -> None:
     normalized = normalize_report_text(
-        "주문 오류 제보이며 [전화번호], [계좌번호], [이메일]은 사용자가 가렸습니다."
+        "주문 오류 제보이며 [전화번호], [계좌번호], [이메일], [카드번호]는 사용자가 가렸습니다."
     )
 
-    assert normalized == ("주문 오류 제보이며 [PHONE], [ACCOUNT], [EMAIL]은 사용자가 가렸습니다.")
+    assert normalized == (
+        "주문 오류 제보이며 [PHONE], [ACCOUNT], [EMAIL], [CARD]는 사용자가 가렸습니다."
+    )
     assert "[전화번호]" not in normalized
     assert "[계좌번호]" not in normalized
     assert "[이메일]" not in normalized
+    assert "[카드번호]" not in normalized
 
 
 def test_api_and_ai_dtos_canonicalize_placeholder_aliases() -> None:
@@ -116,6 +119,8 @@ def test_pii_filter_masks_allowed_types_without_returning_values() -> None:
         ("계좌 후보는 1234567890입니다.", "1234567890", "ACCOUNT"),
         ("계좌 후보는 12345678901234입니다.", "12345678901234", "ACCOUNT"),
         ("계좌 후보는 123-456-789012입니다.", "123-456-789012", "ACCOUNT"),
+        ("카드 후보는 1111222233334444입니다.", "1111222233334444", "CARD"),
+        ("카드 후보는 1111-2222-3333-4444입니다.", "1111-2222-3333-4444", "CARD"),
     ],
 )
 def test_pii_filter_masks_supported_synthetic_formats(

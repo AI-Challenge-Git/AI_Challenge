@@ -2,7 +2,7 @@
 AI-11(마스킹 placeholder를 실제 값으로 추론·복원 금지) 정식 회귀 테스트.
 
 지금까지 tests/test_manual.py 하나(전화번호 케이스 1개)에만 있던 걸,
-전화번호·계좌번호·이메일 복원 차단 / placeholder 자체 허용 / 일반 문자열 허용 /
+전화번호·계좌번호·이메일·카드번호 복원 차단 / placeholder 자체 허용 / 일반 문자열 허용 /
 날짜 필드 예외 / API가 INVALID_SCHEMA로 안전하게 실패 처리하는지까지 포함해서
 정식 pytest로 옮긴다.
 """
@@ -69,6 +69,7 @@ def _extraction_result(
         "제 번호는 01012345678 입니다",
         "123-456-7890123",
         "user@example.com",
+        "1111-2222-3333-4444",
     ],
 )
 def test_assert_no_unmasked_pii_blocks_real_pii(text: str) -> None:
@@ -76,7 +77,7 @@ def test_assert_no_unmasked_pii_blocks_real_pii(text: str) -> None:
         assert_no_unmasked_pii(text)
 
 
-@pytest.mark.parametrize("text", ["[PHONE]", "[ACCOUNT]", "[EMAIL]"])
+@pytest.mark.parametrize("text", ["[PHONE]", "[ACCOUNT]", "[EMAIL]", "[CARD]"])
 def test_assert_no_unmasked_pii_allows_placeholders(text: str) -> None:
     assert_no_unmasked_pii(text)  # 예외 없이 통과해야 정상
 
