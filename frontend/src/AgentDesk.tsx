@@ -286,7 +286,7 @@ export default function AgentDesk() {
             <label>사번<input name="agentId" placeholder="사번 입력" autoComplete="username" minLength={4} required /></label>
             <label>비밀번호<input name="password" type="password" placeholder="비밀번호 입력" autoComplete="current-password" required /></label>
             <button className="primary-button" type="submit" disabled={loggingIn}>{loggingIn ? "로그인 중..." : "로그인"}</button>
-            <small>데모 로그인 계정: CS1024 / demo</small>
+            <small>데모 로그인 계정: CS1024 / CS1024</small>
             {error ? <p className="error-message" role="alert">{error}</p> : null}
           </form>
         </section>

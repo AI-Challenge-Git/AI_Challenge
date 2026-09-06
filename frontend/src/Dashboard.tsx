@@ -149,7 +149,7 @@ function OperatorSignals() {
           <label>운영자 ID<input name="operatorId" autoComplete="username" required /></label>
           <label>비밀번호<input name="password" type="password" autoComplete="current-password" required /></label>
           <button className="primary-button" type="submit" disabled={loggingIn}>{loggingIn ? "로그인 중..." : "운영자 로그인"}</button>
-          <small>데모 로그인 계정: OP1024 / demo</small>
+          <small>데모 로그인 계정: OP1024 / OP1024</small>
           {error ? <p className="error-message" role="alert">{error}</p> : null}
         </form>
       </section>

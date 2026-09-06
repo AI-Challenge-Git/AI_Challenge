@@ -83,7 +83,7 @@ describe("상담원 API 계약", () => {
     expect(relatedSignalEmptyMessage("NONE")).toContain("연결된 장애 의심 신호가 없습니다");
   });
 
-  it("API 주소가 있으면 CS1024/demo도 실제 로그인과 목록 API를 호출한다", async () => {
+  it("API 주소가 있으면 CS1024/CS1024도 실제 로그인과 목록 API를 호출한다", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com");
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(loginResponse)))
@@ -91,7 +91,7 @@ describe("상담원 API 계약", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { getConsultationCards, loginAgent } = await import("./api");
 
-    const agent = await loginAgent("CS1024", "demo");
+    const agent = await loginAgent("CS1024", "CS1024");
     const cards = await getConsultationCards(agent.access_token);
 
     expect(agent.access_token).toBe(token);
